@@ -16,7 +16,11 @@ public record ScenarioMeshConfig(
         Duration workerStartupTimeout,
         Duration workerShutdownTimeout,
         Path reportingDirectory,
-        List<String> workerJvmArgs) {
+        List<String> workerJvmArgs,
+        boolean liveConsoleLogs,
+        boolean workerLogFiles,
+        boolean showConfiguration,
+        boolean showProgress) {
 
     public static final String AUTO_ADAPTER = "auto";
 
@@ -49,7 +53,11 @@ public record ScenarioMeshConfig(
                 Duration.ofSeconds(30),
                 Duration.ofSeconds(10),
                 buildDirectory.resolve("scenariomesh"),
-                List.of());
+                List.of(),
+                true,
+                true,
+                true,
+                true);
     }
 
     private static String normalizeAdapter(String adapter) {
