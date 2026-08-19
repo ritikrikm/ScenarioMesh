@@ -1,5 +1,8 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.config.ConfigResolver;
+import io.scenariomesh.config.ConfigResolver.ConfigResolution;
+import io.scenariomesh.config.ScenarioMeshConfig;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
@@ -10,7 +13,9 @@ import org.codehaus.plexus.component.annotations.Component;
 import org.codehaus.plexus.component.annotations.Requirement;
 import org.codehaus.plexus.logging.Logger;
 
-import java.util.Locale;
+import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Component(role = AbstractMavenLifecycleParticipant.class, hint = "scenariomesh")
 public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecycleParticipant {
@@ -19,21 +24,45 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private static final String VERSION = "0.1.0-SNAPSHOT";
 
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
+    private final ConfigResolver configResolver = new ConfigResolver();
 
     @Requirement
     private Logger logger;
 
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
-        boolean enabled = booleanProperty(session, "scenariomesh.enabled", true);
-        boolean explicitlySkipped = booleanProperty(session, "skipTests", false)
-                || booleanProperty(session, "maven.test.skip", false);
-        if (!enabled || explicitlySkipped) {
+        if (booleanProperty(session, "skipTests") || booleanProperty(session, "maven.test.skip")) {
             return;
         }
 
+        Map<String, String> configProperties = stringProperties(session.getSystemProperties());
+        configProperties.putAll(stringProperties(session.getUserProperties()));
+
         for (MavenProject project : session.getProjects()) {
             if ("pom".equals(project.getPackaging())) {
+                continue;
+            }
+
+            ScenarioMeshConfig config;
+            ConfigResolution resolution;
+            try {
+                Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
+                Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
+                resolution = configResolver.resolveDetailed(
+                        projectDirectory,
+                        buildDirectory,
+                        configProperties,
+                        System.getenv());
+                config = resolution.config();
+            } catch (IllegalArgumentException exception) {
+                throw new MavenExecutionException(
+                        "ScenarioMesh configuration error for project '" + project.getArtifactId() + "': "
+                                + exception.getMessage(),
+                        exception);
+            }
+
+            if (!config.enabled()) {
+                info("ScenarioMesh: disabled for " + project.getArtifactId() + "; normal Maven execution remains active.");
                 continue;
             }
 
@@ -45,8 +74,10 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
             injectScenarioMesh(project);
             project.getProperties().setProperty("skipTests", "true");
+            String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
             info("ScenarioMesh: takeover enabled for " + project.getArtifactId()
-                    + " (" + String.join(", ", decision.frameworks()) + ")");
+                    + " (signals=" + String.join(", ", decision.frameworks())
+                    + ", adapterIntent=" + config.executionAdapter() + configText + ")");
         }
     }
 
@@ -71,12 +102,20 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         plugin.addExecution(execution);
     }
 
-    private boolean booleanProperty(MavenSession session, String key, boolean fallback) {
+    private boolean booleanProperty(MavenSession session, String key) {
         String value = session.getUserProperties().getProperty(key);
         if (value == null) {
             value = session.getSystemProperties().getProperty(key);
         }
-        return value == null ? fallback : Boolean.parseBoolean(value.toLowerCase(Locale.ROOT));
+        return value != null && Boolean.parseBoolean(value.trim());
+    }
+
+    private Map<String, String> stringProperties(java.util.Properties properties) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (properties != null) {
+            properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
+        }
+        return values;
     }
 
     private void info(String message) {
