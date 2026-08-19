@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,26 +46,23 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     @Override
     public List<ScenarioTask> discover(AdapterContext context) throws Exception {
         List<ScenarioTask> tasks = new ArrayList<>();
-        Map<String, DiscoveredOwner> ownersBySemanticKey = new LinkedHashMap<>();
 
         for (Class<?> runner : findCucumberRunnerClasses(context)) {
             Description root = Request.aClass(runner).getRunner().getDescription();
             for (JUnit4DescriptionLeaves.Leaf leaf : descriptionLeaves.collect(root)) {
-                DiscoveredOwner previous = ownersBySemanticKey.putIfAbsent(
-                        leaf.semanticKey(), new DiscoveredOwner(runner.getName(), leaf.selectorPath()));
-                if (previous != null && !previous.runnerClass().equals(runner.getName())) {
-                    throw new IllegalStateException(
-                            "Cucumber JUnit 4 discovery is ambiguous: executable test '" + leaf.semanticKey()
-                                    + "' is exposed by more than one runner ('" + previous.runnerClass() + "' and '"
-                                    + runner.getName() + "'). ScenarioMesh will not silently duplicate or discard the test.");
-                }
-
+                // Correctness identity follows the native executable selector that Maven/JUnit would run.
+                // Human-readable Cucumber names are diagnostics only: generated Scenario Outline rows can
+                // legitimately have identical feature/scenario names while being owned by different runner
+                // classes and generated feature resources.
                 String selector = new Selector(runner.getName(), leaf.selectorPath()).encode();
                 Description description = leaf.description();
                 tasks.add(new ScenarioTask(
                         ScenarioIds.from(ID, selector), description.getDisplayName(), ID, framework(),
                         null, null, selector, Set.of(),
-                        Map.of("runnerClass", runner.getName(), "frameworkDescription", leaf.semanticKey())));
+                        Map.of(
+                                "runnerClass", runner.getName(),
+                                "frameworkDescription", leaf.semanticKey(),
+                                "executionIdentity", selector)));
             }
         }
         return List.copyOf(tasks);
@@ -145,10 +141,6 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     private boolean present(ClassLoader classLoader, String name) {
         try { Class.forName(name, false, classLoader); return true; }
         catch (ClassNotFoundException ignored) { return false; }
-    }
-
-    private record DiscoveredOwner(String runnerClass, List<Integer> path) {
-        private DiscoveredOwner { path = List.copyOf(path); }
     }
 
     private record Selector(String runnerClass, List<Integer> path) {
