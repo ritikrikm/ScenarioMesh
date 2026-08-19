@@ -5,3 +5,5 @@ scenariomesh:
     adapterMismatchPolicy: fail
   workers:
     count: 4
+  reporting:
+    directory: target/scenariomesh-yaml
