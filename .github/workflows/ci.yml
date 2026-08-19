@@ -28,6 +28,9 @@ jobs:
       - name: TestNG normal Maven command
         working-directory: examples/testng-example
         run: mvn -B test
+      - name: Custom Surefire selection remains normal Maven execution
+        working-directory: examples/junit5-surefire-pass-through-example
+        run: mvn -B test
       - name: Unsupported generic JUnit 4 uses normal Maven execution
         working-directory: examples/unsupported-junit4-example
         run: mvn -B test
@@ -37,6 +40,11 @@ jobs:
           test -f examples/cucumber-junit-platform-example/target/scenariomesh/report.html
           test -f examples/cucumber-junit4-example/target/scenariomesh/report.html
           test -f examples/testng-example/target/scenariomesh/report.html
+      - name: Verify custom Surefire project was not taken over
+        run: |
+          test -f examples/junit5-surefire-pass-through-example/target/surefire-reports/TEST-example.SelectedTest.xml
+          test ! -e examples/junit5-surefire-pass-through-example/target/surefire-reports/TEST-example.NotSelectedTest.xml
+          test ! -e examples/junit5-surefire-pass-through-example/target/scenariomesh/report.html
       - name: Verify unsupported project was not taken over
         run: |
           test -f examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml

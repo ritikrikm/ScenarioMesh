@@ -5,7 +5,6 @@ import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.project.MavenProject;
-import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -31,56 +30,6 @@ final class ProjectCompatibilityDetector {
             "integration-test", "post-integration-test", "verify", "install", "deploy"
     );
 
-    /**
-     * Surefire settings below can change selection, order, provider behaviour,
-     * fork/class-loader semantics, failure semantics, selected JDK, or runtime
-     * inputs. The MVP passes through until it can reproduce each one deliberately.
-     */
-    private static final Set<String> UNSAFE_SUREFIRE_CONFIGURATION = Set.of(
-            "argLine",
-            "additionalClasspathDependencies",
-            "additionalClasspathElements",
-            "childDelegation",
-            "classpathDependencyExclude",
-            "classpathDependencyExcludes",
-            "dependenciesToScan",
-            "enableAssertions",
-            "environmentVariables",
-            "excludedGroups",
-            "excludes",
-            "excludesFile",
-            "failIfNoSpecifiedTests",
-            "failIfNoTests",
-            "forkCount",
-            "groups",
-            "includes",
-            "includesFile",
-            "jdkToolchain",
-            "junitArtifactName",
-            "jvm",
-            "objectFactory",
-            "parallel",
-            "parallelOptimized",
-            "perCoreThreadCount",
-            "properties",
-            "providerProperties",
-            "rerunFailingTestsCount",
-            "reuseForks",
-            "runOrder",
-            "runOrderRandomSeed",
-            "skipAfterFailureCount",
-            "suiteXmlFiles",
-            "systemProperties",
-            "systemPropertyVariables",
-            "testNGArtifactName",
-            "threadCount",
-            "threadCountClasses",
-            "threadCountMethods",
-            "useManifestOnlyJar",
-            "useSystemClassLoader",
-            "useUnlimitedThreads"
-    );
-
     private static final Set<String> UNSAFE_SELECTION_PROPERTIES = Set.of(
             "test",
             "it.test",
@@ -89,6 +38,8 @@ final class ProjectCompatibilityDetector {
             "suiteXmlFiles",
             "dependenciesToScan"
     );
+
+    private final SurefireCompatibility surefireCompatibility = new SurefireCompatibility();
 
     CompatibilityDecision evaluate(MavenSession session, MavenProject project) {
         List<String> reasons = new ArrayList<>();
@@ -116,24 +67,11 @@ final class ProjectCompatibilityDetector {
 
         Plugin surefire = plugin(project, SUREFIRE);
         if (surefire != null) {
-            if (surefire.getDependencies() != null && !surefire.getDependencies().isEmpty()) {
-                reasons.add("maven-surefire-plugin declares custom provider/plugin dependencies");
+            SurefireCompatibility.Analysis analysis = surefireCompatibility.analyze(surefire);
+            if (analysis.explicitlySkipsTests()) {
+                return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             }
-            if (surefire.getExecutions() != null && !surefire.getExecutions().isEmpty()) {
-                reasons.add("maven-surefire-plugin declares custom executions");
-            }
-            Xpp3Dom configuration = asDom(surefire.getConfiguration());
-            if (configuration != null) {
-                for (String name : UNSAFE_SUREFIRE_CONFIGURATION) {
-                    Xpp3Dom child = configuration.getChild(name);
-                    if (hasMeaningfulValue(child)) {
-                        reasons.add("maven-surefire-plugin uses unsupported configuration <" + name + ">");
-                    }
-                }
-                if (booleanChild(configuration, "skip") || booleanChild(configuration, "skipTests")) {
-                    return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
-                }
-            }
+            reasons.addAll(analysis.reasons());
         }
 
         for (String key : UNSAFE_SELECTION_PROPERTIES) {
@@ -233,23 +171,6 @@ final class ProjectCompatibilityDetector {
 
     private Plugin plugin(MavenProject project, String key) {
         return project.getPlugin(key);
-    }
-
-    private Xpp3Dom asDom(Object configuration) {
-        return configuration instanceof Xpp3Dom dom ? dom : null;
-    }
-
-    private boolean hasMeaningfulValue(Xpp3Dom node) {
-        if (node == null) {
-            return false;
-        }
-        String value = node.getValue();
-        return (value != null && !value.isBlank()) || node.getChildCount() > 0;
-    }
-
-    private boolean booleanChild(Xpp3Dom configuration, String name) {
-        Xpp3Dom child = configuration.getChild(name);
-        return child != null && child.getValue() != null && Boolean.parseBoolean(child.getValue().trim());
     }
 
     record CompatibilityDecision(boolean compatible, Set<String> frameworks, String reason) {
