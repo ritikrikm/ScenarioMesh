@@ -30,7 +30,11 @@ final class ConfigFileLoader {
             "workers.shutdownTimeout",
             "workers.jvmArgs",
             "discovery.timeout",
-            "reporting.directory"
+            "reporting.directory",
+            "logging.liveConsole",
+            "logging.workerFiles",
+            "logging.showConfiguration",
+            "logging.showProgress"
     );
 
     LoadedConfig load(Path projectDirectory, Path explicitFile) {
