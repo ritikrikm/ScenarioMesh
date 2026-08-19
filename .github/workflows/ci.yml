@@ -16,7 +16,7 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install
-      - name: JUnit 5 normal Maven command
+      - name: JUnit 5 normal Maven command with YAML config
         working-directory: examples/junit5-example
         run: mvn -B test
       - name: Cucumber JUnit Platform normal Maven command
@@ -36,7 +36,8 @@ jobs:
         run: mvn -B test
       - name: Verify reports were generated
         run: |
-          test -f examples/junit5-example/target/scenariomesh/report.html
+          test -f examples/junit5-example/target/scenariomesh-yaml/report.html
+          test ! -e examples/junit5-example/target/scenariomesh/report.html
           test -f examples/cucumber-junit-platform-example/target/scenariomesh/report.html
           test -f examples/cucumber-junit4-example/target/scenariomesh/report.html
           test -f examples/testng-example/target/scenariomesh/report.html
