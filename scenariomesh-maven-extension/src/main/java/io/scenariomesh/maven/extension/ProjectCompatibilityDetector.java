@@ -32,13 +32,15 @@ final class ProjectCompatibilityDetector {
     );
 
     /**
-     * These Surefire settings change selection, provider behaviour, fork JVM
-     * semantics, or runtime inputs that the MVP does not yet reproduce exactly.
+     * Surefire settings below can change selection, order, provider behaviour,
+     * fork/class-loader semantics, failure semantics, or runtime inputs. The MVP
+     * passes through until it can reproduce each one deliberately.
      */
     private static final Set<String> UNSAFE_SUREFIRE_CONFIGURATION = Set.of(
             "argLine",
             "additionalClasspathDependencies",
             "additionalClasspathElements",
+            "childDelegation",
             "classpathDependencyExclude",
             "classpathDependencyExcludes",
             "dependenciesToScan",
@@ -47,17 +49,43 @@ final class ProjectCompatibilityDetector {
             "excludedGroups",
             "excludes",
             "excludesFile",
+            "failIfNoSpecifiedTests",
+            "failIfNoTests",
+            "forkCount",
             "groups",
             "includes",
             "includesFile",
             "junitArtifactName",
             "objectFactory",
+            "parallel",
+            "parallelOptimized",
+            "perCoreThreadCount",
             "properties",
             "providerProperties",
+            "rerunFailingTestsCount",
+            "reuseForks",
+            "runOrder",
+            "runOrderRandomSeed",
+            "skipAfterFailureCount",
             "suiteXmlFiles",
             "systemProperties",
             "systemPropertyVariables",
-            "testNGArtifactName"
+            "testNGArtifactName",
+            "threadCount",
+            "threadCountClasses",
+            "threadCountMethods",
+            "useManifestOnlyJar",
+            "useSystemClassLoader",
+            "useUnlimitedThreads"
+    );
+
+    private static final Set<String> UNSAFE_SELECTION_PROPERTIES = Set.of(
+            "test",
+            "it.test",
+            "surefire.includes",
+            "surefire.excludes",
+            "suiteXmlFiles",
+            "dependenciesToScan"
     );
 
     CompatibilityDecision evaluate(MavenSession session, MavenProject project) {
@@ -89,6 +117,9 @@ final class ProjectCompatibilityDetector {
             if (surefire.getDependencies() != null && !surefire.getDependencies().isEmpty()) {
                 reasons.add("maven-surefire-plugin declares custom provider/plugin dependencies");
             }
+            if (surefire.getExecutions() != null && !surefire.getExecutions().isEmpty()) {
+                reasons.add("maven-surefire-plugin declares custom executions");
+            }
             Xpp3Dom configuration = asDom(surefire.getConfiguration());
             if (configuration != null) {
                 for (String name : UNSAFE_SUREFIRE_CONFIGURATION) {
@@ -103,11 +134,13 @@ final class ProjectCompatibilityDetector {
             }
         }
 
-        if (userPropertyPresent(session, "test") || userPropertyPresent(session, "it.test")) {
-            reasons.add("-Dtest/-Dit.test selection is present and is not yet reproduced by ScenarioMesh discovery");
+        for (String key : UNSAFE_SELECTION_PROPERTIES) {
+            if (propertyPresent(session, project, key)) {
+                reasons.add("Maven test-selection property '" + key + "' is present and is not yet reproduced by ScenarioMesh discovery");
+            }
         }
 
-        if ((userPropertyPresent(session, "groups") || userPropertyPresent(session, "excludedGroups"))
+        if ((propertyPresent(session, project, "groups") || propertyPresent(session, project, "excludedGroups"))
                 && !frameworks.testNgOnly()) {
             reasons.add("group filtering is present for a non-TestNG-only project and cannot yet be guaranteed equivalent");
         }
@@ -145,9 +178,13 @@ final class ProjectCompatibilityDetector {
         return value != null && Boolean.parseBoolean(value.trim());
     }
 
-    private boolean userPropertyPresent(MavenSession session, String key) {
-        String value = session.getUserProperties().getProperty(key);
-        return value != null && !value.isBlank();
+    private boolean propertyPresent(MavenSession session, MavenProject project, String key) {
+        String userValue = session.getUserProperties().getProperty(key);
+        if (userValue != null && !userValue.isBlank()) {
+            return true;
+        }
+        String projectValue = project.getProperties().getProperty(key);
+        return projectValue != null && !projectValue.isBlank();
     }
 
     private FrameworkSignals detectFrameworks(MavenProject project) {
