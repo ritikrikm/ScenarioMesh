@@ -190,11 +190,23 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private void stop(WorkerConnection connection) {
+        int originalTimeout = 0;
         try {
+            originalTimeout = connection.socket.getSoTimeout();
+            connection.socket.setSoTimeout(Math.toIntExact(request.config().workerShutdownTimeout().toMillis()));
             connection.write(Envelope.stop(connection.workerId));
-            connection.read();
-        } catch (Exception ignored) {
-            // Process cleanup in close() is the final safety net.
+            Envelope response = connection.read();
+            if (response == null || response.type() != Protocol.Type.ACK) {
+                logger.progress(connection.workerId + " did not acknowledge STOP; process cleanup will continue.");
+            }
+        } catch (Exception exception) {
+            logger.progress(connection.workerId + " graceful STOP did not complete; process cleanup will continue.");
+        } finally {
+            try {
+                connection.socket.setSoTimeout(originalTimeout);
+            } catch (Exception ignored) {
+                // Socket may already be closed.
+            }
         }
     }
 
@@ -207,13 +219,28 @@ final class WorkerPool implements AutoCloseable {
                 // Continue closing remaining workers.
             }
         }
+
+        // Signal every child first so the configured shutdown timeout applies to the pool as a whole,
+        // not once per worker. This is important for CI and for target frameworks that leave non-daemon
+        // helper threads alive after their test work has completed.
+        for (Process process : processes.values()) {
+            if (process.isAlive()) {
+                process.destroy();
+            }
+        }
+
+        long deadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
         for (Process process : processes.values()) {
             if (!process.isAlive()) {
                 continue;
             }
-            process.destroy();
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                process.destroyForcibly();
+                continue;
+            }
             try {
-                if (!process.waitFor(request.config().workerShutdownTimeout().toMillis(), TimeUnit.MILLISECONDS)) {
+                if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) {
                     process.destroyForcibly();
                 }
             } catch (InterruptedException exception) {
@@ -221,9 +248,16 @@ final class WorkerPool implements AutoCloseable {
                 process.destroyForcibly();
             }
         }
+
+        long pumpDeadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
         for (Thread pump : outputPumps.values()) {
+            long remainingNanos = pumpDeadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                break;
+            }
             try {
-                pump.join(request.config().workerShutdownTimeout().toMillis());
+                long millis = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
+                pump.join(millis);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 break;
