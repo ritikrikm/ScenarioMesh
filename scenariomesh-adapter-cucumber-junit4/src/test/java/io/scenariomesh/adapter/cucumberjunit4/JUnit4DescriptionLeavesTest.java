@@ -29,13 +29,16 @@ class JUnit4DescriptionLeavesTest {
     }
 
     @Test
-    void runnerNameIsNotPartOfContainerIdentity() {
+    void differentGeneratedRunnersMayLegitimatelyShareTheSameDisplayIdentity() {
         Description firstRunner = runner("GeneratedRunnerA", "Same feature", "Same scenario");
         Description secondRunner = runner("GeneratedRunnerB", "Same feature", "Same scenario");
 
         String first = leaves.collect(firstRunner).get(0).semanticKey();
         String second = leaves.collect(secondRunner).get(0).semanticKey();
 
+        // This is intentionally only a human-readable semantic/display key. The adapter's
+        // execution identity also contains the owning runner class plus the leaf selector,
+        // so generated Scenario Outline rows are not collapsed by this equality.
         assertEquals("Same feature > Same scenario", first);
         assertEquals(first, second);
     }
