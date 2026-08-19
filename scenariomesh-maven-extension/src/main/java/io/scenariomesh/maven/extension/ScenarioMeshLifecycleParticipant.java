@@ -7,6 +7,8 @@ import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.component.annotations.Component;
+import org.codehaus.plexus.component.annotations.Requirement;
+import org.codehaus.plexus.logging.Logger;
 
 import java.util.Locale;
 
@@ -16,6 +18,11 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private static final String PLUGIN_ARTIFACT_ID = "scenariomesh-maven-plugin";
     private static final String VERSION = "0.1.0-SNAPSHOT";
 
+    private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
+
+    @Requirement
+    private Logger logger;
+
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
         boolean enabled = booleanProperty(session, "scenariomesh.enabled", true);
@@ -24,12 +31,22 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         if (!enabled || explicitlySkipped) {
             return;
         }
+
         for (MavenProject project : session.getProjects()) {
             if ("pom".equals(project.getPackaging())) {
                 continue;
             }
+
+            ProjectCompatibilityDetector.CompatibilityDecision decision = compatibilityDetector.evaluate(session, project);
+            if (!decision.compatible()) {
+                info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + decision.reason());
+                continue;
+            }
+
             injectScenarioMesh(project);
             project.getProperties().setProperty("skipTests", "true");
+            info("ScenarioMesh: takeover enabled for " + project.getArtifactId()
+                    + " (" + String.join(", ", decision.frameworks()) + ")");
         }
     }
 
@@ -60,5 +77,13 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             value = session.getSystemProperties().getProperty(key);
         }
         return value == null ? fallback : Boolean.parseBoolean(value.toLowerCase(Locale.ROOT));
+    }
+
+    private void info(String message) {
+        if (logger != null) {
+            logger.info(message);
+        } else {
+            System.out.println("[INFO] " + message);
+        }
     }
 }
