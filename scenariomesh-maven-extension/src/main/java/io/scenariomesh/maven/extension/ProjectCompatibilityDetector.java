@@ -33,8 +33,8 @@ final class ProjectCompatibilityDetector {
 
     /**
      * Surefire settings below can change selection, order, provider behaviour,
-     * fork/class-loader semantics, failure semantics, or runtime inputs. The MVP
-     * passes through until it can reproduce each one deliberately.
+     * fork/class-loader semantics, failure semantics, selected JDK, or runtime
+     * inputs. The MVP passes through until it can reproduce each one deliberately.
      */
     private static final Set<String> UNSAFE_SUREFIRE_CONFIGURATION = Set.of(
             "argLine",
@@ -55,7 +55,9 @@ final class ProjectCompatibilityDetector {
             "groups",
             "includes",
             "includesFile",
+            "jdkToolchain",
             "junitArtifactName",
+            "jvm",
             "objectFactory",
             "parallel",
             "parallelOptimized",
