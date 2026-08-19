@@ -6,6 +6,7 @@
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
+    <fixture.language>EN</fixture.language>
   </properties>
 
   <dependencies>
@@ -23,6 +24,14 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
         <version>3.5.2</version>
+        <configuration>
+          <argLine>-Dscenariomesh.fixture.argline=true</argLine>
+          <systemPropertyVariables>
+            <scenariomesh.fixture.language>${fixture.language}</scenariomesh.fixture.language>
+          </systemPropertyVariables>
+          <testFailureIgnore>false</testFailureIgnore>
+          <rerunFailingTestsCount>0</rerunFailingTestsCount>
+        </configuration>
         <executions>
           <execution>
             <id>integration-tests</id>
