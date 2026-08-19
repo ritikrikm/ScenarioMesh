@@ -1,1 +1,58 @@
-package io.scenariomesh.coordinator;import com.fasterxml.jackson.databind.ObjectMapper;import io.scenariomesh.workerruntime.*;import java.nio.file.*;import java.time.Duration;import java.util.*;import java.util.concurrent.TimeUnit;final class DiscoveryProcess{DiscoveryMain.DiscoveryResult discover(RunRequest r,Path dir)throws Exception{Path out=dir.resolve("discovered-scenarios.json"),log=dir.resolve("discovery.log");List<String>a=new ArrayList<>();a.add("--output");a.add(out.toString());for(Path root:r.testRoots()){a.add("--test-root");a.add(root.toString());}List<String>cmd=JavaProcessSupport.command(r.runtimeClasspath(),r.config().workerJvmArgs(),r.userProperties(),DiscoveryMain.class.getName(),a);Process p=new ProcessBuilder(cmd).directory(r.projectDirectory().toFile()).redirectErrorStream(true).redirectOutput(log.toFile()).start();Duration timeout=r.config().discoveryTimeout();if(!p.waitFor(timeout.toMillis(),TimeUnit.MILLISECONDS)){p.destroyForcibly();throw new IllegalStateException("ScenarioMesh discovery exceeded "+timeout+". See "+log);}if(p.exitValue()!=0){String detail=Files.exists(log)?Files.readString(log):"No discovery log was produced";throw new IllegalStateException("ScenarioMesh discovery failed with exit code "+p.exitValue()+".\n"+detail);}ObjectMapper mapper=JsonCodec.create();return mapper.readValue(out.toFile(),DiscoveryMain.DiscoveryResult.class);}}
+package io.scenariomesh.coordinator;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.workerruntime.DiscoveryMain;
+import io.scenariomesh.workerruntime.JavaProcessSupport;
+import io.scenariomesh.workerruntime.JsonCodec;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+
+final class DiscoveryProcess {
+    DiscoveryMain.DiscoveryResult discover(RunRequest request, Path directory) throws Exception {
+        Path output = directory.resolve("discovered-scenarios.json");
+        Path log = directory.resolve("discovery.log");
+        List<String> args = new ArrayList<>();
+        args.add("--output");
+        args.add(output.toString());
+        args.add("--adapter");
+        args.add(request.config().executionAdapter());
+        args.add("--adapter-mismatch-policy");
+        args.add(request.config().adapterMismatchPolicy().externalValue());
+        for (Path root : request.testRoots()) {
+            args.add("--test-root");
+            args.add(root.toString());
+        }
+
+        List<String> command = JavaProcessSupport.command(
+                request.runtimeClasspath(),
+                request.config().workerJvmArgs(),
+                request.userProperties(),
+                DiscoveryMain.class.getName(),
+                args);
+
+        Process process = new ProcessBuilder(command)
+                .directory(request.projectDirectory().toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start();
+
+        Duration timeout = request.config().discoveryTimeout();
+        if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly();
+            throw new IllegalStateException("ScenarioMesh discovery exceeded " + timeout + ". See " + log);
+        }
+        if (process.exitValue() != 0) {
+            String detail = Files.exists(log) ? Files.readString(log) : "No discovery log was produced";
+            throw new IllegalStateException("ScenarioMesh discovery failed with exit code " + process.exitValue()
+                    + "." + System.lineSeparator() + detail);
+        }
+
+        ObjectMapper mapper = JsonCodec.create();
+        return mapper.readValue(output.toFile(), DiscoveryMain.DiscoveryResult.class);
+    }
+}
