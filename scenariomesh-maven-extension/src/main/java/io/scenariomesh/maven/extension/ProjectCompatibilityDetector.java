@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -60,10 +61,7 @@ final class ProjectCompatibilityDetector {
             reasons.add("generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
         }
 
-        Plugin failsafe = plugin(project, FAILSAFE);
-        if (failsafe != null) {
-            reasons.add("maven-failsafe-plugin is configured; integration-test lifecycle takeover is not yet guaranteed equivalent");
-        }
+        evaluateFailsafeForCurrentInvocation(session, project, reasons);
 
         Plugin surefire = plugin(project, SUREFIRE);
         if (surefire != null) {
@@ -90,6 +88,37 @@ final class ProjectCompatibilityDetector {
         }
 
         return CompatibilityDecision.takeOver(frameworks.names());
+    }
+
+    private void evaluateFailsafeForCurrentInvocation(MavenSession session,
+                                                       MavenProject project,
+                                                       List<String> reasons) {
+        Plugin failsafe = plugin(project, FAILSAFE);
+        if (failsafe == null) {
+            return;
+        }
+
+        Optional<MavenExecutionPlan> plan = MavenExecutionPlan.from(session);
+        if (plan.isEmpty()) {
+            reasons.add("maven-failsafe-plugin is configured and the requested Maven lifecycle could not be determined safely");
+            return;
+        }
+
+        MavenExecutionPlan.PluginParticipation participation = plan.get().failsafeParticipation(failsafe);
+        switch (participation.state()) {
+            case INACTIVE -> {
+                // Failsafe exists in the project but cannot participate in this invocation.
+                // It must not block a normal `mvn test` takeover merely because it is configured.
+            }
+            case ACTIVE -> reasons.add(
+                    "maven-failsafe-plugin participates in this invocation through "
+                            + String.join(", ", participation.evidence())
+                            + "; integration-test lifecycle takeover is not yet guaranteed equivalent");
+            case UNKNOWN -> reasons.add(
+                    "maven-failsafe-plugin participation cannot be proven inactive for Maven phase '"
+                            + plan.get().terminalPhase() + "' ("
+                            + String.join(", ", participation.evidence()) + ")");
+        }
     }
 
     private boolean requestsTestLifecycle(MavenSession session) {
