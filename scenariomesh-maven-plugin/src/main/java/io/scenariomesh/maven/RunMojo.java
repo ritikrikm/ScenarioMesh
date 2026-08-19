@@ -7,6 +7,7 @@ import io.scenariomesh.coordinator.RunOutcome;
 import io.scenariomesh.coordinator.RunRequest;
 import io.scenariomesh.coordinator.ScenarioMeshRunner;
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.reporting.ReportWriter;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
@@ -44,10 +45,16 @@ public final class RunMojo extends AbstractMojo {
     private boolean deferFailureUntilVerify;
     @Parameter(defaultValue = "surefire")
     private String takeoverExecutor;
+    @Parameter(defaultValue = "false")
+    private boolean testFailureIgnore;
     @Parameter
     private List<String> includeClassNameRegexes;
     @Parameter
     private List<String> excludeClassNameRegexes;
+    @Parameter
+    private List<String> executorJvmArgs;
+    @Parameter
+    private Map<String,String> executorSystemProperties;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -81,25 +88,41 @@ public final class RunMojo extends AbstractMojo {
             getLog().info("Adapter intent: "+config.executionAdapter());
             getLog().info("Workers: "+config.workerCount());
 
-            RunRequest request=new RunRequest(projectDirectory,runtimeClasspath(),testRoots(),userProperties,config,selection);
+            RunRequest request=new RunRequest(
+                    projectDirectory,
+                    runtimeClasspath(),
+                    testRoots(),
+                    userProperties,
+                    config,
+                    selection,
+                    executorJvmArgs==null?List.of():executorJvmArgs,
+                    executorSystemProperties==null?Map.of():executorSystemProperties);
             RunOutcome outcome=new ScenarioMeshRunner().run(request);
             ReportWriter.ReportPaths reports=new ReportWriter().write(outcome,config.reportingDirectory());
             long passed=outcome.results().stream().filter(result->result.passed()).count();
             long failed=outcome.results().size()-passed;
+            boolean effectiveSuccess=effectiveSuccess(outcome);
             getLog().info("Selected adapter: "+String.join(", ",outcome.adapters()));
             getLog().info("Discovered: "+outcome.tasks().size());
             getLog().info("Passed: "+passed+", Failed: "+failed);
             getLog().info("Report: "+reports.latestHtml());
+            if(testFailureIgnore&&!outcome.successful()&&effectiveSuccess){
+                getLog().warn("ScenarioMesh observed test failures, but Maven executor testFailureIgnore=true; infrastructure failures are still fatal.");
+            }
 
             if(deferFailureUntilVerify){
-                DeferredVerificationState.write(buildDirectory,invocationId,outcome.successful(),reports.latestHtml().toString(),
-                        outcome.successful()?null:"ScenarioMesh run contained failing or infrastructure results");
-                if(!outcome.successful()){
+                DeferredVerificationState.write(
+                        buildDirectory,
+                        invocationId,
+                        effectiveSuccess,
+                        reports.latestHtml().toString(),
+                        effectiveSuccess?null:"ScenarioMesh run contained failing or infrastructure results");
+                if(!effectiveSuccess){
                     getLog().warn("ScenarioMesh recorded failures for Maven verify; post-integration-test lifecycle phases will continue.");
                 }
                 return;
             }
-            if(!outcome.successful())throw new MojoFailureException("ScenarioMesh run failed. See "+reports.latestHtml());
+            if(!effectiveSuccess)throw new MojoFailureException("ScenarioMesh run failed. See "+reports.latestHtml());
         } catch (MojoFailureException failure) {
             throw failure;
         } catch (Exception exception) {
@@ -115,6 +138,12 @@ public final class RunMojo extends AbstractMojo {
             }
             throw new MojoExecutionException("ScenarioMesh infrastructure failure: "+exception.getMessage(),exception);
         }
+    }
+
+    private boolean effectiveSuccess(RunOutcome outcome){
+        if(outcome.successful())return true;
+        if(!testFailureIgnore)return false;
+        return outcome.results().stream().allMatch(result->result.passed()||result.status()==ResultStatus.TEST_FAILURE);
     }
 
     private Map<String,String> stringProperties(java.util.Properties properties){Map<String,String> values=new LinkedHashMap<>();if(properties!=null)properties.forEach((key,value)->values.put(String.valueOf(key),String.valueOf(value)));return values;}
