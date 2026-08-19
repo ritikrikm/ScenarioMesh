@@ -26,6 +26,14 @@ final class DiscoveryProcess {
             args.add("--test-root");
             args.add(root.toString());
         }
+        for (String regex : request.discoverySelection().includeClassNameRegexes()) {
+            args.add("--include-class-regex");
+            args.add(regex);
+        }
+        for (String regex : request.discoverySelection().excludeClassNameRegexes()) {
+            args.add("--exclude-class-regex");
+            args.add(regex);
+        }
 
         List<String> command = JavaProcessSupport.command(
                 request.runtimeClasspath(),
