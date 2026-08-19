@@ -94,13 +94,17 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         addValue(root,"invocationId",invocationId);
         addValue(root,"deferFailureUntilVerify",Boolean.toString(decision.deferFailureUntilVerify()));
         addValue(root,"takeoverExecutor",decision.executorKind().name().toLowerCase());
+        addValue(root,"testFailureIgnore",Boolean.toString(decision.testFailureIgnore()));
         addList(root,"includeClassNameRegexes","include",decision.includeClassNameRegexes());
         addList(root,"excludeClassNameRegexes","exclude",decision.excludeClassNameRegexes());
+        addList(root,"executorJvmArgs","arg",decision.executorJvmArgs());
+        addMap(root,"executorSystemProperties",decision.executorSystemProperties());
         return root;
     }
 
     private void addValue(Xpp3Dom root,String name,String value){Xpp3Dom node=new Xpp3Dom(name);node.setValue(value);root.addChild(node);}
     private void addList(Xpp3Dom root,String name,String itemName,List<String> values){if(values.isEmpty())return;Xpp3Dom list=new Xpp3Dom(name);for(String value:values){Xpp3Dom item=new Xpp3Dom(itemName);item.setValue(value);list.addChild(item);}root.addChild(list);}
+    private void addMap(Xpp3Dom root,String name,Map<String,String> values){if(values.isEmpty())return;Xpp3Dom map=new Xpp3Dom(name);values.forEach((key,value)->{Xpp3Dom item=new Xpp3Dom(key);item.setValue(value);map.addChild(item);});root.addChild(map);}
     private boolean booleanProperty(MavenSession session,String key){String value=session.getUserProperties().getProperty(key);if(value==null)value=session.getSystemProperties().getProperty(key);return value!=null&&Boolean.parseBoolean(value.trim());}
     private Map<String,String> stringProperties(java.util.Properties properties){Map<String,String> values=new LinkedHashMap<>();if(properties!=null)properties.forEach((key,value)->values.put(String.valueOf(key),String.valueOf(value)));return values;}
     private void info(String message){if(logger!=null)logger.info(message);else System.out.println("[INFO] "+message);}
