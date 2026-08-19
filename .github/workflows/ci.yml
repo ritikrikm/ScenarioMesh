@@ -28,9 +28,16 @@ jobs:
       - name: TestNG normal Maven command
         working-directory: examples/testng-example
         run: mvn -B test
+      - name: Unsupported generic JUnit 4 uses normal Maven execution
+        working-directory: examples/unsupported-junit4-example
+        run: mvn -B test
       - name: Verify reports were generated
         run: |
           test -f examples/junit5-example/target/scenariomesh/report.html
           test -f examples/cucumber-junit-platform-example/target/scenariomesh/report.html
           test -f examples/cucumber-junit4-example/target/scenariomesh/report.html
           test -f examples/testng-example/target/scenariomesh/report.html
+      - name: Verify unsupported project was not taken over
+        run: |
+          test -f examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
+          test ! -e examples/unsupported-junit4-example/target/scenariomesh/report.html
