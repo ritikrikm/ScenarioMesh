@@ -24,8 +24,8 @@ class JUnit4DescriptionLeavesTest {
         assertEquals(2, discovered.size());
         assertEquals(List.of(0, 0), discovered.get(0).selectorPath());
         assertEquals(List.of(0, 1), discovered.get(1).selectorPath());
-        assertEquals("Opportunity feature > Create opportunity(GeneratedRunner123)", discovered.get(0).semanticKey());
-        assertEquals("Opportunity feature > Update opportunity(GeneratedRunner123)", discovered.get(1).semanticKey());
+        assertEquals("Opportunity feature > Create opportunity", discovered.get(0).semanticKey());
+        assertEquals("Opportunity feature > Update opportunity", discovered.get(1).semanticKey());
     }
 
     @Test
@@ -36,7 +36,8 @@ class JUnit4DescriptionLeavesTest {
         String first = leaves.collect(firstRunner).get(0).semanticKey();
         String second = leaves.collect(secondRunner).get(0).semanticKey();
 
-        assertEquals(first.replace("GeneratedRunnerA", "GeneratedRunnerB"), second);
+        assertEquals("Same feature > Same scenario", first);
+        assertEquals(first, second);
     }
 
     private Description runner(String runnerName, String featureName, String scenarioName) {
