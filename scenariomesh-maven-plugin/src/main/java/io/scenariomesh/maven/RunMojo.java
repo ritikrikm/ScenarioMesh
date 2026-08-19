@@ -54,7 +54,7 @@ public final class RunMojo extends AbstractMojo {
     @Parameter
     private List<String> executorJvmArgs;
     @Parameter
-    private Map<String,String> executorSystemProperties;
+    private Map<String, String> executorSystemProperties;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -66,87 +66,146 @@ public final class RunMojo extends AbstractMojo {
 
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         try {
-            Map<String,String> userProperties=stringProperties(session.getUserProperties());
-            Map<String,String> configProperties=stringProperties(session.getSystemProperties());
+            Map<String, String> userProperties = stringProperties(session.getUserProperties());
+            Map<String, String> configProperties = stringProperties(session.getSystemProperties());
             configProperties.putAll(userProperties);
-            Path projectDirectory=project.getBasedir().toPath().toAbsolutePath().normalize();
-            ConfigResolution resolution=new ConfigResolver().resolveDetailed(projectDirectory,buildDirectory,configProperties,System.getenv());
-            ScenarioMeshConfig config=resolution.config();
-            if(!config.enabled()){
+            Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
+            ConfigResolution resolution = new ConfigResolver().resolveDetailed(
+                    projectDirectory, buildDirectory, configProperties, System.getenv());
+            ScenarioMeshConfig config = resolution.config();
+            if (!config.enabled()) {
                 getLog().info("ScenarioMesh disabled; normal Maven test execution remains active.");
                 return;
             }
 
-            DiscoverySelection selection=new DiscoverySelection(
-                    includeClassNameRegexes==null?List.of():includeClassNameRegexes,
-                    excludeClassNameRegexes==null?List.of():excludeClassNameRegexes);
+            DiscoverySelection selection = new DiscoverySelection(
+                    includeClassNameRegexes == null ? List.of() : includeClassNameRegexes,
+                    excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
 
-            getLog().info("ScenarioMesh 0.1.0-SNAPSHOT");
-            getLog().info("Project: "+project.getArtifactId());
-            getLog().info("Maven executor takeover: "+takeoverExecutor);
-            resolution.configFile().ifPresent(path->getLog().info("Config: "+path));
-            getLog().info("Adapter intent: "+config.executionAdapter());
-            getLog().info("Workers: "+config.workerCount());
+            if (config.showConfiguration()) {
+                logConfiguration(config, resolution);
+            }
 
-            RunRequest request=new RunRequest(
+            RunRequest request = new RunRequest(
                     projectDirectory,
                     runtimeClasspath(),
                     testRoots(),
                     userProperties,
                     config,
                     selection,
-                    executorJvmArgs==null?List.of():executorJvmArgs,
-                    executorSystemProperties==null?Map.of():executorSystemProperties);
-            RunOutcome outcome=new ScenarioMeshRunner().run(request);
-            ReportWriter.ReportPaths reports=new ReportWriter().write(outcome,config.reportingDirectory());
-            long passed=outcome.results().stream().filter(result->result.passed()).count();
-            long failed=outcome.results().size()-passed;
-            boolean effectiveSuccess=effectiveSuccess(outcome);
-            getLog().info("Selected adapter: "+String.join(", ",outcome.adapters()));
-            getLog().info("Discovered: "+outcome.tasks().size());
-            getLog().info("Passed: "+passed+", Failed: "+failed);
-            getLog().info("Report: "+reports.latestHtml());
-            if(testFailureIgnore&&!outcome.successful()&&effectiveSuccess){
+                    executorJvmArgs == null ? List.of() : executorJvmArgs,
+                    executorSystemProperties == null ? Map.of() : executorSystemProperties);
+            RunOutcome outcome = new ScenarioMeshRunner().run(request);
+            ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
+            long passed = outcome.results().stream().filter(result -> result.passed()).count();
+            long failed = outcome.results().size() - passed;
+            boolean effectiveSuccess = effectiveSuccess(outcome);
+            getLog().info("ScenarioMesh selected adapter: " + String.join(", ", outcome.adapters()));
+            getLog().info("ScenarioMesh results: discovered=" + outcome.tasks().size()
+                    + ", passed=" + passed + ", failed=" + failed + ", duration=" + outcome.duration());
+            getLog().info("ScenarioMesh report: " + reports.latestHtml());
+            if (testFailureIgnore && !outcome.successful() && effectiveSuccess) {
                 getLog().warn("ScenarioMesh observed test failures, but Maven executor testFailureIgnore=true; infrastructure failures are still fatal.");
             }
 
-            if(deferFailureUntilVerify){
+            if (deferFailureUntilVerify) {
                 DeferredVerificationState.write(
                         buildDirectory,
                         invocationId,
                         effectiveSuccess,
                         reports.latestHtml().toString(),
-                        effectiveSuccess?null:"ScenarioMesh run contained failing or infrastructure results");
-                if(!effectiveSuccess){
+                        effectiveSuccess ? null : "ScenarioMesh run contained failing or infrastructure results");
+                if (!effectiveSuccess) {
                     getLog().warn("ScenarioMesh recorded failures for Maven verify; post-integration-test lifecycle phases will continue.");
                 }
                 return;
             }
-            if(!effectiveSuccess)throw new MojoFailureException("ScenarioMesh run failed. See "+reports.latestHtml());
+            if (!effectiveSuccess) {
+                throw new MojoFailureException("ScenarioMesh run failed. See " + reports.latestHtml());
+            }
         } catch (MojoFailureException failure) {
             throw failure;
         } catch (Exception exception) {
-            if(deferFailureUntilVerify){
-                try{
-                    DeferredVerificationState.write(buildDirectory,invocationId,false,null,
-                            "ScenarioMesh infrastructure failure: "+exception.getMessage());
-                    getLog().error("ScenarioMesh infrastructure failure recorded for Maven verify: "+exception.getMessage());
+            if (deferFailureUntilVerify) {
+                try {
+                    DeferredVerificationState.write(buildDirectory, invocationId, false, null,
+                            "ScenarioMesh infrastructure failure: " + exception.getMessage());
+                    getLog().error("ScenarioMesh infrastructure failure recorded for Maven verify: " + exception.getMessage());
                     return;
-                }catch(Exception stateFailure){
+                } catch (Exception stateFailure) {
                     exception.addSuppressed(stateFailure);
                 }
             }
-            throw new MojoExecutionException("ScenarioMesh infrastructure failure: "+exception.getMessage(),exception);
+            throw new MojoExecutionException("ScenarioMesh infrastructure failure: " + exception.getMessage(), exception);
         }
     }
 
-    private boolean effectiveSuccess(RunOutcome outcome){
-        if(outcome.successful())return true;
-        if(!testFailureIgnore)return false;
-        return outcome.results().stream().allMatch(result->result.passed()||result.status()==ResultStatus.TEST_FAILURE);
+    private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution) {
+        getLog().info("---------------- ScenarioMesh runtime ----------------");
+        getLog().info("ScenarioMesh version       : 0.1.0-SNAPSHOT");
+        getLog().info("Project                    : " + project.getArtifactId());
+        getLog().info("Requested Maven goals      : " + String.join(" ", session.getRequest().getGoals()));
+        getLog().info("Maven executor takeover    : " + takeoverExecutor);
+        getLog().info("Execution phase ownership  : " + (deferFailureUntilVerify ? "integration-test/verify" : "test"));
+        getLog().info("Adapter intent             : " + config.executionAdapter());
+        getLog().info("Adapter mismatch policy    : " + config.adapterMismatchPolicy().externalValue());
+        getLog().info("Workers                    : " + config.workerCount() + " isolated JVM(s)");
+        getLog().info("Scheduler                  : FIFO dynamic assignment");
+        getLog().info("Live worker console logs   : " + enabled(config.liveConsoleLogs()));
+        getLog().info("Per-worker log files       : " + enabled(config.workerLogFiles()));
+        getLog().info("Progress output            : " + enabled(config.showProgress()));
+        getLog().info("Report directory           : " + config.reportingDirectory());
+        resolution.configFile().ifPresentOrElse(
+                path -> getLog().info("Config file                : " + path),
+                () -> getLog().info("Config file                : none (defaults/overrides)"));
+        getLog().info("------------------------------------------------------");
     }
 
-    private Map<String,String> stringProperties(java.util.Properties properties){Map<String,String> values=new LinkedHashMap<>();if(properties!=null)properties.forEach((key,value)->values.put(String.valueOf(key),String.valueOf(value)));return values;}
-    private List<Path> runtimeClasspath() throws Exception {Set<Path> paths=new LinkedHashSet<>();for(String element:project.getTestClasspathElements())paths.add(Path.of(element).toAbsolutePath().normalize());if(pluginArtifacts!=null)for(Artifact artifact:pluginArtifacts){File file=artifact.getFile();if(file!=null&&file.exists())paths.add(file.toPath().toAbsolutePath().normalize());}return List.copyOf(paths);}
-    private List<Path> testRoots(){List<Path> roots=new ArrayList<>();Path standard=Path.of(project.getBuild().getTestOutputDirectory()).toAbsolutePath().normalize();if(Files.isDirectory(standard))roots.add(standard);return List.copyOf(roots);}
+    private String enabled(boolean value) {
+        return value ? "enabled" : "disabled";
+    }
+
+    private boolean effectiveSuccess(RunOutcome outcome) {
+        if (outcome.successful()) {
+            return true;
+        }
+        if (!testFailureIgnore) {
+            return false;
+        }
+        return outcome.results().stream()
+                .allMatch(result -> result.passed() || result.status() == ResultStatus.TEST_FAILURE);
+    }
+
+    private Map<String, String> stringProperties(java.util.Properties properties) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (properties != null) {
+            properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
+        }
+        return values;
+    }
+
+    private List<Path> runtimeClasspath() throws Exception {
+        Set<Path> paths = new LinkedHashSet<>();
+        for (String element : project.getTestClasspathElements()) {
+            paths.add(Path.of(element).toAbsolutePath().normalize());
+        }
+        if (pluginArtifacts != null) {
+            for (Artifact artifact : pluginArtifacts) {
+                File file = artifact.getFile();
+                if (file != null && file.exists()) {
+                    paths.add(file.toPath().toAbsolutePath().normalize());
+                }
+            }
+        }
+        return List.copyOf(paths);
+    }
+
+    private List<Path> testRoots() {
+        List<Path> roots = new ArrayList<>();
+        Path standard = Path.of(project.getBuild().getTestOutputDirectory()).toAbsolutePath().normalize();
+        if (Files.isDirectory(standard)) {
+            roots.add(standard);
+        }
+        return List.copyOf(roots);
+    }
 }
