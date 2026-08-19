@@ -2,7 +2,6 @@ package io.scenariomesh.coordinator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.workerruntime.DiscoveryMain;
-import io.scenariomesh.workerruntime.JavaProcessSupport;
 import io.scenariomesh.workerruntime.JsonCodec;
 
 import java.nio.file.Files;
