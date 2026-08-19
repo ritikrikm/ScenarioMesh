@@ -48,6 +48,7 @@ enum ConfigKey {
     }
 
     private static String environmentName(String propertyName) {
-        return propertyName.toUpperCase(Locale.ROOT).replace('.', '_');
+        String snakeCase = propertyName.replaceAll("([a-z0-9])([A-Z])", "$1_$2");
+        return snakeCase.toUpperCase(Locale.ROOT).replace('.', '_');
     }
 }
