@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -62,7 +63,10 @@ final class ProjectCompatibilityDetector {
                             + String.join(", ", failsafeParticipation.evidence()) + ")");
         }
         if (failsafeParticipation.state() == MavenExecutionPlan.ParticipationState.ACTIVE) {
-            FailsafeCompatibility.Analysis analysis = failsafeCompatibility.analyze(failsafe, failsafeParticipation);
+            FailsafeCompatibility.Analysis analysis = failsafeCompatibility.analyze(
+                    failsafe,
+                    failsafeParticipation,
+                    propertyName -> resolveProperty(session, project, propertyName));
             if (!analysis.supported()) {
                 return CompatibilityDecision.passThrough(
                         "maven-failsafe-plugin participates in this invocation but ScenarioMesh cannot reproduce it safely: "
@@ -76,8 +80,15 @@ final class ProjectCompatibilityDetector {
                                     + "' is present and is not yet reproduced by ScenarioMesh discovery");
                 }
                 return CompatibilityDecision.takeOver(
-                        frameworks.names(), ExecutorKind.FAILSAFE, "integration-test", true,
-                        analysis.includeClassNameRegexes(), analysis.excludeClassNameRegexes());
+                        frameworks.names(),
+                        ExecutorKind.FAILSAFE,
+                        "integration-test",
+                        true,
+                        analysis.includeClassNameRegexes(),
+                        analysis.excludeClassNameRegexes(),
+                        analysis.jvmArgs(),
+                        analysis.systemProperties(),
+                        analysis.testFailureIgnore());
             }
         }
 
@@ -104,7 +115,28 @@ final class ProjectCompatibilityDetector {
             return CompatibilityDecision.passThrough(String.join("; ", reasons));
         }
         return CompatibilityDecision.takeOver(
-                frameworks.names(), ExecutorKind.SUREFIRE, "test", false, List.of(), List.of());
+                frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
+                List.of(), List.of(), List.of(), Map.of(), false);
+    }
+
+    private String resolveProperty(MavenSession session, MavenProject project, String key) {
+        String value = session.getUserProperties().getProperty(key);
+        if (value != null) return value;
+        value = session.getSystemProperties().getProperty(key);
+        if (value != null) return value;
+        value = project.getProperties().getProperty(key);
+        if (value != null) return value;
+
+        return switch (key) {
+            case "project.basedir", "basedir" -> project.getBasedir() == null ? null : project.getBasedir().getAbsolutePath();
+            case "project.build.directory" -> project.getBuild() == null ? null : project.getBuild().getDirectory();
+            case "project.build.outputDirectory" -> project.getBuild() == null ? null : project.getBuild().getOutputDirectory();
+            case "project.build.testOutputDirectory" -> project.getBuild() == null ? null : project.getBuild().getTestOutputDirectory();
+            case "project.artifactId" -> project.getArtifactId();
+            case "project.groupId" -> project.getGroupId();
+            case "project.version" -> project.getVersion();
+            default -> null;
+        };
     }
 
     private boolean requestsTestLifecycle(MavenSession session) {
@@ -185,23 +217,44 @@ final class ProjectCompatibilityDetector {
                                  String takeoverPhase,
                                  boolean deferFailureUntilVerify,
                                  List<String> includeClassNameRegexes,
-                                 List<String> excludeClassNameRegexes) {
+                                 List<String> excludeClassNameRegexes,
+                                 List<String> executorJvmArgs,
+                                 Map<String, String> executorSystemProperties,
+                                 boolean testFailureIgnore) {
         CompatibilityDecision {
             frameworks = Set.copyOf(frameworks == null ? Set.of() : frameworks);
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
+            executorJvmArgs = List.copyOf(executorJvmArgs == null ? List.of() : executorJvmArgs);
+            executorSystemProperties = Map.copyOf(executorSystemProperties == null ? Map.of() : executorSystemProperties);
         }
+
         static CompatibilityDecision takeOver(Set<String> frameworks,
                                               ExecutorKind executorKind,
                                               String phase,
                                               boolean deferFailure,
                                               List<String> includes,
-                                              List<String> excludes) {
-            return new CompatibilityDecision(true, frameworks, "supported framework/model configuration detected",
-                    executorKind, phase, deferFailure, includes, excludes);
+                                              List<String> excludes,
+                                              List<String> jvmArgs,
+                                              Map<String, String> systemProperties,
+                                              boolean testFailureIgnore) {
+            return new CompatibilityDecision(
+                    true,
+                    frameworks,
+                    "supported framework/model configuration detected",
+                    executorKind,
+                    phase,
+                    deferFailure,
+                    includes,
+                    excludes,
+                    jvmArgs,
+                    systemProperties,
+                    testFailureIgnore);
         }
+
         static CompatibilityDecision passThrough(String reason) {
-            return new CompatibilityDecision(false, Set.of(), reason, null, null, false, List.of(), List.of());
+            return new CompatibilityDecision(false, Set.of(), reason, null, null, false,
+                    List.of(), List.of(), List.of(), Map.of(), false);
         }
     }
 
