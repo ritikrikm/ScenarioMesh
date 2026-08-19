@@ -1,0 +1,9 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId><artifactId>cucumber-junit-platform-example</artifactId><version>1.0-SNAPSHOT</version>
+  <properties><maven.compiler.release>17</maven.compiler.release><cucumber.version>7.20.1</cucumber.version></properties>
+  <dependencies>
+    <dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java</artifactId><version>${cucumber.version}</version><scope>test</scope></dependency>
+    <dependency><groupId>io.cucumber</groupId><artifactId>cucumber-junit-platform-engine</artifactId><version>${cucumber.version}</version><scope>test</scope></dependency>
+  </dependencies>
+</project>

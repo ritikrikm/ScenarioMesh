@@ -1,0 +1,8 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId><artifactId>testng-example</artifactId><version>1.0-SNAPSHOT</version>
+  <properties><maven.compiler.release>17</maven.compiler.release></properties>
+  <dependencies>
+    <dependency><groupId>org.testng</groupId><artifactId>testng</artifactId><version>7.10.2</version><scope>test</scope></dependency>
+  </dependencies>
+</project>

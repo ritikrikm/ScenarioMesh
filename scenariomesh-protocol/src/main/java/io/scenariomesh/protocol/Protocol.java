@@ -1,2 +1,18 @@
-package io.scenariomesh.protocol; import com.fasterxml.jackson.databind.*;import java.util.*;
-public final class Protocol {public static final int VERSION=1; public enum Type{HELLO,READY,RUN,RESULT,HEARTBEAT,DRAIN,STOP,ERROR,ACK} public record Envelope(int protocolVersion,Type type,UUID requestId,String runId,JsonNode payload){public Envelope{if(protocolVersion!=VERSION)throw new IllegalArgumentException("Unsupported protocol version: "+protocolVersion);Objects.requireNonNull(type);Objects.requireNonNull(requestId);}} public static final class Codec{private final ObjectMapper mapper=new ObjectMapper();public byte[] encode(Envelope e)throws Exception{return mapper.writeValueAsBytes(e);}public Envelope decode(byte[] b)throws Exception{return mapper.readValue(b,Envelope.class);}}}
+package io.scenariomesh.protocol;
+
+import io.scenariomesh.core.Domain.ExecutionResult;
+import io.scenariomesh.core.Domain.ScenarioTask;
+
+public final class Protocol {
+    public static final int VERSION = 1;
+    private Protocol() {}
+    public enum Type { HELLO, RUN, RESULT, STOP, ACK, ERROR }
+    public record Envelope(int protocolVersion, Type type, String workerId, String token, ScenarioTask task, ExecutionResult result, String error) {
+        public static Envelope hello(String workerId, String token) { return new Envelope(VERSION, Type.HELLO, workerId, token, null, null, null); }
+        public static Envelope run(String workerId, ScenarioTask task) { return new Envelope(VERSION, Type.RUN, workerId, null, task, null, null); }
+        public static Envelope result(String workerId, ExecutionResult result) { return new Envelope(VERSION, Type.RESULT, workerId, null, null, result, null); }
+        public static Envelope stop(String workerId) { return new Envelope(VERSION, Type.STOP, workerId, null, null, null, null); }
+        public static Envelope ack(String workerId) { return new Envelope(VERSION, Type.ACK, workerId, null, null, null, null); }
+        public static Envelope error(String workerId, String error) { return new Envelope(VERSION, Type.ERROR, workerId, null, null, null, error); }
+    }
+}
