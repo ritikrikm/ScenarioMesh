@@ -1,13 +1,15 @@
 # ScenarioMesh
 
-ScenarioMesh is a process-isolated parallel execution runtime for existing Java test repositories. The current MVP is intentionally small: it proves the complete path from a repository's normal Maven command to automatic discovery, isolated worker JVMs, dynamic task assignment, result aggregation, and a unified report.
+ScenarioMesh is a process-isolated parallel execution runtime for existing Java test repositories. Its product goal is simple: install it once in a supported Maven repository and keep using the repository's normal Maven command. ScenarioMesh sits underneath the test suite, discovers the work the framework would execute, starts isolated worker JVMs, dynamically assigns executable tests, collects results, and returns the correct Maven outcome.
 
-## MVP support
+ScenarioMesh is **not** a Selenium framework, a WebDriver proxy, a Gherkin parser, a replacement for Cucumber/JUnit/TestNG, or a shell wrapper around Maven.
+
+## Current MVP support
 
 | Repository style | MVP status |
 |---|---|
 | Maven + native JUnit 5 / JUnit Platform | Supported |
-| Maven + Cucumber JUnit Platform engine | Supported |
+| Maven + Cucumber using the JUnit Platform engine | Supported through the JUnit Platform adapter |
 | Maven + Cucumber JUnit 4 runner | Supported |
 | Maven + generated Cucumber JUnit 4 runners / generated feature copies | Supported when each generated runner exposes executable JUnit leaves |
 | Maven Failsafe `integration-test` / `verify` execution | Supported for the documented compatible subset; unsupported semantics pass through |
@@ -16,159 +18,423 @@ ScenarioMesh is a process-isolated parallel execution runtime for existing Java 
 | TestNG XML-suite-only / factory-heavy discovery | Pass-through when detectable from Maven configuration; otherwise not yet supported |
 | Gradle | Not yet supported |
 
-ScenarioMesh does **not** parse Gherkin and does not replace Selenium, Cucumber, JUnit, TestNG, Surefire, or Failsafe. Target-project dependencies and test resources are loaded in worker JVMs from the Maven test runtime classpath.
+Target-project libraries such as Selenium, REST Assured, Jackson, internal company libraries, listeners and resources are loaded from Maven's resolved test runtime classpath. ScenarioMesh does not hard-code them.
 
-## What happens during a normal Maven command
+---
+
+## The complete runtime flow
+
+A normal repository command can be `mvn test`, `mvn verify`, `mvn clean install`, `mvn clean compile verify`, or another lifecycle command. ScenarioMesh does not require the command to be known ahead of time.
 
 ```text
-normal Maven command (`test`, `verify`, `install`, ...)
+normal Maven command
         ↓
-ScenarioMesh Maven Core Extension
+.mvn/extensions.xml loads ScenarioMesh Maven Core Extension
         ↓
-shared config resolution
+ScenarioMesh inspects the requested Maven lifecycle
         ↓
-actual Maven lifecycle / participating test-executor analysis
-   ├── cannot guarantee compatibility → leave normal Maven execution unchanged
-   └── compatible → inject ScenarioMesh at the owned test phase and suppress only the replaced executor
+Which test executor actually participates in THIS invocation?
         ↓
-prepare target test runtime classpath
+Surefire / Failsafe / unsupported execution semantics
         ↓
-probe registered framework adapters
-        ↓
-AUTO: exactly one adapter owns executable tests?
-   ├── yes → select it
-   └── no  → fail clearly rather than guess
-        ↓
-ScenarioTask list
-        ↓
-start isolated JVM workers (4 by default)
-        ↓
-dynamic FIFO assignment: next free worker gets next task
-        ↓
-collect typed results
-        ↓
-JSON + JUnit XML + HTML report
-        ↓
-correct Maven success/failure
+Compatibility gate
+   ├── cannot reproduce semantics safely
+   │       ↓
+   │   PASS-THROUGH
+   │   normal Maven remains in control
+   │
+   └── compatible
+           ↓
+       inject ScenarioMesh at the phase owned by that executor
+           ↓
+       suppress only the Maven test execution ScenarioMesh replaces
+           ↓
+       preserve compilation, generation, profiles and properties
+           ↓
+       build target test runtime classpath
+           ↓
+       framework-native adapter discovery
+           ↓
+       ScenarioTask list
+           ↓
+       start isolated worker JVMs
+           ↓
+       dynamic FIFO assignment
+           ↓
+       collect terminal results
+           ↓
+       write JSON / JUnit XML / HTML reports
+           ↓
+       preserve Maven success/failure semantics
 ```
 
-The compatibility gate is intentionally conservative. ScenarioMesh prefers a false negative (normal Maven runs) over taking ownership of a project whose existing test semantics it cannot reproduce safely. Compatibility is based on the Maven execution that actually participates in the requested lifecycle, not merely on whether Surefire or Failsafe appears in the POM.
+Correctness is more important than parallelism. If ScenarioMesh cannot prove that it can reproduce the participating Maven executor safely, it does not guess.
 
-For Failsafe, ScenarioMesh currently translates compatible `argLine`, `systemPropertyVariables`, `testFailureIgnore`, class includes/excludes, and a zero `rerunFailingTestsCount`. Positive Failsafe retry counts still pass through until exact retry semantics are implemented, preventing ScenarioMesh from accidentally duplicating reruns. Unknown or unsupported Maven test-executor settings remain pass-through material rather than being ignored.
+---
 
-The workers exist only for the current Maven run in the MVP. Persistent/recyclable workers are a later milestone.
+## How Maven takeover works
 
-## Generated Cucumber JUnit 4 runners
+### Core Extension
 
-Some Maven/Cucumber repositories expand `Scenario Outline` example rows or other generated execution units into separate feature resources and JUnit 4 runner classes. Those generated units may legitimately have the **same feature name and scenario display name** while containing different substituted values.
+A target repository activates ScenarioMesh through `.mvn/extensions.xml`. The extension participates in Maven itself; ScenarioMesh does not replace the `mvn` executable and does not require a wrapper script.
 
-ScenarioMesh therefore separates human-readable identity from execution identity:
+The extension sees the actual requested lifecycle. For example:
+
+```text
+mvn test
+→ lifecycle ends at test
+→ Failsafe normally bound to integration-test is irrelevant to this invocation
+```
+
+while:
+
+```text
+mvn clean compile verify
+→ lifecycle reaches integration-test and verify
+→ a Failsafe integration-test execution participates
+→ ScenarioMesh must reproduce that Failsafe execution before takeover is allowed
+```
+
+The important rule is:
+
+```text
+"plugin exists in the POM"
+        ≠
+"plugin participates in this Maven invocation"
+```
+
+ScenarioMesh reasons about the execution that actually participates.
+
+### Surefire
+
+For a compatible Surefire-owned `test` lifecycle, ScenarioMesh takes ownership at the test phase and prevents the replaced Surefire execution from executing the same tests again.
+
+### Failsafe
+
+For a compatible Failsafe-owned integration-test lifecycle, ScenarioMesh takes ownership at `integration-test`, while Maven's surrounding lifecycle remains intact:
+
+```text
+generate sources/resources
+        ↓
+compile / test-compile
+        ↓
+package / pre-integration-test
+        ↓
+ScenarioMesh execution at integration-test
+        ↓
+post-integration-test
+        ↓
+verify
+```
+
+This is important because enterprise repositories may prepare environments, generate runners, archive reports, or perform cleanup around the integration-test lifecycle.
+
+ScenarioMesh currently translates the compatible Failsafe subset including class includes/excludes, compatible `argLine`, `systemPropertyVariables`, `testFailureIgnore`, and `rerunFailingTestsCount=0`. Positive retry counts and unknown execution-affecting settings pass through until exact equivalent behavior exists. ScenarioMesh never silently drops such settings.
+
+---
+
+## Discovery: how ScenarioMesh knows what to run
+
+ScenarioMesh does **not** parse arbitrary `.feature` files itself.
+
+Discovery is performed by framework adapters using the framework's execution model. All adapters return the same framework-neutral domain model:
+
+```text
+framework discovery
+        ↓
+ScenarioTask
+        ↓
+coordinator / scheduler / workers
+```
+
+The coordinator therefore does not know whether a task came from Cucumber, JUnit or TestNG.
+
+### Adapter registry
+
+The current runtime ships three registered adapter implementations:
+
+```text
+AdapterRegistry
+├── junit-platform
+├── cucumber-junit4
+└── testng
+```
+
+They are **combined only through the common `ScenarioAdapter` interface and registry**. Their framework-specific discovery/execution logic remains separate. Adding a future adapter should not require Cucumber/TestNG logic to be added to the coordinator or scheduler.
+
+### 1. JUnit Platform adapter
+
+Adapter id:
+
+```text
+junit-platform
+```
+
+It supports native JUnit 5 and Cucumber when Cucumber runs as a JUnit Platform engine. Discovery uses the JUnit Platform Launcher/TestPlan model rather than reading Gherkin manually.
+
+Conceptually:
+
+```text
+LauncherDiscoveryRequest
+        ↓
+JUnit Platform Launcher
+        ↓
+registered test engines
+        ↓
+TestPlan
+        ↓
+executable test identifiers
+        ↓
+ScenarioTask
+```
+
+If the Cucumber engine is installed, Cucumber scenarios appear through that official engine. If native Jupiter tests are installed, they appear through Jupiter.
+
+### 2. Cucumber JUnit 4 adapter
+
+Adapter id:
+
+```text
+cucumber-junit4
+```
+
+This adapter finds JUnit 4 classes whose `@RunWith` points to a supported Cucumber runner. It asks JUnit for the runner's `Description` tree and walks executable leaf descriptions.
+
+```text
+JUnit 4 runner class
+        ↓
+Request.aClass(...)
+        ↓
+JUnit Description tree
+        ↓
+executable leaves
+        ↓
+ScenarioTask
+```
+
+A runner is a **container**, not automatically one task. One runner can expose multiple executable leaves.
+
+### Generated Cucumber JUnit 4 runners
+
+Some repositories generate one feature resource / runner per Scenario Outline row or other execution unit. Example:
+
+```gherkin
+Scenario Outline: Close opportunity
+  Given "<user>" logs in
+  ...
+
+Examples:
+| user |
+| BM   |
+| PBA  |
+```
+
+A generator may produce:
+
+```text
+target/parallel/features/...scenario001_run001_IT.feature
+→ user = BM
+
+target/parallel/features/...scenario004_run001_IT.feature
+→ user = PBA
+```
+
+with matching runner classes.
+
+Those generated executions can legitimately have the same feature/scenario display text. ScenarioMesh therefore separates **display identity** from **execution identity**:
 
 ```text
 Display identity
-  feature/scenario description
-  → reporting and diagnostics only
+→ feature/scenario description
+→ reports and diagnostics
 
 Execution identity
-  framework adapter + runner class + JUnit leaf selector
-  → task uniqueness and execution
+→ adapter + runner class + JUnit leaf selector
+→ uniqueness and actual execution
 ```
 
-ScenarioMesh does **not** deduplicate Cucumber JUnit 4 work by scenario name. If Maven/Failsafe exposes two distinct generated runners, their executable leaves remain distinct ScenarioMesh tasks even when their display text is identical. This preserves row-wise Scenario Outline expansion and other generator-specific execution units without hard-coding example-column names, generated filename formats, company conventions, or data values.
+ScenarioMesh does **not** deduplicate JUnit 4 Cucumber work by scenario name. Different generated runners remain different executable tasks even if the text shown to a human is identical. This remains generic because ScenarioMesh does not care whether rows differ by `user`, `stage`, `product`, browser, dataset, or ten example columns.
 
-A single runner may expose multiple executable leaves; ScenarioMesh schedules each leaf independently. Conversely, `one runner = one scenario` is never assumed.
+### 3. TestNG adapter
 
-## One-time installation for a target repository
+Adapter id:
 
-First install or publish ScenarioMesh itself. During local development:
-
-```bash
-mvn clean install
+```text
+testng
 ```
 
-Then add `.mvn/extensions.xml` to the target repository:
+The MVP supports standard method-level TestNG `@Test` discovery/execution. TestNG XML-suite-only and factory-heavy models are not claimed as supported when ScenarioMesh cannot reproduce them safely.
 
-```xml
-<extensions>
-  <extension>
-    <groupId>io.scenariomesh</groupId>
-    <artifactId>scenariomesh-maven-extension</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
-  </extension>
-</extensions>
+---
+
+## Automatic adapter selection
+
+Default configuration:
+
+```yaml
+execution:
+  adapter: auto
 ```
 
-No test-source or target `pom.xml` dependency changes are required. After that, keep using the repository's existing lifecycle command, for example:
+AUTO does not simply look for dependencies. ScenarioMesh probes the registered adapters using the target project's actual compiled test roots and runtime classpath.
 
-```bash
-mvn test
+```text
+junit-platform probe
+cucumber-junit4 probe
+testng probe
+        ↓
+collect evidence
+        ↓
+exactly one adapter discovers executable tests?
+        ├── YES → select it
+        └── NO  → do not guess
 ```
 
-```bash
-mvn clean compile verify
+A repository can explicitly state an adapter, but ScenarioMesh still validates that assertion against runtime evidence. See `docs/configuration.md`.
+
+---
+
+## Worker model
+
+Workers are separate Java processes, not Java threads inside the target test JVM.
+
+```text
+Coordinator JVM
+   │
+   ├── worker-1 JVM
+   ├── worker-2 JVM
+   ├── worker-3 JVM
+   └── worker-4 JVM
 ```
 
-or with framework-native filters:
+Each worker has its own heap, static fields, singletons and framework state. This is the main compatibility advantage for older Selenium frameworks that may contain static WebDriver fields or other global mutable state.
 
-```bash
-mvn test -Dcucumber.filter.tags="@Regression"
+### How workers are created
+
+The Maven integration gives ScenarioMesh the target project's resolved test runtime classpath. ScenarioMesh launches child JVMs using Java `ProcessBuilder` and the current Java runtime rather than hard-coded operating-system commands or classpath separators.
+
+Each worker receives:
+
+- the target project's test runtime classpath;
+- ScenarioMesh worker runtime classes;
+- configured worker JVM arguments;
+- compatible executor JVM arguments inherited from Surefire/Failsafe;
+- user/system properties needed by the test runtime;
+- a dynamically allocated loopback control endpoint;
+- a worker id.
+
+No user-maintained giant `-cp` command is required.
+
+### Worker control protocol
+
+Worker control is separate from test logging. The coordinator opens a dynamically allocated loopback TCP endpoint and workers exchange versioned JSON protocol messages such as HELLO, RUN, RESULT and STOP.
+
+Target framework stdout/stderr is **never used as the control protocol**, so logging from Selenium/Cucumber/application code cannot corrupt ScenarioMesh control messages.
+
+### Scheduling
+
+Current MVP scheduler:
+
+```text
+FIFO + dynamic assignment
 ```
 
-Command-line `-D` properties are forwarded to discovery and worker JVMs so framework-native properties such as Cucumber tag filters remain available. If a Maven selector or executor setting is not yet reproduced safely, the compatibility gate leaves the run with normal Maven instead of changing the selected test set.
+All tasks enter the scheduler. Each worker requests/receives the next available task after finishing its current task.
 
-## Configuration: automatic by default, explicit when useful
+```text
+32 tasks
+        ↓
+worker-1 gets task 1
+worker-2 gets task 2
+worker-3 gets task 3
+worker-4 gets task 4
+        ↓
+worker-2 finishes first
+        ↓
+worker-2 immediately gets task 5
+```
 
-**No config file is required.** The default adapter mode is `auto`, worker count is `4`, and ScenarioMesh probes the target runtime to determine which registered adapter actually discovers executable tests.
+This is not static "8 tasks per worker" partitioning. Faster workers naturally consume more tasks.
 
-A repository can optionally add `scenariomesh.yml` when it needs stable team-owned overrides or when the team wants to state which adapter is expected:
+---
+
+## Runtime observability and logs
+
+ScenarioMesh now exposes both target-framework logs and its own operational state.
+
+Default logging configuration:
 
 ```yaml
 scenariomesh:
   configVersion: 1
-  enabled: true
-
-  execution:
-    adapter: auto
-    adapterMismatchPolicy: fail
-
-  workers:
-    count: 4
-
-  reporting:
-    directory: target/scenariomesh
+  logging:
+    liveConsole: true
+    workerFiles: true
+    showConfiguration: true
+    showProgress: true
 ```
 
-`execution.adapter` supports `auto`, `junit-platform`, `cucumber-junit4`, `testng`, and future adapter IDs registered by newer ScenarioMesh runtimes. Explicit adapter configuration is treated as a **user assertion** and is still validated against runtime discovery evidence; it is not a switch that disables safety checks.
+### Startup configuration summary
 
-If `auto` finds more than one adapter with executable tests, ScenarioMesh refuses to guess. A team that intentionally has multiple framework libraries can set the correct adapter explicitly. If the configured adapter does not apply, `adapterMismatchPolicy: fail` stops safely; `use-detected` may use a different adapter only when exactly one alternative is uniquely detected.
-
-See [`docs/configuration.md`](docs/configuration.md) for why the file exists, every switch, all current options, defaults, environment variables, precedence, validation rules, and examples. A fully commented template is available as [`scenariomesh.example.yml`](scenariomesh.example.yml).
-
-Configuration precedence is centralized and consistent:
+With `showConfiguration: true`, the Maven console shows the resolved runtime plan before execution, including:
 
 ```text
-Maven -D property
-      ↓
-environment variable
-      ↓
-scenariomesh.yml / scenariomesh.yaml
-      ↓
-documented ScenarioMesh defaults
+ScenarioMesh version
+Project
+Requested Maven goals
+Maven executor takeover (Surefire/Failsafe)
+Owned lifecycle phase
+Adapter intent
+Adapter mismatch policy
+Worker count
+Scheduler
+Live-console setting
+Worker-file setting
+Progress setting
+Report directory
+Config source
 ```
 
-## Workers
+Secrets and target project system-property values are intentionally not dumped.
 
-Default worker count is **4** and is owned by `ScenarioMeshConfig`, not duplicated in runtime code.
+### Live target-framework logs
 
-Canonical override:
+With `liveConsole: true`, stdout/stderr produced inside each worker is mirrored to Maven/Jenkins while retaining the target framework's existing message content:
 
-```bash
-mvn test -Dscenariomesh.workers.count=2
+```text
+[ScenarioMesh][worker-1] INFO com.example.steps.LoginSteps - opening login page
+[ScenarioMesh][worker-3] INFO com.example.steps.OpportunitySteps - opportunity created
 ```
 
-The earlier MVP property `-Dscenariomesh.workers=2` remains a backward-compatible alias.
+Parallel logs can naturally interleave; the worker prefix makes ownership visible.
 
-Workers are separate JVM processes. This provides isolation for legacy frameworks that use static WebDriver fields, mutable singletons, global caches, or other process-local state.
+### Per-worker files
+
+With `workerFiles: true`, the same worker stream is saved separately as raw output:
+
+```text
+target/scenariomesh/runs/<run-id>/logs/worker-1.log
+target/scenariomesh/runs/<run-id>/logs/worker-2.log
+...
+```
+
+`liveConsole` and `workerFiles` are independent booleans. Both may be on, either may be on alone, or both may be off. Even when both are off, ScenarioMesh still drains the child process stream so a verbose worker cannot deadlock on a full stdout buffer.
+
+### Progress
+
+With `showProgress: true`, ScenarioMesh prints worker lifecycle and queue state:
+
+```text
+[ScenarioMesh] Starting worker-1 (pid=...)
+[ScenarioMesh] worker-1 READY
+[ScenarioMesh] Scheduler FIFO loaded 32 task(s); 4 worker(s) ready.
+[ScenarioMesh] worker-2 RUN Close opportunity | completed=3/32 busy=4 queued=25
+[ScenarioMesh] worker-3 PASSED Update lead | completed=4/32 failed=0 busy=3 queued=25
+```
+
+This makes it visible which worker is active and how much of the run remains.
+
+---
 
 ## Reports
 
@@ -186,16 +452,108 @@ target/scenariomesh/
         ├── junit.xml
         ├── discovered-scenarios.json
         ├── discovery.log
-        └── logs/
+        └── logs/                    # present when workerFiles=true
             ├── worker-1.log
             ├── worker-2.log
             ├── worker-3.log
             └── worker-4.log
 ```
 
-When the compatibility gate chooses pass-through, ScenarioMesh does not take ownership of the project's test executor and does not create a ScenarioMesh report; the repository's normal Maven behavior remains in control.
+When the compatibility gate chooses pass-through, ScenarioMesh does not run workers and normal Maven remains responsible for test reports.
 
-Override the report directory with `-Dscenariomesh.reporting.directory=...`.
+---
+
+## One-time installation in a target repository
+
+Install/publish ScenarioMesh itself. During local development:
+
+```bash
+mvn clean install
+```
+
+Add `.mvn/extensions.xml` to the target repository:
+
+```xml
+<extensions>
+  <extension>
+    <groupId>io.scenariomesh</groupId>
+    <artifactId>scenariomesh-maven-extension</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </extension>
+</extensions>
+```
+
+Then keep using the repository's normal Maven command:
+
+```bash
+mvn test
+```
+
+or:
+
+```bash
+mvn clean compile verify
+```
+
+or with framework-native properties:
+
+```bash
+mvn test -Dcucumber.filter.tags="@Regression"
+```
+
+Command-line properties are forwarded to discovery and worker JVMs where required. ScenarioMesh does not require feature files, step definitions, WebDriver implementations or runner source to be rewritten.
+
+---
+
+## Configuration
+
+No `scenariomesh.yml` file is required. Defaults are centralized in `ScenarioMeshConfig`.
+
+Example:
+
+```yaml
+scenariomesh:
+  configVersion: 1
+  enabled: true
+
+  execution:
+    adapter: auto
+    adapterMismatchPolicy: fail
+
+  workers:
+    count: 4
+    startupTimeout: PT30S
+    shutdownTimeout: PT10S
+    jvmArgs: []
+
+  discovery:
+    timeout: PT2M
+
+  reporting:
+    directory: target/scenariomesh
+
+  logging:
+    liveConsole: true
+    workerFiles: true
+    showConfiguration: true
+    showProgress: true
+```
+
+Configuration precedence is centralized:
+
+```text
+Maven -D property
+      ↓
+environment variable
+      ↓
+scenariomesh.yml / scenariomesh.yaml
+      ↓
+documented defaults
+```
+
+See [`docs/configuration.md`](docs/configuration.md) and [`scenariomesh.example.yml`](scenariomesh.example.yml) for every switch and rationale.
+
+---
 
 ## Disable ScenarioMesh
 
@@ -203,7 +561,7 @@ Override the report directory with `-Dscenariomesh.reporting.directory=...`.
 mvn test -Dscenariomesh.enabled=false
 ```
 
-or in `scenariomesh.yml`:
+or:
 
 ```yaml
 scenariomesh:
@@ -211,12 +569,37 @@ scenariomesh:
   enabled: false
 ```
 
-When disabled, the extension does not suppress Maven's normal test execution.
+When disabled, ScenarioMesh does not suppress the repository's normal Maven test execution.
 
-## MVP architecture
+---
 
-Framework code is isolated behind `ScenarioAdapter`. JUnit Platform, Cucumber JUnit 4, and TestNG adapters emit the same `ScenarioTask` type. The scheduler and worker coordinator have no Cucumber/Selenium/TestNG imports.
+## Why the architecture is separated this way
 
-Worker control uses a versioned JSON protocol over a dynamically allocated loopback TCP port. Test stdout/stderr is redirected to per-worker files, so target logging cannot corrupt the control protocol.
+```text
+Maven integration
+→ determines whether/where ScenarioMesh may take ownership
 
-See `docs/architecture.md`, `docs/mvp.md`, and `docs/configuration.md`.
+Adapter layer
+→ understands framework-native discovery/execution
+
+Core domain
+→ ScenarioTask / ExecutionResult and framework-neutral contracts
+
+Scheduler
+→ decides task assignment only
+
+Coordinator
+→ owns run orchestration and worker processes
+
+Worker runtime
+→ executes one selected task inside an isolated JVM
+
+Reporting
+→ aggregates framework-neutral results
+```
+
+This separation is intentional. Maven-specific behavior does not belong in the scheduler. Cucumber-specific behavior does not belong in the coordinator. Selenium-specific behavior does not belong in ScenarioMesh at all.
+
+The MVP uses ephemeral per-run workers. Persistent/recyclable worker pools, duration-aware scheduling, resource leases, daemon lifecycle, remote launchers and broader retry semantics remain future milestones and should build on these boundaries rather than replacing them.
+
+See `docs/architecture.md`, `docs/mvp.md`, `docs/configuration.md`, and `docs/adapter-development.md`.
