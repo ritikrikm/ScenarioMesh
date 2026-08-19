@@ -1,0 +1,7 @@
+scenariomesh:
+  configVersion: 1
+  execution:
+    adapter: auto
+    adapterMismatchPolicy: fail
+  workers:
+    count: 4
