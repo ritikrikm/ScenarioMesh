@@ -13,7 +13,6 @@ import org.junit.platform.engine.discovery.ClassNameFilter;
 import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
-import org.junit.platform.launcher.PostDiscoveryFilter;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.TestPlan;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
@@ -33,16 +32,10 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqueId;
 
 public final class JUnitPlatformAdapter implements ScenarioAdapter {
-    public static final String ID = "junit-platform";
+    public static final String ID="junit-platform";
     public String id(){return ID;}
     public String framework(){return "junit-platform";}
-
-    public boolean isAvailable(ClassLoader cl){
-        try{
-            Class.forName("org.junit.platform.launcher.Launcher",false,cl);
-            return ServiceLoader.load(TestEngine.class,cl).iterator().hasNext();
-        }catch(ClassNotFoundException e){return false;}
-    }
+    public boolean isAvailable(ClassLoader cl){try{Class.forName("org.junit.platform.launcher.Launcher",false,cl);return ServiceLoader.load(TestEngine.class,cl).iterator().hasNext();}catch(ClassNotFoundException e){return false;}}
 
     public List<ScenarioTask> discover(AdapterContext c){
         if(c.testRoots().isEmpty())return List.of();
@@ -50,26 +43,21 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                 .selectors(selectClasspathRoots(new HashSet<>(c.testRoots())))
                 .filters(EngineFilter.excludeEngines("junit-vintage"));
         if(!c.discoverySelection().includeClassNameRegexes().isEmpty()){
-            builder.filters(ClassNameFilter.includeClassNamePatterns(
-                    c.discoverySelection().includeClassNameRegexes().toArray(String[]::new)));
+            builder.filters(ClassNameFilter.includeClassNamePatterns(c.discoverySelection().includeClassNameRegexes().toArray(String[]::new)));
         }
         if(!c.discoverySelection().excludeClassNameRegexes().isEmpty()){
-            builder.filters(ClassNameFilter.excludeClassNamePatterns(
-                    c.discoverySelection().excludeClassNameRegexes().toArray(String[]::new)));
+            builder.filters(ClassNameFilter.excludeClassNamePatterns(c.discoverySelection().excludeClassNameRegexes().toArray(String[]::new)));
         }
         LauncherDiscoveryRequest req=builder.build();
         Launcher launcher=LauncherFactory.create();
         TestPlan plan=launcher.discover(req);
-        List<ScenarioTask> tasks=new ArrayList<>();
-        Set<String> seen=new HashSet<>();
-        for(TestIdentifier root:plan.getRoots()){
-            for(TestIdentifier id:plan.getDescendants(root)){
-                if(!id.isTest()||!plan.getChildren(id).isEmpty())continue;
-                String uid=id.getUniqueId();if(!seen.add(uid))continue;
-                Set<String> tags=new HashSet<>();for(TestTag tag:id.getTags())tags.add(tag.getName());
-                String fw=uid.contains("[engine:cucumber]")?"cucumber-junit-platform":"junit5";
-                tasks.add(new ScenarioTask(ScenarioIds.from(ID,uid),id.getDisplayName(),ID,fw,null,null,uid,tags,Map.of("uniqueId",uid)));
-            }
+        List<ScenarioTask> tasks=new ArrayList<>();Set<String> seen=new HashSet<>();
+        for(TestIdentifier root:plan.getRoots())for(TestIdentifier id:plan.getDescendants(root)){
+            if(!id.isTest()||!plan.getChildren(id).isEmpty())continue;
+            String uid=id.getUniqueId();if(!seen.add(uid))continue;
+            Set<String> tags=new HashSet<>();for(TestTag tag:id.getTags())tags.add(tag.getName());
+            String fw=uid.contains("[engine:cucumber]")?"cucumber-junit-platform":"junit5";
+            tasks.add(new ScenarioTask(ScenarioIds.from(ID,uid),id.getDisplayName(),ID,fw,null,null,uid,tags,Map.of("uniqueId",uid)));
         }
         return List.copyOf(tasks);
     }
