@@ -30,6 +30,10 @@ class ConfigResolverTest {
         assertEquals(4, config.workerCount());
         assertEquals(Duration.ofMinutes(2), config.discoveryTimeout());
         assertEquals(project.resolve("target/scenariomesh").toAbsolutePath().normalize(), config.reportingDirectory());
+        assertTrue(config.liveConsoleLogs());
+        assertTrue(config.workerLogFiles());
+        assertTrue(config.showConfiguration());
+        assertTrue(config.showProgress());
     }
 
     @Test
@@ -52,6 +56,11 @@ class ConfigResolverTest {
                     timeout: PT3M
                   reporting:
                     directory: reports/scenariomesh
+                  logging:
+                    liveConsole: false
+                    workerFiles: true
+                    showConfiguration: false
+                    showProgress: false
                 """);
 
         ConfigResolver.ConfigResolution resolution = resolver.resolveDetailed(
@@ -67,6 +76,10 @@ class ConfigResolverTest {
         assertEquals(Duration.ofMinutes(3), config.discoveryTimeout());
         assertEquals(2, config.workerJvmArgs().size());
         assertEquals(project.resolve("reports/scenariomesh").toAbsolutePath().normalize(), config.reportingDirectory());
+        assertFalse(config.liveConsoleLogs());
+        assertTrue(config.workerLogFiles());
+        assertFalse(config.showConfiguration());
+        assertFalse(config.showProgress());
         assertEquals(project.resolve("scenariomesh.yml").toAbsolutePath().normalize(), resolution.configFile().orElseThrow());
     }
 
@@ -79,16 +92,19 @@ class ConfigResolverTest {
                     count: 5
                   execution:
                     adapter: testng
+                  logging:
+                    liveConsole: false
                 """);
 
         ScenarioMeshConfig config = resolver.resolve(
                 project,
                 project.resolve("target"),
-                Map.of("scenariomesh.workers.count", "9"),
+                Map.of("scenariomesh.workers.count", "9", "scenariomesh.logging.liveConsole", "true"),
                 Map.of("SCENARIOMESH_WORKERS_COUNT", "8", "SCENARIOMESH_EXECUTION_ADAPTER", "junit-platform"));
 
         assertEquals(9, config.workerCount());
         assertEquals("junit-platform", config.executionAdapter());
+        assertTrue(config.liveConsoleLogs());
     }
 
     @Test
