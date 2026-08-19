@@ -12,9 +12,11 @@ import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.component.annotations.Component;
 import org.codehaus.plexus.component.annotations.Requirement;
 import org.codehaus.plexus.logging.Logger;
+import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Component(role = AbstractMavenLifecycleParticipant.class, hint = "scenariomesh")
@@ -26,103 +28,114 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
     private final ConfigResolver configResolver = new ConfigResolver();
 
-    @Requirement
-    private Logger logger;
+    @Requirement private Logger logger;
 
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
-        if (booleanProperty(session, "skipTests") || booleanProperty(session, "maven.test.skip")) {
-            return;
-        }
+        if (booleanProperty(session, "skipTests") || booleanProperty(session, "maven.test.skip")) return;
 
-        Map<String, String> configProperties = stringProperties(session.getSystemProperties());
+        Map<String,String> configProperties=stringProperties(session.getSystemProperties());
         configProperties.putAll(stringProperties(session.getUserProperties()));
 
-        for (MavenProject project : session.getProjects()) {
-            if ("pom".equals(project.getPackaging())) {
-                continue;
-            }
+        for(MavenProject project:session.getProjects()){
+            if("pom".equals(project.getPackaging()))continue;
 
             ScenarioMeshConfig config;
             ConfigResolution resolution;
-            try {
-                Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
-                Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
-                resolution = configResolver.resolveDetailed(
-                        projectDirectory,
-                        buildDirectory,
-                        configProperties,
-                        System.getenv());
-                config = resolution.config();
-            } catch (IllegalArgumentException exception) {
-                throw new MavenExecutionException(
-                        "ScenarioMesh configuration error for project '" + project.getArtifactId() + "': "
-                                + exception.getMessage(),
-                        exception);
+            try{
+                Path projectDirectory=project.getBasedir().toPath().toAbsolutePath().normalize();
+                Path buildDirectory=Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
+                resolution=configResolver.resolveDetailed(projectDirectory,buildDirectory,configProperties,System.getenv());
+                config=resolution.config();
+            }catch(IllegalArgumentException exception){
+                throw new MavenExecutionException("ScenarioMesh configuration error for project '"+project.getArtifactId()+"': "+exception.getMessage(),exception);
             }
 
-            if (!config.enabled()) {
-                info("ScenarioMesh: disabled for " + project.getArtifactId() + "; normal Maven execution remains active.");
+            if(!config.enabled()){
+                info("ScenarioMesh: disabled for "+project.getArtifactId()+"; normal Maven execution remains active.");
                 continue;
             }
 
-            ProjectCompatibilityDetector.CompatibilityDecision decision = compatibilityDetector.evaluate(session, project);
-            if (!decision.compatible()) {
-                info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + decision.reason());
+            ProjectCompatibilityDetector.CompatibilityDecision decision=compatibilityDetector.evaluate(session,project);
+            if(!decision.compatible()){
+                info("ScenarioMesh: pass-through for "+project.getArtifactId()+" - "+decision.reason());
                 continue;
             }
 
-            injectScenarioMesh(project);
-            project.getProperties().setProperty("skipTests", "true");
-            String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
-            info("ScenarioMesh: takeover enabled for " + project.getArtifactId()
-                    + " (signals=" + String.join(", ", decision.frameworks())
-                    + ", adapterIntent=" + config.executionAdapter() + configText + ")");
+            injectScenarioMesh(project,decision);
+            suppressOwnedExecutor(project,decision.executorKind());
+            String configText=resolution.configFile().map(path->", config="+path).orElse("");
+            info("ScenarioMesh: takeover enabled for "+project.getArtifactId()
+                    +" (executor="+decision.executorKind().name().toLowerCase()
+                    +", phase="+decision.takeoverPhase()
+                    +", signals="+String.join(", ",decision.frameworks())
+                    +", adapterIntent="+config.executionAdapter()+configText+")");
         }
     }
 
-    private void injectScenarioMesh(MavenProject project) {
-        Plugin plugin = project.getPlugin(GROUP_ID + ":" + PLUGIN_ARTIFACT_ID);
-        if (plugin == null) {
-            plugin = new Plugin();
-            plugin.setGroupId(GROUP_ID);
-            plugin.setArtifactId(PLUGIN_ARTIFACT_ID);
-            plugin.setVersion(VERSION);
+    private void suppressOwnedExecutor(MavenProject project, ProjectCompatibilityDetector.ExecutorKind executorKind){
+        if(executorKind==ProjectCompatibilityDetector.ExecutorKind.FAILSAFE){
+            project.getProperties().setProperty("skipITs","true");
+        }else{
+            project.getProperties().setProperty("skipTests","true");
+        }
+    }
+
+    private void injectScenarioMesh(MavenProject project,ProjectCompatibilityDetector.CompatibilityDecision decision){
+        Plugin plugin=project.getPlugin(GROUP_ID+":"+PLUGIN_ARTIFACT_ID);
+        if(plugin==null){
+            plugin=new Plugin();plugin.setGroupId(GROUP_ID);plugin.setArtifactId(PLUGIN_ARTIFACT_ID);plugin.setVersion(VERSION);
             project.getBuild().addPlugin(plugin);
         }
-        boolean alreadyPresent = plugin.getExecutions().stream()
-                .anyMatch(execution -> "scenariomesh-test".equals(execution.getId()));
-        if (alreadyPresent) {
-            return;
+        if(plugin.getExecutions().stream().noneMatch(execution->"scenariomesh-run".equals(execution.getId()))){
+            PluginExecution run=new PluginExecution();
+            run.setId("scenariomesh-run");
+            run.setPhase(decision.takeoverPhase());
+            run.addGoal("run");
+            run.setConfiguration(runConfiguration(decision));
+            plugin.addExecution(run);
         }
-        PluginExecution execution = new PluginExecution();
-        execution.setId("scenariomesh-test");
-        execution.setPhase("test");
-        execution.addGoal("run");
-        plugin.addExecution(execution);
+        if(decision.deferFailureUntilVerify()
+                && plugin.getExecutions().stream().noneMatch(execution->"scenariomesh-verify".equals(execution.getId()))){
+            PluginExecution verify=new PluginExecution();
+            verify.setId("scenariomesh-verify");
+            verify.setPhase("verify");
+            verify.addGoal("verify");
+            plugin.addExecution(verify);
+        }
     }
 
-    private boolean booleanProperty(MavenSession session, String key) {
-        String value = session.getUserProperties().getProperty(key);
-        if (value == null) {
-            value = session.getSystemProperties().getProperty(key);
-        }
-        return value != null && Boolean.parseBoolean(value.trim());
+    private Xpp3Dom runConfiguration(ProjectCompatibilityDetector.CompatibilityDecision decision){
+        Xpp3Dom root=new Xpp3Dom("configuration");
+        addValue(root,"deferFailureUntilVerify",Boolean.toString(decision.deferFailureUntilVerify()));
+        addValue(root,"takeoverExecutor",decision.executorKind().name().toLowerCase());
+        addList(root,"includeClassNameRegexes","include",decision.includeClassNameRegexes());
+        addList(root,"excludeClassNameRegexes","exclude",decision.excludeClassNameRegexes());
+        return root;
     }
 
-    private Map<String, String> stringProperties(java.util.Properties properties) {
-        Map<String, String> values = new LinkedHashMap<>();
-        if (properties != null) {
-            properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        }
+    private void addValue(Xpp3Dom root,String name,String value){
+        Xpp3Dom node=new Xpp3Dom(name);node.setValue(value);root.addChild(node);
+    }
+
+    private void addList(Xpp3Dom root,String name,String itemName,List<String> values){
+        if(values.isEmpty())return;
+        Xpp3Dom list=new Xpp3Dom(name);
+        for(String value:values){Xpp3Dom item=new Xpp3Dom(itemName);item.setValue(value);list.addChild(item);}
+        root.addChild(list);
+    }
+
+    private boolean booleanProperty(MavenSession session,String key){
+        String value=session.getUserProperties().getProperty(key);
+        if(value==null)value=session.getSystemProperties().getProperty(key);
+        return value!=null&&Boolean.parseBoolean(value.trim());
+    }
+
+    private Map<String,String> stringProperties(java.util.Properties properties){
+        Map<String,String> values=new LinkedHashMap<>();
+        if(properties!=null)properties.forEach((key,value)->values.put(String.valueOf(key),String.valueOf(value)));
         return values;
     }
 
-    private void info(String message) {
-        if (logger != null) {
-            logger.info(message);
-        } else {
-            System.out.println("[INFO] " + message);
-        }
-    }
+    private void info(String message){if(logger!=null)logger.info(message);else System.out.println("[INFO] "+message);}
 }
