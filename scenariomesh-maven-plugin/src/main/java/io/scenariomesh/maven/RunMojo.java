@@ -6,6 +6,7 @@ import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.coordinator.RunOutcome;
 import io.scenariomesh.coordinator.RunRequest;
 import io.scenariomesh.coordinator.ScenarioMeshRunner;
+import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.reporting.ReportWriter;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
@@ -53,10 +54,7 @@ public final class RunMojo extends AbstractMojo {
             Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
             ConfigResolution resolution = new ConfigResolver().resolveDetailed(
-                    projectDirectory,
-                    buildDirectory,
-                    configProperties,
-                    System.getenv());
+                    projectDirectory, buildDirectory, configProperties, System.getenv());
             ScenarioMeshConfig config = resolution.config();
             if (!config.enabled()) {
                 getLog().info("ScenarioMesh disabled; normal Maven test execution remains active.");
@@ -72,7 +70,8 @@ public final class RunMojo extends AbstractMojo {
             getLog().info("Adapter mismatch policy: " + config.adapterMismatchPolicy().externalValue());
             getLog().info("Workers: " + config.workerCount());
 
-            RunRequest request = new RunRequest(projectDirectory, classpath, testRoots, userProperties, config);
+            RunRequest request = new RunRequest(
+                    projectDirectory, classpath, testRoots, userProperties, config, DiscoverySelection.all());
             RunOutcome outcome = new ScenarioMeshRunner().run(request);
             ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
             long passed = outcome.results().stream().filter(result -> result.passed()).count();
