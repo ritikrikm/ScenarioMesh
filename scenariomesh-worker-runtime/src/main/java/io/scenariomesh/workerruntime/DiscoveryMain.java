@@ -3,6 +3,7 @@ package io.scenariomesh.workerruntime;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.config.ScenarioMeshConfig.AdapterMismatchPolicy;
+import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
@@ -24,7 +25,11 @@ public final class DiscoveryMain {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         AdapterRegistry registry = new AdapterRegistry();
         Map<String, String> properties = systemProperties();
-        AdapterContext context = new AdapterContext(classLoader, parsed.testRoots, properties);
+        AdapterContext context = new AdapterContext(
+                classLoader,
+                parsed.testRoots,
+                properties,
+                new DiscoverySelection(parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes));
 
         Map<String, List<ScenarioTask>> discoveredByAdapter = new LinkedHashMap<>();
         List<AdapterEvidence> evidence = new ArrayList<>();
@@ -100,8 +105,6 @@ public final class DiscoveryMain {
             return new Selection(selected.getKey(), selected.getValue(), List.of());
         }
 
-        // Validate that the configured id belongs to this installed runtime before
-        // treating it as a repository assertion.
         registry.required(parsed.adapter);
         List<ScenarioTask> configuredTasks = discoveredByAdapter.get(parsed.adapter);
         if (configuredTasks != null && !configuredTasks.isEmpty()) {
@@ -185,12 +188,21 @@ public final class DiscoveryMain {
         private final List<Path> testRoots;
         private final String adapter;
         private final AdapterMismatchPolicy mismatchPolicy;
+        private final List<String> includeClassNameRegexes;
+        private final List<String> excludeClassNameRegexes;
 
-        private Arguments(Path output, List<Path> testRoots, String adapter, AdapterMismatchPolicy mismatchPolicy) {
+        private Arguments(Path output,
+                          List<Path> testRoots,
+                          String adapter,
+                          AdapterMismatchPolicy mismatchPolicy,
+                          List<String> includeClassNameRegexes,
+                          List<String> excludeClassNameRegexes) {
             this.output = output;
             this.testRoots = testRoots;
             this.adapter = adapter;
             this.mismatchPolicy = mismatchPolicy;
+            this.includeClassNameRegexes = includeClassNameRegexes;
+            this.excludeClassNameRegexes = excludeClassNameRegexes;
         }
 
         private static Arguments parse(String[] args) {
@@ -198,6 +210,8 @@ public final class DiscoveryMain {
             List<Path> roots = new ArrayList<>();
             String adapter = ScenarioMeshConfig.AUTO_ADAPTER;
             AdapterMismatchPolicy mismatchPolicy = AdapterMismatchPolicy.FAIL;
+            List<String> includes = new ArrayList<>();
+            List<String> excludes = new ArrayList<>();
 
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
@@ -206,13 +220,16 @@ public final class DiscoveryMain {
                     case "--adapter" -> adapter = requireValue(args, ++i, "--adapter").trim().toLowerCase(java.util.Locale.ROOT);
                     case "--adapter-mismatch-policy" -> mismatchPolicy = AdapterMismatchPolicy.parse(
                             requireValue(args, ++i, "--adapter-mismatch-policy"));
+                    case "--include-class-regex" -> includes.add(requireValue(args, ++i, "--include-class-regex"));
+                    case "--exclude-class-regex" -> excludes.add(requireValue(args, ++i, "--exclude-class-regex"));
                     default -> throw new IllegalArgumentException("Unknown discovery argument: " + args[i]);
                 }
             }
             if (output == null) {
                 throw new IllegalArgumentException("--output is required");
             }
-            return new Arguments(output, List.copyOf(roots), adapter, mismatchPolicy);
+            return new Arguments(output, List.copyOf(roots), adapter, mismatchPolicy,
+                    List.copyOf(includes), List.copyOf(excludes));
         }
 
         private static String requireValue(String[] args, int index, String name) {
