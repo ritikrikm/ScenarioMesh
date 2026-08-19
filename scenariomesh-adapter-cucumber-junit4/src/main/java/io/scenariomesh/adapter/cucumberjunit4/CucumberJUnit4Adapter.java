@@ -34,15 +34,8 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
 
     private final JUnit4DescriptionLeaves descriptionLeaves = new JUnit4DescriptionLeaves();
 
-    @Override
-    public String id() {
-        return ID;
-    }
-
-    @Override
-    public String framework() {
-        return "cucumber-junit4";
-    }
+    @Override public String id() { return ID; }
+    @Override public String framework() { return "cucumber-junit4"; }
 
     @Override
     public boolean isAvailable(ClassLoader classLoader) {
@@ -60,32 +53,20 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
             Description root = Request.aClass(runner).getRunner().getDescription();
             for (JUnit4DescriptionLeaves.Leaf leaf : descriptionLeaves.collect(root)) {
                 DiscoveredOwner previous = ownersBySemanticKey.putIfAbsent(
-                        leaf.semanticKey(),
-                        new DiscoveredOwner(runner.getName(), leaf.selectorPath()));
+                        leaf.semanticKey(), new DiscoveredOwner(runner.getName(), leaf.selectorPath()));
                 if (previous != null && !previous.runnerClass().equals(runner.getName())) {
                     throw new IllegalStateException(
-                            "Cucumber JUnit 4 discovery is ambiguous: executable test '"
-                                    + leaf.semanticKey()
-                                    + "' is exposed by more than one runner ('"
-                                    + previous.runnerClass() + "' and '" + runner.getName() + "'). "
-                                    + "ScenarioMesh will not silently duplicate or discard the test. "
-                                    + "Check generated runner configuration or use a more specific execution adapter/configuration.");
+                            "Cucumber JUnit 4 discovery is ambiguous: executable test '" + leaf.semanticKey()
+                                    + "' is exposed by more than one runner ('" + previous.runnerClass() + "' and '"
+                                    + runner.getName() + "'). ScenarioMesh will not silently duplicate or discard the test.");
                 }
 
                 String selector = new Selector(runner.getName(), leaf.selectorPath()).encode();
                 Description description = leaf.description();
                 tasks.add(new ScenarioTask(
-                        ScenarioIds.from(ID, selector),
-                        description.getDisplayName(),
-                        ID,
-                        framework(),
-                        null,
-                        null,
-                        selector,
-                        Set.of(),
-                        Map.of(
-                                "runnerClass", runner.getName(),
-                                "frameworkDescription", leaf.semanticKey())));
+                        ScenarioIds.from(ID, selector), description.getDisplayName(), ID, framework(),
+                        null, null, selector, Set.of(),
+                        Map.of("runnerClass", runner.getName(), "frameworkDescription", leaf.semanticKey())));
             }
         }
         return List.copyOf(tasks);
@@ -99,57 +80,43 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         Description selected = descriptionAtPath(base.getRunner().getDescription(), selector.path());
         if (selected == null) {
             Instant now = Instant.now();
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                     Duration.ZERO, context.workerId(), context.attempt(), now, now,
-                    "Could not resolve JUnit 4 scenario selector " + task.selector(),
-                    "SelectionFailure");
+                    "Could not resolve JUnit 4 scenario selector " + task.selector(), "SelectionFailure");
         }
 
         Instant started = Instant.now();
         Result result = new JUnitCore().run(base.filterWith(selected));
         Instant finished = Instant.now();
         if (!result.wasSuccessful()) {
-            Throwable failure = result.getFailures().isEmpty()
-                    ? null
-                    : result.getFailures().get(0).getException();
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.TEST_FAILURE,
-                    Duration.between(started, finished), context.workerId(), context.attempt(),
-                    started, finished,
+            Throwable failure = result.getFailures().isEmpty() ? null : result.getFailures().get(0).getException();
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE,
+                    Duration.between(started, finished), context.workerId(), context.attempt(), started, finished,
                     failure == null ? result.getFailures().toString() : failure.getMessage(),
                     failure == null ? null : failure.getClass().getName());
         }
         if (result.getRunCount() == 0) {
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
-                    Duration.between(started, finished), context.workerId(), context.attempt(),
-                    started, finished,
-                    "JUnit 4 selected scenario produced zero executed tests",
-                    "SelectionFailure");
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                    Duration.between(started, finished), context.workerId(), context.attempt(), started, finished,
+                    "JUnit 4 selected scenario produced zero executed tests", "SelectionFailure");
         }
-        return new ExecutionResult(
-                task.id(), task.displayName(), ResultStatus.PASSED,
-                Duration.between(started, finished), context.workerId(), context.attempt(),
-                started, finished, null, null);
+        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED,
+                Duration.between(started, finished), context.workerId(), context.attempt(), started, finished, null, null);
     }
 
     private List<Class<?>> findCucumberRunnerClasses(AdapterContext context) throws IOException {
         List<Class<?>> result = new ArrayList<>();
         for (Path root : context.testRoots()) {
-            if (!Files.isDirectory(root)) {
-                continue;
-            }
+            if (!Files.isDirectory(root)) continue;
             try (Stream<Path> stream = Files.walk(root)) {
-                for (Path file : stream
-                        .filter(path -> path.toString().endsWith(".class"))
+                for (Path file : stream.filter(path -> path.toString().endsWith(".class"))
                         .filter(path -> !path.getFileName().toString().contains("$"))
-                        .sorted(Comparator.naturalOrder())
-                        .toList()) {
+                        .sorted(Comparator.naturalOrder()).toList()) {
                     String name = root.relativize(file).toString()
-                            .replace('/', '.')
-                            .replace('\\', '.')
-                            .replaceAll("\\.class$", "");
+                            .replace('/', '.').replace('\\', '.').replaceAll("\\.class$", "");
+                    if (!context.discoverySelection().matchesClassName(name)) {
+                        continue;
+                    }
                     try {
                         Class<?> candidate = Class.forName(name, false, context.classLoader());
                         RunWith runWith = candidate.getAnnotation(RunWith.class);
@@ -169,52 +136,33 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         Description current = root;
         for (Integer index : path) {
             List<Description> children = current.getChildren();
-            if (index < 0 || index >= children.size()) {
-                return null;
-            }
+            if (index < 0 || index >= children.size()) return null;
             current = children.get(index);
         }
         return current;
     }
 
     private boolean present(ClassLoader classLoader, String name) {
-        try {
-            Class.forName(name, false, classLoader);
-            return true;
-        } catch (ClassNotFoundException ignored) {
-            return false;
-        }
+        try { Class.forName(name, false, classLoader); return true; }
+        catch (ClassNotFoundException ignored) { return false; }
     }
 
     private record DiscoveredOwner(String runnerClass, List<Integer> path) {
-        private DiscoveredOwner {
-            path = List.copyOf(path);
-        }
+        private DiscoveredOwner { path = List.copyOf(path); }
     }
 
     private record Selector(String runnerClass, List<Integer> path) {
         String encode() {
-            return runnerClass + "#" + path.stream()
-                    .map(String::valueOf)
-                    .reduce((left, right) -> left + "." + right)
-                    .orElse("");
+            return runnerClass + "#" + path.stream().map(String::valueOf)
+                    .reduce((left, right) -> left + "." + right).orElse("");
         }
-
         static Selector parse(String value) {
             int separator = value.indexOf('#');
-            if (separator < 0) {
-                throw new IllegalArgumentException("Invalid JUnit 4 selector: " + value);
-            }
+            if (separator < 0) throw new IllegalArgumentException("Invalid JUnit 4 selector: " + value);
             String runner = value.substring(0, separator);
             String pathText = value.substring(separator + 1);
-            if (pathText.isBlank()) {
-                return new Selector(runner, List.of());
-            }
-            return new Selector(
-                    runner,
-                    Stream.of(pathText.split("\\."))
-                            .map(Integer::parseInt)
-                            .toList());
+            if (pathText.isBlank()) return new Selector(runner, List.of());
+            return new Selector(runner, Stream.of(pathText.split("\\.")).map(Integer::parseInt).toList());
         }
     }
 }
