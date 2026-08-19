@@ -2,7 +2,7 @@
 
 ScenarioMesh is designed to work with **zero configuration** for repositories whose Maven/test execution model can be detected safely. The configuration file exists for three reasons:
 
-1. to override operational defaults such as worker count and timeouts;
+1. to override operational defaults such as worker count, timeouts and observability;
 2. to let a team state an expected execution adapter when a repository contains multiple test-framework libraries;
 3. to make ambiguous or enterprise-specific intent explicit without hard-coding repository names, paths, framework versions, or company conventions into ScenarioMesh.
 
@@ -41,6 +41,12 @@ scenariomesh:
 
   reporting:
     directory: target/scenariomesh
+
+  logging:
+    liveConsole: true
+    workerFiles: true
+    showConfiguration: true
+    showProgress: true
 ```
 
 Every key is optional except that, when a file is present, `configVersion` must be supported. Missing values use ScenarioMesh defaults.
@@ -70,7 +76,7 @@ Equivalent override: `-Dscenariomesh.enabled=false`.
 **Options in the current runtime:**
 
 - `auto` — default. ScenarioMesh probes every available adapter and selects it automatically when exactly one adapter discovers executable tests. If more than one adapter claims executable tests, ScenarioMesh does not guess.
-- `junit-platform` — explicitly use the JUnit Platform adapter (native JUnit 5 and Cucumber JUnit Platform are handled through the platform engine).
+- `junit-platform` — explicitly use the JUnit Platform adapter. Native JUnit 5 and Cucumber running through the JUnit Platform engine are both discovered through the official launcher/test plan.
 - `cucumber-junit4` — explicitly use the legacy Cucumber/JUnit 4 adapter.
 - `testng` — explicitly use the native TestNG adapter.
 
@@ -136,6 +142,8 @@ workers:
 
 **Default:** empty list.
 
+Maven Surefire/Failsafe JVM arguments that ScenarioMesh has explicitly declared compatible are merged with these worker arguments; project-local operational overrides do not replace executor semantics.
+
 ### `discovery.timeout`
 
 **Why it exists:** framework-native discovery can load a large test runtime. A bounded timeout prevents Maven from hanging forever when discovery is broken.
@@ -151,6 +159,85 @@ workers:
 **Options:** absolute or project-relative path.
 
 **Default:** `${project.build.directory}/scenariomesh` (normally `target/scenariomesh`).
+
+### `logging.liveConsole`
+
+**Why it exists:** Surefire/Failsafe normally make target-framework output visible in the Maven/Jenkins console. ScenarioMesh workers are separate JVMs, so ScenarioMesh must deliberately mirror their stdout/stderr back to the build console.
+
+**Options:** `true` or `false`.
+
+**Default:** `true`.
+
+When enabled, each line is prefixed with its worker id, for example:
+
+```text
+[ScenarioMesh][worker-2] INFO com.example.steps.LoginSteps - login successful
+```
+
+The worker id prefix is added by ScenarioMesh. The remainder of the line is produced by the target project and keeps its existing logging style.
+
+Equivalent override: `-Dscenariomesh.logging.liveConsole=false`.
+
+### `logging.workerFiles`
+
+**Why it exists:** interleaved parallel console output is useful live, but a per-worker file is much easier to inspect after a failure.
+
+**Options:** `true` or `false`.
+
+**Default:** `true`.
+
+When enabled, raw worker stdout/stderr is persisted under the run directory:
+
+```text
+target/scenariomesh/runs/<run-id>/logs/worker-1.log
+```
+
+The worker stream is always drained even when this option and `liveConsole` are both false, preventing a verbose child JVM from blocking on a full process-output buffer.
+
+Equivalent override: `-Dscenariomesh.logging.workerFiles=false`.
+
+### `logging.showConfiguration`
+
+**Why it exists:** users should be able to tell immediately what ScenarioMesh resolved instead of guessing which adapter, executor, scheduler or worker settings are active.
+
+**Options:** `true` or `false`.
+
+**Default:** `true`.
+
+The startup summary includes requested Maven goals, executor takeover, lifecycle ownership, adapter intent, worker count, scheduler, logging switches, report directory and config source. Secrets and target-project system-property values are intentionally not printed.
+
+Equivalent override: `-Dscenariomesh.logging.showConfiguration=false`.
+
+### `logging.showProgress`
+
+**Why it exists:** a parallel run needs visible operational state: worker creation, READY state, assignment, completed/failed counts, active workers and remaining queue.
+
+**Options:** `true` or `false`.
+
+**Default:** `true`.
+
+Typical output:
+
+```text
+[ScenarioMesh] worker-1 READY
+[ScenarioMesh] worker-2 RUN Create opportunity | completed=3/32 busy=4 queued=25
+[ScenarioMesh] worker-3 PASSED Update lead | completed=4/32 failed=0 busy=3 queued=25
+```
+
+Equivalent override: `-Dscenariomesh.logging.showProgress=false`.
+
+## Logging combinations
+
+`liveConsole` and `workerFiles` are independent:
+
+| liveConsole | workerFiles | Behavior |
+|---|---|---|
+| `true` | `true` | Live Maven/Jenkins output + per-worker files (default) |
+| `true` | `false` | Live console only |
+| `false` | `true` | Quiet target logs in console; per-worker files retained |
+| `false` | `false` | Target output is consumed but not displayed/persisted; ScenarioMesh operational output can still be controlled separately |
+
+`showConfiguration` and `showProgress` control ScenarioMesh's own operational information, not the target framework's logs.
 
 ## Auto-detection and explicit configuration
 
