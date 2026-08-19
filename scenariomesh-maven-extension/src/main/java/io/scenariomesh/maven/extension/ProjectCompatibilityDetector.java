@@ -42,6 +42,7 @@ final class ProjectCompatibilityDetector {
             "classpathDependencyExclude",
             "classpathDependencyExcludes",
             "dependenciesToScan",
+            "enableAssertions",
             "environmentVariables",
             "excludedGroups",
             "excludes",
