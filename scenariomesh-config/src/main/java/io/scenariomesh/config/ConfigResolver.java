@@ -53,7 +53,11 @@ public final class ConfigResolver {
                 durationValue(value(ConfigKey.WORKER_STARTUP_TIMEOUT, properties, environment, yaml), defaults.workerStartupTimeout(), ConfigKey.WORKER_STARTUP_TIMEOUT),
                 durationValue(value(ConfigKey.WORKER_SHUTDOWN_TIMEOUT, properties, environment, yaml), defaults.workerShutdownTimeout(), ConfigKey.WORKER_SHUTDOWN_TIMEOUT),
                 pathValue(value(ConfigKey.REPORTING_DIRECTORY, properties, environment, yaml), projectDirectory, defaults.reportingDirectory()),
-                listValue(value(ConfigKey.WORKER_JVM_ARGS, properties, environment, yaml), defaults.workerJvmArgs()));
+                listValue(value(ConfigKey.WORKER_JVM_ARGS, properties, environment, yaml), defaults.workerJvmArgs()),
+                booleanValue(value(ConfigKey.LOGGING_LIVE_CONSOLE, properties, environment, yaml), defaults.liveConsoleLogs(), ConfigKey.LOGGING_LIVE_CONSOLE),
+                booleanValue(value(ConfigKey.LOGGING_WORKER_FILES, properties, environment, yaml), defaults.workerLogFiles(), ConfigKey.LOGGING_WORKER_FILES),
+                booleanValue(value(ConfigKey.LOGGING_SHOW_CONFIGURATION, properties, environment, yaml), defaults.showConfiguration(), ConfigKey.LOGGING_SHOW_CONFIGURATION),
+                booleanValue(value(ConfigKey.LOGGING_SHOW_PROGRESS, properties, environment, yaml), defaults.showProgress(), ConfigKey.LOGGING_SHOW_PROGRESS));
 
         return new ConfigResolution(resolved, loaded.source());
     }
