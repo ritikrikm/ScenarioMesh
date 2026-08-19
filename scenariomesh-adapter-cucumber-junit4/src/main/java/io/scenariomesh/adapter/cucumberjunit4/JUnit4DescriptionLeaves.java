@@ -49,12 +49,14 @@ final class JUnit4DescriptionLeaves {
     }
 
     private String identityPart(Description description) {
-        String displayName = description.getDisplayName();
         String methodName = description.getMethodName();
-        if (methodName == null || methodName.isBlank() || displayName.contains(methodName)) {
-            return displayName;
+        if (methodName != null && !methodName.isBlank()) {
+            // JUnit's default display name often appends "(RunnerClass)". That
+            // class is an execution container, not scenario identity, so use the
+            // framework-provided method/scenario name when it exists.
+            return methodName;
         }
-        return displayName + " [" + methodName + "]";
+        return description.getDisplayName();
     }
 
     record Leaf(Description description,
