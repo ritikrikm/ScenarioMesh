@@ -10,7 +10,7 @@ The MVP is a complete vertical slice, not the final platform. It deliberately im
 
 ## Discovery
 
-The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucumber running on JUnit Platform is therefore discovered by its own engine. The legacy Cucumber/JUnit 4 adapter asks JUnit for the Cucumber runner's Description tree and schedules its leaf tests; it does not parse `.feature` files. TestNG MVP discovery is limited to standard method-level `@Test` classes.
+The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucumber running on JUnit Platform is therefore discovered by its own engine. The legacy Cucumber/JUnit 4 adapter asks JUnit for the Cucumber runner's `Description` tree and schedules executable leaf tests; it does not parse `.feature` files and it does not assume one runner equals one scenario. A generated runner is treated as an execution container. If different runners expose the same framework description identity, the MVP fails discovery as ambiguous rather than silently duplicating or dropping execution. TestNG MVP discovery is limited to standard method-level `@Test` classes.
 
 ## Isolation and scheduling
 
@@ -25,6 +25,8 @@ Worker stdout/stderr is redirected to per-worker logs. The control protocol ther
 ## Maven lifecycle
 
 A Maven Core Extension is installed once through `.mvn/extensions.xml`. During `afterProjectsRead`, it injects the ScenarioMesh Maven plugin into non-POM projects for the `test` phase and sets Maven's normal test execution to skip for that project while ScenarioMesh is enabled. The ScenarioMesh goal still runs because it does not use Surefire's skip flag.
+
+Compatibility is evaluated against the requested lifecycle, not merely against plugin presence. For example, a normal Failsafe execution bound to `integration-test`/`verify` does not block a plain `mvn test`, because those phases are not reached. The same Failsafe execution is relevant to `mvn verify`, and ScenarioMesh currently passes through because integration-test lifecycle equivalence is not yet implemented. A custom Failsafe execution bound unusually to `test`, or an execution whose phase cannot be established, also remains pass-through. Unknown behavior is conservative by design.
 
 `-Dscenariomesh.enabled=false` causes the extension to make no lifecycle modifications, preserving the repository's normal Maven behavior.
 
