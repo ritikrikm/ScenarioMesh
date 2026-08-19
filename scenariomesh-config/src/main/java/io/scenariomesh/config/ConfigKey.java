@@ -19,7 +19,11 @@ enum ConfigKey {
     WORKER_SHUTDOWN_TIMEOUT("scenariomesh.workers.shutdownTimeout", "scenariomesh.worker.shutdownTimeout"),
     WORKER_JVM_ARGS("scenariomesh.workers.jvmArgs", "scenariomesh.worker.jvmArgs"),
     DISCOVERY_TIMEOUT("scenariomesh.discovery.timeout"),
-    REPORTING_DIRECTORY("scenariomesh.reporting.directory");
+    REPORTING_DIRECTORY("scenariomesh.reporting.directory"),
+    LOGGING_LIVE_CONSOLE("scenariomesh.logging.liveConsole"),
+    LOGGING_WORKER_FILES("scenariomesh.logging.workerFiles"),
+    LOGGING_SHOW_CONFIGURATION("scenariomesh.logging.showConfiguration"),
+    LOGGING_SHOW_PROGRESS("scenariomesh.logging.showProgress");
 
     private final String canonical;
     private final List<String> aliases;
