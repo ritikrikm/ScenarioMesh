@@ -17,25 +17,23 @@ final class JUnit4DescriptionLeaves {
     List<Leaf> collect(Description root) {
         Objects.requireNonNull(root, "root");
         List<Leaf> leaves = new ArrayList<>();
-        collect(root, new ArrayList<>(), new ArrayList<>(), leaves, true);
+        collect(root, new ArrayList<>(), new ArrayList<>(), leaves);
         return List.copyOf(leaves);
     }
 
     private void collect(Description description,
                          List<Integer> selectorPath,
                          List<String> semanticPath,
-                         List<Leaf> leaves,
-                         boolean root) {
+                         List<Leaf> leaves) {
         List<Description> children = description.getChildren();
         if (children.isEmpty() && description.isTest()) {
-            List<String> identityPath = new ArrayList<>(semanticPath);
-            if (!root) {
-                identityPath.add(identityPart(description));
-            }
+            List<String> identityPath = semanticPath.isEmpty()
+                    ? List.of(identityPart(description))
+                    : List.copyOf(semanticPath);
             leaves.add(new Leaf(
                     description,
                     List.copyOf(selectorPath),
-                    List.copyOf(identityPath),
+                    identityPath,
                     String.join(" > ", identityPath)));
             return;
         }
@@ -44,7 +42,7 @@ final class JUnit4DescriptionLeaves {
             Description child = children.get(index);
             selectorPath.add(index);
             semanticPath.add(identityPart(child));
-            collect(child, selectorPath, semanticPath, leaves, false);
+            collect(child, selectorPath, semanticPath, leaves);
             semanticPath.remove(semanticPath.size() - 1);
             selectorPath.remove(selectorPath.size() - 1);
         }
