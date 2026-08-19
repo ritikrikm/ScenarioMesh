@@ -5,5 +5,6 @@
   <dependencies>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-core</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>${junit4.version}</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
   </dependencies>
 </project>
