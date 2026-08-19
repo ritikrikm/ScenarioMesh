@@ -1,6 +1,6 @@
 # ScenarioMesh
 
-ScenarioMesh is a process-isolated parallel execution runtime for existing Java test repositories. The current MVP is intentionally small: it proves the complete path from a repository's normal Maven command to automatic discovery, four isolated worker JVMs, dynamic task assignment, result aggregation, and a unified report.
+ScenarioMesh is a process-isolated parallel execution runtime for existing Java test repositories. The current MVP is intentionally small: it proves the complete path from a repository's normal Maven command to automatic discovery, isolated worker JVMs, dynamic task assignment, result aggregation, and a unified report.
 
 ## MVP support
 
@@ -23,17 +23,23 @@ normal Maven command
         ↓
 ScenarioMesh Maven Core Extension
         ↓
-compatibility gate
+shared config resolution
+        ↓
+Maven compatibility gate
    ├── cannot guarantee MVP compatibility → leave Maven/Surefire unchanged
    └── compatible → inject ScenarioMesh test goal + suppress normal Surefire execution
         ↓
 prepare target test runtime classpath
         ↓
-framework-native discovery
+probe registered framework adapters
+        ↓
+AUTO: exactly one adapter owns executable tests?
+   ├── yes → select it
+   └── no  → fail clearly rather than guess
         ↓
 ScenarioTask list
         ↓
-start 4 isolated JVM workers (default)
+start isolated JVM workers (4 by default)
         ↓
 dynamic FIFO assignment: next free worker gets next task
         ↓
@@ -82,15 +88,57 @@ mvn test -Dcucumber.filter.tags="@Regression"
 
 Command-line `-D` properties are forwarded to discovery and worker JVMs so framework-native properties such as Cucumber tag filters remain available. If a Maven/Surefire selector is not yet reproduced by ScenarioMesh (for example `-Dtest=...`), the compatibility gate leaves the run with normal Maven instead of changing the selected test set.
 
+## Configuration: automatic by default, explicit when useful
+
+**No config file is required.** The default adapter mode is `auto`, worker count is `4`, and ScenarioMesh probes the target runtime to determine which registered adapter actually discovers executable tests.
+
+A repository can optionally add `scenariomesh.yml` when it needs stable team-owned overrides or when the team wants to state which adapter is expected:
+
+```yaml
+scenariomesh:
+  configVersion: 1
+  enabled: true
+
+  execution:
+    adapter: auto
+    adapterMismatchPolicy: fail
+
+  workers:
+    count: 4
+
+  reporting:
+    directory: target/scenariomesh
+```
+
+`execution.adapter` supports `auto`, `junit-platform`, `cucumber-junit4`, `testng`, and future adapter IDs registered by newer ScenarioMesh runtimes. Explicit adapter configuration is treated as a **user assertion** and is still validated against runtime discovery evidence; it is not a switch that disables safety checks.
+
+If `auto` finds more than one adapter with executable tests, ScenarioMesh refuses to guess. A team that intentionally has multiple framework libraries can set the correct adapter explicitly. If the configured adapter does not apply, `adapterMismatchPolicy: fail` stops safely; `use-detected` may use a different adapter only when exactly one alternative is uniquely detected.
+
+See [`docs/configuration.md`](docs/configuration.md) for why the file exists, every switch, all current options, defaults, environment variables, precedence, validation rules, and examples. A fully commented template is available as [`scenariomesh.example.yml`](scenariomesh.example.yml).
+
+Configuration precedence is centralized and consistent:
+
+```text
+Maven -D property
+      ↓
+environment variable
+      ↓
+scenariomesh.yml / scenariomesh.yaml
+      ↓
+documented ScenarioMesh defaults
+```
+
 ## Workers
 
 Default worker count is **4** and is owned by `ScenarioMeshConfig`, not duplicated in runtime code.
 
-Override it per run:
+Canonical override:
 
 ```bash
-mvn test -Dscenariomesh.workers=2
+mvn test -Dscenariomesh.workers.count=2
 ```
+
+The earlier MVP property `-Dscenariomesh.workers=2` remains a backward-compatible alias.
 
 Workers are separate JVM processes. This provides isolation for legacy frameworks that use static WebDriver fields, mutable singletons, global caches, or other process-local state. Child JVMs enable Java assertions to match Maven Surefire's default assertion semantics; projects that explicitly override Surefire assertion configuration are conservatively passed through for now.
 
@@ -108,7 +156,7 @@ target/scenariomesh/
         ├── report.html
         ├── summary.json
         ├── junit.xml
-        ├── discovered-scenarios.json
+        ├── discovered-scenarios.json   # includes adapter evidence
         ├── discovery.log
         └── logs/
             ├── worker-1.log
@@ -127,6 +175,14 @@ Override the report directory with `-Dscenariomesh.reporting.directory=...`.
 mvn test -Dscenariomesh.enabled=false
 ```
 
+or in `scenariomesh.yml`:
+
+```yaml
+scenariomesh:
+  configVersion: 1
+  enabled: false
+```
+
 When disabled, the extension does not suppress Maven's normal test execution.
 
 ## MVP architecture
@@ -135,4 +191,4 @@ Framework code is isolated behind `ScenarioAdapter`. JUnit Platform, Cucumber JU
 
 Worker control uses a versioned JSON protocol over a dynamically allocated loopback TCP port. Test stdout/stderr is redirected to per-worker files, so target logging cannot corrupt the control protocol.
 
-See `docs/architecture.md` and `docs/mvp.md`.
+See `docs/architecture.md`, `docs/mvp.md`, and `docs/configuration.md`.
