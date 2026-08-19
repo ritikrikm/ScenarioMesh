@@ -35,3 +35,17 @@ scenariomesh:
   reporting:
     # Relative paths resolve from the Maven project directory.
     directory: target/scenariomesh
+
+  logging:
+    # Mirror target-framework stdout/stderr from every worker into the Maven/Jenkins console.
+    # Each line is prefixed with its ScenarioMesh worker id so parallel output is understandable.
+    liveConsole: true
+
+    # Persist the same target-framework output separately under the run's logs directory.
+    workerFiles: true
+
+    # Print the resolved ScenarioMesh execution/configuration summary before discovery.
+    showConfiguration: true
+
+    # Print worker startup, READY state, task assignment and aggregate progress.
+    showProgress: true
