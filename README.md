@@ -10,8 +10,8 @@ ScenarioMesh is a process-isolated parallel execution runtime for existing Java 
 | Maven + Cucumber JUnit Platform engine | Supported |
 | Maven + Cucumber JUnit 4 runner | Supported |
 | Maven + standard method-level TestNG `@Test` tests | Supported |
-| Generic JUnit 4 without Cucumber | Not yet supported |
-| TestNG XML-suite-only / factory-heavy discovery | Not yet supported |
+| Generic JUnit 4 without Cucumber | Pass-through to normal Maven |
+| TestNG XML-suite-only / factory-heavy discovery | Pass-through when detectable from Maven configuration; otherwise not yet supported |
 | Gradle | Not yet supported |
 
 ScenarioMesh does **not** parse Gherkin and does not replace Selenium, Cucumber, JUnit, or TestNG. Target-project dependencies and test resources are loaded in worker JVMs from the Maven test runtime classpath.
@@ -23,7 +23,9 @@ normal Maven command
         ↓
 ScenarioMesh Maven Core Extension
         ↓
-inject ScenarioMesh test goal + suppress normal Surefire/Failsafe execution
+compatibility gate
+   ├── cannot guarantee MVP compatibility → leave Maven/Surefire unchanged
+   └── compatible → inject ScenarioMesh test goal + suppress normal Surefire execution
         ↓
 prepare target test runtime classpath
         ↓
@@ -41,6 +43,8 @@ JSON + JUnit XML + HTML report
         ↓
 correct Maven success/failure
 ```
+
+The compatibility gate is intentionally conservative. ScenarioMesh prefers a false negative (normal Maven runs) over taking ownership of a project whose existing test semantics it cannot reproduce safely. It currently passes through when it detects unsupported or compatibility-sensitive conditions such as generic JUnit 4, Failsafe integration-test configuration, custom Surefire providers/executions, Surefire selection/classpath/runtime overrides, or `-Dtest`/`-Dit.test` selectors that ScenarioMesh discovery does not yet reproduce.
 
 The workers exist only for the current Maven run in the MVP. Persistent/recyclable workers are a later milestone.
 
@@ -64,7 +68,7 @@ Then add `.mvn/extensions.xml` to the target repository:
 </extensions>
 ```
 
-No test-source changes are required. After that, keep using the repository's existing lifecycle command:
+No test-source or target `pom.xml` dependency changes are required. After that, keep using the repository's existing lifecycle command:
 
 ```bash
 mvn test
@@ -76,7 +80,7 @@ or, for example:
 mvn test -Dcucumber.filter.tags="@Regression"
 ```
 
-Command-line `-D` properties are forwarded to discovery and worker JVMs so framework-native properties such as Cucumber tag filters remain available.
+Command-line `-D` properties are forwarded to discovery and worker JVMs so framework-native properties such as Cucumber tag filters remain available. If a Maven/Surefire selector is not yet reproduced by ScenarioMesh (for example `-Dtest=...`), the compatibility gate leaves the run with normal Maven instead of changing the selected test set.
 
 ## Workers
 
@@ -88,11 +92,11 @@ Override it per run:
 mvn test -Dscenariomesh.workers=2
 ```
 
-Workers are separate JVM processes. This provides isolation for legacy frameworks that use static WebDriver fields, mutable singletons, global caches, or other process-local state.
+Workers are separate JVM processes. This provides isolation for legacy frameworks that use static WebDriver fields, mutable singletons, global caches, or other process-local state. Child JVMs enable Java assertions to match Maven Surefire's default assertion semantics; projects that explicitly override Surefire assertion configuration are conservatively passed through for now.
 
 ## Reports
 
-After a run:
+When ScenarioMesh owns a compatible run:
 
 ```text
 target/scenariomesh/
@@ -112,6 +116,8 @@ target/scenariomesh/
             ├── worker-3.log
             └── worker-4.log
 ```
+
+When the compatibility gate chooses pass-through, ScenarioMesh does not inject its test goal, does not set `skipTests`, and does not create a ScenarioMesh report; the repository's normal Maven/Surefire behavior remains in control.
 
 Override the report directory with `-Dscenariomesh.reporting.directory=...`.
 
