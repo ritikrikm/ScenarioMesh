@@ -1,0 +1,37 @@
+# Copy this file to scenariomesh.yml only when your repository needs overrides.
+# Zero-config auto-detection remains the default ScenarioMesh experience.
+scenariomesh:
+  # Required when a config file exists. Prevents silent interpretation by an
+  # incompatible ScenarioMesh runtime.
+  configVersion: 1
+
+  # false = leave the repository's normal Maven test execution untouched.
+  enabled: true
+
+  execution:
+    # auto | junit-platform | cucumber-junit4 | testng | future registered adapter id
+    # auto probes the target runtime and proceeds only when ownership is unambiguous.
+    adapter: auto
+
+    # fail | use-detected
+    # Explicit adapter declarations are still validated against runtime evidence.
+    adapterMismatchPolicy: fail
+
+  workers:
+    # Number of isolated worker JVMs. Operational, not framework-specific.
+    count: 4
+
+    # Positive ISO-8601 durations.
+    startupTimeout: PT30S
+    shutdownTimeout: PT10S
+
+    # Additional JVM options for each worker. Empty by default.
+    jvmArgs: []
+
+  discovery:
+    # Maximum time allowed for framework-native discovery.
+    timeout: PT2M
+
+  reporting:
+    # Relative paths resolve from the Maven project directory.
+    directory: target/scenariomesh
