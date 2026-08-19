@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @Component(role = AbstractMavenLifecycleParticipant.class, hint = "scenariomesh")
 public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecycleParticipant {
@@ -27,19 +28,16 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
     private final ConfigResolver configResolver = new ConfigResolver();
-
     @Requirement private Logger logger;
 
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
         if (booleanProperty(session, "skipTests") || booleanProperty(session, "maven.test.skip")) return;
-
         Map<String,String> configProperties=stringProperties(session.getSystemProperties());
         configProperties.putAll(stringProperties(session.getUserProperties()));
 
         for(MavenProject project:session.getProjects()){
             if("pom".equals(project.getPackaging()))continue;
-
             ScenarioMeshConfig config;
             ConfigResolution resolution;
             try{
@@ -62,7 +60,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
-            injectScenarioMesh(project,decision);
+            String invocationId=UUID.randomUUID().toString();
+            injectScenarioMesh(project,decision,invocationId);
             suppressOwnedExecutor(project,decision.executorKind());
             String configText=resolution.configFile().map(path->", config="+path).orElse("");
             info("ScenarioMesh: takeover enabled for "+project.getArtifactId()
@@ -74,39 +73,25 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     }
 
     private void suppressOwnedExecutor(MavenProject project, ProjectCompatibilityDetector.ExecutorKind executorKind){
-        if(executorKind==ProjectCompatibilityDetector.ExecutorKind.FAILSAFE){
-            project.getProperties().setProperty("skipITs","true");
-        }else{
-            project.getProperties().setProperty("skipTests","true");
-        }
+        if(executorKind==ProjectCompatibilityDetector.ExecutorKind.FAILSAFE)project.getProperties().setProperty("skipITs","true");
+        else project.getProperties().setProperty("skipTests","true");
     }
 
-    private void injectScenarioMesh(MavenProject project,ProjectCompatibilityDetector.CompatibilityDecision decision){
+    private void injectScenarioMesh(MavenProject project,ProjectCompatibilityDetector.CompatibilityDecision decision,String invocationId){
         Plugin plugin=project.getPlugin(GROUP_ID+":"+PLUGIN_ARTIFACT_ID);
-        if(plugin==null){
-            plugin=new Plugin();plugin.setGroupId(GROUP_ID);plugin.setArtifactId(PLUGIN_ARTIFACT_ID);plugin.setVersion(VERSION);
-            project.getBuild().addPlugin(plugin);
-        }
+        if(plugin==null){plugin=new Plugin();plugin.setGroupId(GROUP_ID);plugin.setArtifactId(PLUGIN_ARTIFACT_ID);plugin.setVersion(VERSION);project.getBuild().addPlugin(plugin);}
         if(plugin.getExecutions().stream().noneMatch(execution->"scenariomesh-run".equals(execution.getId()))){
-            PluginExecution run=new PluginExecution();
-            run.setId("scenariomesh-run");
-            run.setPhase(decision.takeoverPhase());
-            run.addGoal("run");
-            run.setConfiguration(runConfiguration(decision));
-            plugin.addExecution(run);
+            PluginExecution run=new PluginExecution();run.setId("scenariomesh-run");run.setPhase(decision.takeoverPhase());run.addGoal("run");run.setConfiguration(runConfiguration(decision,invocationId));plugin.addExecution(run);
         }
-        if(decision.deferFailureUntilVerify()
-                && plugin.getExecutions().stream().noneMatch(execution->"scenariomesh-verify".equals(execution.getId()))){
-            PluginExecution verify=new PluginExecution();
-            verify.setId("scenariomesh-verify");
-            verify.setPhase("verify");
-            verify.addGoal("verify");
-            plugin.addExecution(verify);
+        if(decision.deferFailureUntilVerify()&&plugin.getExecutions().stream().noneMatch(execution->"scenariomesh-verify".equals(execution.getId()))){
+            PluginExecution verify=new PluginExecution();verify.setId("scenariomesh-verify");verify.setPhase("verify");verify.addGoal("verify");
+            Xpp3Dom config=new Xpp3Dom("configuration");addValue(config,"invocationId",invocationId);verify.setConfiguration(config);plugin.addExecution(verify);
         }
     }
 
-    private Xpp3Dom runConfiguration(ProjectCompatibilityDetector.CompatibilityDecision decision){
+    private Xpp3Dom runConfiguration(ProjectCompatibilityDetector.CompatibilityDecision decision,String invocationId){
         Xpp3Dom root=new Xpp3Dom("configuration");
+        addValue(root,"invocationId",invocationId);
         addValue(root,"deferFailureUntilVerify",Boolean.toString(decision.deferFailureUntilVerify()));
         addValue(root,"takeoverExecutor",decision.executorKind().name().toLowerCase());
         addList(root,"includeClassNameRegexes","include",decision.includeClassNameRegexes());
@@ -114,28 +99,9 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         return root;
     }
 
-    private void addValue(Xpp3Dom root,String name,String value){
-        Xpp3Dom node=new Xpp3Dom(name);node.setValue(value);root.addChild(node);
-    }
-
-    private void addList(Xpp3Dom root,String name,String itemName,List<String> values){
-        if(values.isEmpty())return;
-        Xpp3Dom list=new Xpp3Dom(name);
-        for(String value:values){Xpp3Dom item=new Xpp3Dom(itemName);item.setValue(value);list.addChild(item);}
-        root.addChild(list);
-    }
-
-    private boolean booleanProperty(MavenSession session,String key){
-        String value=session.getUserProperties().getProperty(key);
-        if(value==null)value=session.getSystemProperties().getProperty(key);
-        return value!=null&&Boolean.parseBoolean(value.trim());
-    }
-
-    private Map<String,String> stringProperties(java.util.Properties properties){
-        Map<String,String> values=new LinkedHashMap<>();
-        if(properties!=null)properties.forEach((key,value)->values.put(String.valueOf(key),String.valueOf(value)));
-        return values;
-    }
-
+    private void addValue(Xpp3Dom root,String name,String value){Xpp3Dom node=new Xpp3Dom(name);node.setValue(value);root.addChild(node);}
+    private void addList(Xpp3Dom root,String name,String itemName,List<String> values){if(values.isEmpty())return;Xpp3Dom list=new Xpp3Dom(name);for(String value:values){Xpp3Dom item=new Xpp3Dom(itemName);item.setValue(value);list.addChild(item);}root.addChild(list);}
+    private boolean booleanProperty(MavenSession session,String key){String value=session.getUserProperties().getProperty(key);if(value==null)value=session.getSystemProperties().getProperty(key);return value!=null&&Boolean.parseBoolean(value.trim());}
+    private Map<String,String> stringProperties(java.util.Properties properties){Map<String,String> values=new LinkedHashMap<>();if(properties!=null)properties.forEach((key,value)->values.put(String.valueOf(key),String.valueOf(value)));return values;}
     private void info(String message){if(logger!=null)logger.info(message);else System.out.println("[INFO] "+message);}
 }
