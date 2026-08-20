@@ -20,13 +20,17 @@ public final class FifoSchedulingStrategy implements SchedulingStrategy {
 
     @Override
     public ScenarioTask nextEligible(Predicate<ScenarioTask> eligible) {
-        ScenarioTask task;
-        while ((task = queue.poll()) != null) {
+        Objects.requireNonNull(eligible, "eligible");
+        int candidatesToInspect = queue.size();
+        for (int index = 0; index < candidatesToInspect; index++) {
+            ScenarioTask task = queue.poll();
+            if (task == null) {
+                return null;
+            }
             if (eligible.test(task)) {
                 return task;
             }
             queue.offer(task);
-            return null;
         }
         return null;
     }
