@@ -55,7 +55,7 @@ Default value: `PT15M`.
 
 The duration is validated as positive through the immutable `ScenarioMeshConfig` constructor.
 
-During a task, the worker socket now temporarily uses this timeout while waiting for a `RESULT`. The previous socket timeout is restored after the read.
+During a task, the worker socket temporarily uses this timeout while waiting for a `RESULT`. The previous socket timeout is restored after the read.
 
 If the timeout expires:
 
@@ -68,11 +68,11 @@ RUN task
   -> coordinator is no longer blocked forever by that worker
 ```
 
-A worker that produces a `WORKER_FAILURE` is now forcibly retired rather than being left alive after its coordinator execution loop has stopped.
+A worker that produces a `WORKER_FAILURE` is forcibly retired rather than being left alive after its coordinator execution loop has stopped.
 
 ### Tests added
 
-Config regression coverage now checks:
+Config regression coverage checks:
 
 - default `PT15M` value;
 - YAML override;
@@ -80,26 +80,66 @@ Config regression coverage now checks:
 - legacy singular property alias;
 - rejection of a zero/non-positive timeout.
 
-Existing CI provides the wider E2E regression gate on Java 17 and Java 21 and runs ScenarioMesh through normal Maven commands for JUnit 5, Cucumber JUnit Platform, Cucumber JUnit 4, TestNG, Failsafe, and pass-through projects.
+### E2E verification — PASSED
 
-### Verification status
+Point 1 was verified through draft PR #2 using the repository's existing full CI matrix.
 
-- Source/config regression tests: added to the branch.
-- Branch integrity: verified; the hardening branch is ahead of `agent/mvp-runtime` and contains only the intended Point 1 code/test/documentation changes.
-- E2E CI: push-triggered by the repository workflow, but the currently available GitHub connector only exposes PR-triggered workflow runs for direct inspection. Therefore **Point 1 is not marked E2E-passed yet** from this session.
-- Point 2 must not be treated as started until Point 1 E2E result is observable/confirmed.
+Final verification run:
+
+```text
+GitHub Actions run: #252
+Run id: 32326950255
+Java 17: SUCCESS
+Java 21: SUCCESS
+```
+
+Both Java matrix jobs passed all substantive checks:
+
+- full `mvn -B clean install`;
+- JUnit 5 normal Maven command with ScenarioMesh takeover;
+- Cucumber JUnit Platform normal Maven command;
+- Cucumber JUnit 4 normal Maven command;
+- TestNG normal Maven command;
+- Failsafe integration-test/verify lifecycle takeover;
+- custom Surefire selection pass-through;
+- unsupported generic JUnit 4 pass-through;
+- ScenarioMesh report generation;
+- modern report content and machine-readable timing checks;
+- verification that pass-through projects were not incorrectly taken over.
+
+The E2E logs showed workers launching, reaching READY, dynamically receiving tasks, returning terminal results, and Maven builds finishing successfully.
+
+### CI issue discovered during verification
+
+The first verification run exposed a stale CI-only assertion. The workflow expected the report text:
+
+```text
+Sequential-equivalent scenario work
+```
+
+but the current report implementation, including the unchanged `agent/mvp-runtime` base branch, renders:
+
+```text
+Estimated serial execution time
+```
+
+The stale grep was updated on the test branch to match the actual report contract. No worker/runtime implementation change was required for that CI failure.
+
+### Point 1 status
+
+**IMPLEMENTED + E2E CONFIRMED**
 
 ### Remaining limitation after Point 1
 
-A timed-out worker is retired but is **not yet replaced**. Pool capacity can therefore shrink during a run. Worker replacement is deliberately a separate future point because it needs an explicit mutable worker lifecycle and coordinator-owned replacement semantics.
+A timed-out worker is retired but is **not yet replaced**. Pool capacity can therefore shrink during a run. Worker replacement is deliberately a separate point because it needs explicit coordinator-owned replacement semantics rather than a shortcut inside the worker loop.
 
 ## Current hardening backlog
 
 | Area | Status | Size |
 |---|---|---|
-| Task execution timeout | Implemented; E2E confirmation pending | Small/medium |
-| Retire worker after communication failure | Implemented with Point 1 | Small |
-| Worker replacement | Future | Large |
+| Task execution timeout | Implemented + E2E confirmed | Small/medium |
+| Retire worker after communication failure | Implemented with Point 1 + E2E confirmed | Small |
+| Worker replacement | Next design point | Large |
 | Infrastructure-only task retry/requeue | Future | Medium/large |
 | Worker memory/task-count recycling | Future | Large |
 | Heap/process-tree health monitoring | Future | Large |
