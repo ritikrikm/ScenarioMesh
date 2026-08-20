@@ -6,6 +6,8 @@ import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.junit.jupiter.api.Test;
 
+import java.util.regex.Pattern;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,6 +22,18 @@ class SurefireCompatibilityTest {
 
         assertFalse(analysis.explicitlySkipsTests());
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+    }
+
+    @Test
+    void defaultIncludesMirrorSurefireClassNamingBoundary() {
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(defaultTestExecution()));
+
+        assertTrue(matchesAny(analysis, "example.TestPayment"));
+        assertTrue(matchesAny(analysis, "example.PaymentTest"));
+        assertTrue(matchesAny(analysis, "example.PaymentTests"));
+        assertTrue(matchesAny(analysis, "example.PaymentTestCase"));
+        assertFalse(matchesAny(analysis, "example.PaymentHelper"));
+        assertFalse(matchesAny(analysis, "example.ProductionService"));
     }
 
     @Test
@@ -118,6 +132,11 @@ class SurefireCompatibilityTest {
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
 
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("provider/plugin dependencies")));
+    }
+
+    private boolean matchesAny(SurefireCompatibility.Analysis analysis, String className) {
+        return analysis.includeClassNameRegexes().stream()
+                .anyMatch(regex -> Pattern.matches(regex, className));
     }
 
     private Plugin pluginWith(PluginExecution execution) {
