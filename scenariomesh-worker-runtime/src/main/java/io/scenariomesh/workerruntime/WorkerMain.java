@@ -93,7 +93,7 @@ public final class WorkerMain {
         }
     }
 
-    private static ExecutionResult runCleanupHooks(
+    static ExecutionResult runCleanupHooks(
             List<WorkerTaskCleanup> hooks,
             ScenarioTask task,
             ExecutionContext context,
@@ -112,11 +112,31 @@ public final class WorkerMain {
                         context.attempt(),
                         result.startedAt(),
                         finished,
-                        "Worker cleanup hook " + hook.getClass().getName() + " failed: " + safeMessage(exception),
-                        exception.getClass().getName());
+                        cleanupFailureMessage(hook, exception, result),
+                        "CleanupFailure:" + exception.getClass().getName());
             }
         }
         return result;
+    }
+
+    private static String cleanupFailureMessage(
+            WorkerTaskCleanup hook,
+            Exception cleanupFailure,
+            ExecutionResult originalResult) {
+        StringBuilder message = new StringBuilder()
+                .append("Worker cleanup hook ")
+                .append(hook.getClass().getName())
+                .append(" failed: ")
+                .append(safeMessage(cleanupFailure))
+                .append(". Original task outcome: status=")
+                .append(originalResult.status());
+        if (originalResult.failureType() != null && !originalResult.failureType().isBlank()) {
+            message.append(", failureType=").append(originalResult.failureType());
+        }
+        if (originalResult.failureMessage() != null && !originalResult.failureMessage().isBlank()) {
+            message.append(", failureMessage=").append(originalResult.failureMessage());
+        }
+        return message.toString();
     }
 
     private static WorkerTelemetry telemetry() {
