@@ -19,6 +19,14 @@ jobs:
       - name: JUnit 5 normal Maven command with YAML config
         working-directory: examples/junit5-example
         run: mvn -B test
+      - name: Verify JUnit skipped and aborted outcomes are never false passes
+        run: |
+          test -f examples/junit5-example/target/scenariomesh-yaml/summary.json
+          test -f examples/junit5-example/target/scenariomesh-yaml/junit.xml
+          grep -Fq '"skipped" : 2' examples/junit5-example/target/scenariomesh-yaml/summary.json
+          test "$(grep -Fc '"status" : "SKIPPED"' examples/junit5-example/target/scenariomesh-yaml/summary.json)" -eq 2
+          grep -Fq 'skipped="2"' examples/junit5-example/target/scenariomesh-yaml/junit.xml
+          grep -Fq '<skipped ' examples/junit5-example/target/scenariomesh-yaml/junit.xml
       - name: Cucumber JUnit Platform normal Maven command
         working-directory: examples/cucumber-junit-platform-example
         run: mvn -B test
@@ -28,6 +36,13 @@ jobs:
       - name: TestNG normal Maven command
         working-directory: examples/testng-example
         run: mvn -B test
+      - name: Verify TestNG skipped and disabled outcomes are never false passes
+        run: |
+          test -f examples/testng-example/target/scenariomesh/summary.json
+          test -f examples/testng-example/target/scenariomesh/junit.xml
+          grep -Fq '"skipped" : 2' examples/testng-example/target/scenariomesh/summary.json
+          test "$(grep -Fc '"status" : "SKIPPED"' examples/testng-example/target/scenariomesh/summary.json)" -eq 2
+          grep -Fq 'skipped="2"' examples/testng-example/target/scenariomesh/junit.xml
       - name: Failsafe verify lifecycle takeover
         working-directory: examples/failsafe-junit5-example
         run: mvn -B clean compile verify
@@ -124,6 +139,9 @@ jobs:
       - name: Unsupported generic JUnit 4 uses normal Maven execution
         working-directory: examples/unsupported-junit4-example
         run: mvn -B test
+      - name: Mixed JUnit 4 and JUnit 5 remains native Maven execution
+        working-directory: examples/mixed-junit4-junit5-pass-through-example
+        run: mvn -B clean test
       - name: Verify reports were generated
         run: |
           test -f examples/junit5-example/target/scenariomesh-yaml/report.html
@@ -138,6 +156,7 @@ jobs:
       - name: Verify modern report content and machine-readable timing
         run: |
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
+          grep -q 'data-filter="skipped"' examples/cucumber-junit4-example/target/scenariomesh/report.html
           grep -q 'data-filter="failed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
           grep -q 'Worker execution time' examples/cucumber-junit4-example/target/scenariomesh/report.html
           grep -q 'Estimated serial execution time' examples/cucumber-junit4-example/target/scenariomesh/report.html
@@ -153,3 +172,8 @@ jobs:
         run: |
           test -f examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
           test ! -e examples/unsupported-junit4-example/target/scenariomesh/report.html
+      - name: Verify mixed JUnit project was not taken over and both frameworks ran
+        run: |
+          test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.JupiterTest.xml
+          test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
+          test ! -e examples/mixed-junit4-junit5-pass-through-example/target/scenariomesh/report.html
