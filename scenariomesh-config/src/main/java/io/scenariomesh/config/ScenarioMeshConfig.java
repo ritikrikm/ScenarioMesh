@@ -14,6 +14,7 @@ public record ScenarioMeshConfig(
         int workerCount,
         Duration discoveryTimeout,
         Duration workerStartupTimeout,
+        Duration workerTaskTimeout,
         Duration workerShutdownTimeout,
         Path reportingDirectory,
         List<String> workerJvmArgs,
@@ -32,6 +33,7 @@ public record ScenarioMeshConfig(
         }
         requirePositive(discoveryTimeout, "discovery.timeout");
         requirePositive(workerStartupTimeout, "workers.startupTimeout");
+        requirePositive(workerTaskTimeout, "workers.taskTimeout");
         requirePositive(workerShutdownTimeout, "workers.shutdownTimeout");
         if (reportingDirectory == null) {
             throw new IllegalArgumentException("Invalid configuration: reporting.directory is required");
@@ -51,6 +53,7 @@ public record ScenarioMeshConfig(
                 4,
                 Duration.ofMinutes(2),
                 Duration.ofSeconds(30),
+                Duration.ofMinutes(15),
                 Duration.ofSeconds(10),
                 buildDirectory.resolve("scenariomesh"),
                 List.of(),
