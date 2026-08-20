@@ -24,6 +24,7 @@ public record ScenarioMeshConfig(
         boolean showProgress) {
 
     public static final String AUTO_ADAPTER = "auto";
+    private static final long MAX_SOCKET_TIMEOUT_MILLIS = Integer.MAX_VALUE;
 
     public ScenarioMeshConfig {
         executionAdapter = normalizeAdapter(executionAdapter);
@@ -32,9 +33,9 @@ public record ScenarioMeshConfig(
             throw new IllegalArgumentException("Invalid configuration: workers.count must be greater than 0");
         }
         requirePositive(discoveryTimeout, "discovery.timeout");
-        requirePositive(workerStartupTimeout, "workers.startupTimeout");
-        requirePositive(workerTaskTimeout, "workers.taskTimeout");
-        requirePositive(workerShutdownTimeout, "workers.shutdownTimeout");
+        requireSocketTimeout(workerStartupTimeout, "workers.startupTimeout");
+        requireSocketTimeout(workerTaskTimeout, "workers.taskTimeout");
+        requireSocketTimeout(workerShutdownTimeout, "workers.shutdownTimeout");
         if (reportingDirectory == null) {
             throw new IllegalArgumentException("Invalid configuration: reporting.directory is required");
         }
@@ -73,6 +74,21 @@ public record ScenarioMeshConfig(
     private static void requirePositive(Duration value, String name) {
         if (value == null || value.isNegative() || value.isZero()) {
             throw new IllegalArgumentException("Invalid configuration: " + name + " must be greater than 0");
+        }
+    }
+
+    private static void requireSocketTimeout(Duration value, String name) {
+        requirePositive(value, name);
+        final long millis;
+        try {
+            millis = value.toMillis();
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("Invalid configuration: " + name
+                    + " is too large for a worker socket timeout", exception);
+        }
+        if (millis > MAX_SOCKET_TIMEOUT_MILLIS) {
+            throw new IllegalArgumentException("Invalid configuration: " + name
+                    + " must not exceed " + MAX_SOCKET_TIMEOUT_MILLIS + " milliseconds");
         }
     }
 
