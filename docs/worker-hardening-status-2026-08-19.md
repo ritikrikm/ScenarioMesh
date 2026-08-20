@@ -243,7 +243,20 @@ Two small edge cases were found and fixed:
 
 Regression coverage was added for oversized startup/task/shutdown socket timeouts.
 
-**Final E2E confirmation for these review fixes is pending a fresh Java 17/21 CI run.**
+### Final double-check E2E verification
+
+```text
+GitHub Actions run: #283
+Run id: 32327847697
+Java 17: SUCCESS
+Java 21: SUCCESS
+```
+
+Both JDKs passed the full reactor build, JUnit 5, both Cucumber modes, TestNG, Failsafe, deliberate worker crash/replacement, normal test-failure worker reuse, Surefire pass-through, unsupported JUnit 4 pass-through, and all report assertions.
+
+### Double-check status
+
+**COMPLETE + E2E CONFIRMED**
 
 ---
 
@@ -257,8 +270,8 @@ Regression coverage was added for oversized startup/task/shutdown socket timeout
 | Point 4 — normal adapter Exception | Existing behavior correct | None |
 | Point 5 — fatal JVM Error | Covered by replacement strategy | None now |
 | Point 6 — test failure keeps worker alive | E2E confirmed | Test-only |
-| Socket-timeout range hardening | Implemented; final E2E pending | Small |
-| Concurrent lifecycle maps | Implemented; final E2E pending | Small |
+| Socket-timeout range hardening | Implemented + E2E confirmed | Small |
+| Concurrent lifecycle maps | Implemented + E2E confirmed | Small |
 | Worker memory/task-count recycling | Future | Large |
 | Heap/process-tree health monitoring | Future | Large |
 | Per-task cleanup hooks | Future | Medium |
