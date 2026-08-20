@@ -283,20 +283,12 @@ final class ProjectCompatibilityDetector {
             return junitPlatform || cucumberJUnit4 || testNg;
         }
 
-        int supportedOwnerCount() {
-            int count = 0;
-            if (junitPlatform) count++;
-            if (cucumberJUnit4) count++;
-            if (testNg) count++;
-            return count;
-        }
-
         Set<String> names() {
             Set<String> names = new LinkedHashSet<>();
             if (junitPlatform) names.add("junit-platform");
             if (cucumberJUnit4) names.add("cucumber-junit4");
             if (testNg) names.add("testng");
-            return Set.copyOf(names());
+            return Set.copyOf(names);
         }
     }
 }
