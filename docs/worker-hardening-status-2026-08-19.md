@@ -146,32 +146,9 @@ This is intentional. Worker replacement restores capacity; retry/requeue is a se
 
 ### Deterministic E2E fixture
 
-Added:
+Added `examples/worker-crash-recovery-example` with exactly one worker and ordered JUnit 5 tasks. The first task terminates the JVM, and two following tasks must execute on the replacement worker.
 
-```text
-examples/worker-crash-recovery-example
-```
-
-The fixture configures exactly one worker and contains ordered JUnit 5 tasks:
-
-```text
-a_crashWorker
- -> Runtime.getRuntime().halt(23)
-
-b_runsAfterReplacement
-c_alsoRunsAfterReplacement
-```
-
-The CI check requires all of the following:
-
-- the Maven invocation returns non-zero because the crashed task is still an infrastructure failure;
-- ScenarioMesh creates its report and summary;
-- log contains `worker-2 REPLACED worker-1`;
-- worker-2 passes both queued follow-up tests;
-- summary contains `WORKER_FAILURE`;
-- summary contains worker-2.
-
-This proves replacement without hiding the original failure or introducing retry semantics.
+The CI check requires Maven to remain non-zero for the original infrastructure failure while proving `worker-2` was created and completed the queued tests.
 
 ### E2E verification
 
@@ -182,22 +159,91 @@ Java 17: SUCCESS
 Java 21: SUCCESS
 ```
 
-Both JDKs passed:
-
-- full `mvn -B clean install`;
-- JUnit 5 normal Maven takeover;
-- Cucumber JUnit Platform;
-- Cucumber JUnit 4;
-- TestNG;
-- Failsafe lifecycle takeover;
-- deliberate worker-crash replacement test;
-- custom Surefire pass-through;
-- unsupported JUnit 4 pass-through;
-- report existence/content validation.
-
 ### Point 2 status
 
 **IMPLEMENTED + E2E CONFIRMED**
+
+---
+
+## Point 3 — Infrastructure-only retry/requeue
+
+### Review result
+
+**DEFERRED — requires a proper protocol/scheduler design.**
+
+The current scheduling port has no requeue contract, the RUN protocol carries no attempt number, and the worker currently creates `ExecutionContext` with attempt `1`.
+
+A shortcut requeue would therefore create incorrect execution metadata and unclear idempotency semantics. A future implementation should add explicit retry configuration, scheduler-owned requeue, protocol attempt propagation, and an infrastructure-only default policy. Normal assertion failures must remain separate.
+
+---
+
+## Point 4 — Adapter throws a normal Exception
+
+### Review result
+
+**CURRENT BEHAVIOR IS CORRECT — no production change required.**
+
+`WorkerMain` catches adapter `Exception`, converts it to an infrastructure result, sends a terminal result, and keeps the worker JVM available for later tasks.
+
+---
+
+## Point 5 — Fatal JVM Error
+
+### Review result
+
+**DO NOT catch `Throwable`.**
+
+Fatal errors such as `OutOfMemoryError`, `StackOverflowError`, or serious linkage problems can leave a worker JVM unsafe. The safer behavior is to allow the process/connection to fail and use Point 2's clean worker replacement path for later queued work.
+
+---
+
+## Point 6 — Normal test failure must not replace a worker
+
+### Contract
+
+A normal test/assertion failure is not a worker failure. The same healthy worker must remain reusable.
+
+### Deterministic E2E fixture
+
+Added `examples/test-failure-worker-reuse-example` with one worker and ordered JUnit 5 tasks:
+
+```text
+a_testFailureDoesNotPoisonWorker -> TEST_FAILURE
+b_sameWorkerStillRuns            -> PASS on worker-1
+c_sameWorkerStillRunsAgain       -> PASS on worker-1
+```
+
+CI asserts that Maven reports the expected test failure, later tasks still pass on `worker-1`, and no `REPLACED` message occurs.
+
+### E2E verification
+
+```text
+GitHub Actions run: #271
+Run id: 32327453584
+Java 17: SUCCESS
+Java 21: SUCCESS
+```
+
+The same run also revalidated Point 2's crash/replacement fixture and all existing framework/pass-through/report tests.
+
+### Point 6 status
+
+**E2E CONTRACT CONFIRMED — no production behavior change required.**
+
+---
+
+## Double-check hardening review — 2026-08-19
+
+After Points 1, 2 and 6 were green, the branch was reviewed again for concurrency, timeout conversion, accidental retry behavior, cleanup races, and duplicated worker-launch logic.
+
+Two small edge cases were found and fixed:
+
+1. **Socket timeout range validation.** Java socket timeouts are integer milliseconds. Worker startup, task and shutdown durations are now validated centrally so a value larger than `Integer.MAX_VALUE` milliseconds fails early as invalid configuration instead of overflowing later inside worker execution. Discovery timeout remains only positive because it does not use `Socket#setSoTimeout`.
+2. **Concurrent lifecycle maps.** Worker replacement can mutate process/output-pump tracking while other worker loops are active. These maps now use `ConcurrentHashMap`; active connections already use `CopyOnWriteArrayList`.
+
+Regression coverage was added for oversized startup/task/shutdown socket timeouts.
+
+**Final E2E confirmation for these review fixes is pending a fresh Java 17/21 CI run.**
 
 ---
 
@@ -207,7 +253,12 @@ Both JDKs passed:
 |---|---|---|
 | Point 1 — task execution timeout | Implemented + E2E confirmed | Small/medium |
 | Point 2 — worker replacement | Implemented + E2E confirmed | Medium/large |
-| Point 3 — infrastructure-only task retry/requeue | Future policy decision | Medium/large |
+| Point 3 — infrastructure-only retry/requeue | Deferred: protocol/policy work | Medium/large |
+| Point 4 — normal adapter Exception | Existing behavior correct | None |
+| Point 5 — fatal JVM Error | Covered by replacement strategy | None now |
+| Point 6 — test failure keeps worker alive | E2E confirmed | Test-only |
+| Socket-timeout range hardening | Implemented; final E2E pending | Small |
+| Concurrent lifecycle maps | Implemented; final E2E pending | Small |
 | Worker memory/task-count recycling | Future | Large |
 | Heap/process-tree health monitoring | Future | Large |
 | Per-task cleanup hooks | Future | Medium |
