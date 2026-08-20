@@ -35,7 +35,7 @@ jobs:
         working-directory: examples/worker-crash-recovery-example
         run: |
           set +e
-          mvn -B test > crash-recovery.log 2>&1
+          mvn -B clean test > crash-recovery.log 2>&1
           exit_code=$?
           set -e
           cat crash-recovery.log
@@ -47,11 +47,25 @@ jobs:
           grep -q 'worker-2 PASSED c_alsoRunsAfterReplacement' crash-recovery.log
           grep -q 'WORKER_FAILURE' target/scenariomesh/summary.json
           grep -q 'worker-2' target/scenariomesh/summary.json
+      - name: Infrastructure failure retries on a fresh worker
+        working-directory: examples/worker-crash-recovery-example
+        run: |
+          mvn -B clean test -Dscenariomesh.execution.infrastructureRetries=1 > crash-retry.log 2>&1
+          cat crash-retry.log
+          test -f target/scenariomesh/summary.json
+          grep -q 'RETRY a_crashWorker after WORKER_FAILURE' crash-retry.log
+          grep -q 'worker-2 REPLACED worker-1 after retryable WORKER_FAILURE' crash-retry.log
+          grep -q 'worker-2 RUN a_crashWorker attempt=2' crash-retry.log
+          grep -q 'worker-2 PASSED a_crashWorker' crash-retry.log
+          if grep -q 'WORKER_FAILURE' target/scenariomesh/summary.json; then
+            echo 'Recovered infrastructure attempt leaked into terminal results'
+            exit 1
+          fi
       - name: Normal test failure keeps worker alive
         working-directory: examples/test-failure-continuation-example
         run: |
           set +e
-          mvn -B test > test-failure-continuation.log 2>&1
+          mvn -B clean test > test-failure-continuation.log 2>&1
           exit_code=$?
           set -e
           cat test-failure-continuation.log
@@ -64,6 +78,19 @@ jobs:
             echo 'Normal test failure incorrectly replaced the worker'
             exit 1
           fi
+      - name: Task-count recycling replaces healthy workers
+        working-directory: examples/test-failure-continuation-example
+        run: |
+          set +e
+          mvn -B clean test -Dscenariomesh.workers.maxTasksPerWorker=1 > task-recycling.log 2>&1
+          exit_code=$?
+          set -e
+          cat task-recycling.log
+          test "$exit_code" -ne 0
+          grep -q 'worker-2 REPLACED worker-1 after task-count recycling after 1 task(s)' task-recycling.log
+          grep -q 'worker-2 PASSED b_sameWorkerContinues' task-recycling.log
+          grep -q 'worker-3 REPLACED worker-2 after task-count recycling after 1 task(s)' task-recycling.log
+          grep -q 'worker-3 PASSED c_sameWorkerStillContinues' task-recycling.log
       - name: Custom Surefire selection remains normal Maven execution
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
