@@ -66,16 +66,15 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
-    void testNgGroupPropertiesArePreservedForWorkers() {
+    void testNgGroupFilteringPassesThroughUntilDiscoveryCanReproduceItExactly() {
         MavenProject project = project(dependency("org.testng", "testng"));
         project.getProperties().setProperty("groups", "smoke,api");
         project.getProperties().setProperty("excludedGroups", "slow");
 
         var decision = detector.evaluate(session("test"), project);
 
-        assertTrue(decision.compatible(), decision.reason());
-        assertEquals("smoke,api", decision.executorSystemProperties().get("groups"));
-        assertEquals("slow", decision.executorSystemProperties().get("excludedGroups"));
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("group filtering"), decision.reason());
     }
 
     private MavenSession session(String... goals) {
