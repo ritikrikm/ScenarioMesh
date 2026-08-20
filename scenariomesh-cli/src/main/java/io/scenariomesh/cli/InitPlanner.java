@@ -11,6 +11,7 @@ import java.util.List;
 final class InitPlanner {
     private static final String CONFIG_CONTENT = "scenariomesh:\n  configVersion: 1\n";
     private final MavenExtensionXml extensionXml = new MavenExtensionXml();
+    private final RepositoryLayout repositoryLayout = new RepositoryLayout();
 
     InitPlan plan(Path requestedDirectory, String version) throws Exception {
         Path projectDirectory = requestedDirectory.toAbsolutePath().normalize();
@@ -24,7 +25,9 @@ final class InitPlanner {
         }
 
         List<InitPlan.FileChange> changes = new ArrayList<>();
-        Path extensionFile = projectDirectory.resolve(".mvn/extensions.xml");
+        Path repositoryRoot = repositoryLayout.repositoryRoot(projectDirectory);
+        List<Path> discoveredExtensionFiles = repositoryLayout.extensionFiles(repositoryRoot);
+        Path extensionFile = repositoryLayout.effectiveExtensionFile(projectDirectory, discoveredExtensionFiles);
         String existingExtension = readIfPresent(extensionFile);
         String desiredExtension = extensionXml.desiredContent(existingExtension, version.trim());
         if (!desiredExtension.equals(existingExtension)) {
