@@ -4,6 +4,7 @@
   <artifactId>scenariomesh-maven-extension</artifactId>
   <dependencies>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-config</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-core</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.apache.maven</groupId><artifactId>maven-core</artifactId><version>${maven.version}</version><scope>provided</scope></dependency>
     <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-component-annotations</artifactId><version>2.1.1</version><scope>provided</scope></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
