@@ -2,26 +2,30 @@
 
 Branch: `agent/worker-hardening-test`
 
-This file tracks the second hardening pass while CI verification is active.
+This second hardening pass is complete for the portable, production-safe items selected in this branch.
 
-## Implemented in this pass
+Final E2E gate:
 
-- Infrastructure-only retry/requeue with explicit attempt propagation.
-- Retry work returned through the scheduler rather than a coordinator-private queue.
-- Configurable `execution.infrastructureRetries`; default `0` preserves existing behavior.
-- Configurable task-count recycling with `workers.maxTasksPerWorker`; default `0` disables it.
-- Worker heap telemetry after each task and configurable `workers.maxHeapUsagePercent`; default `0` disables recycling.
-- ServiceLoader-based per-task cleanup extension point.
-- Worker process-tree cleanup when a worker is retired or the pool shuts down.
-- Configurable degraded startup with `workers.minimumReady`; default equals resolved `workers.count`.
-- Protocol version 2 carries RUN attempt and RESULT telemetry.
+```text
+GitHub Actions run: #335
+Run id: 32329038344
+Java 17: SUCCESS
+Java 21: SUCCESS
+```
 
-## Verification being added
+Completed in this pass:
 
-- Crash without retry remains a terminal `WORKER_FAILURE` while queued work continues on a replacement.
-- Crash with one infrastructure retry re-runs the task on a fresh worker at attempt 2 and does not leak the recovered failed attempt into terminal results.
-- Normal assertion failures do not trigger retry/replacement unless an independent recycling policy requests it.
-- `maxTasksPerWorker=1` deterministically recycles a healthy single-worker fixture between tasks.
-- Java 17 and Java 21 full E2E matrix remains the acceptance gate.
+- infrastructure-only retry/requeue with explicit attempt propagation;
+- scheduler-owned requeue;
+- bounded `execution.infrastructureRetries`, disabled by default;
+- task-count recycling, disabled by default;
+- post-task heap telemetry and threshold recycling, disabled by default;
+- ServiceLoader per-task cleanup hooks with failure propagation;
+- discoverable descendant-process cleanup on worker retirement/shutdown;
+- configurable minimum-ready degraded startup with unchanged all-workers-ready default;
+- protocol v2 RUN attempt and RESULT telemetry;
+- deterministic E2E fixtures for retry, task recycling, heap recycling, cleanup hooks and process-tree cleanup.
 
-This is an in-progress verification note; final status is recorded in `worker-hardening-status-2026-08-19.md` after the fresh E2E matrix passes.
+The authoritative design, configuration, caveats and final backlog are documented in `worker-hardening-status-2026-08-19.md`.
+
+One limitation remains intentionally documented rather than hidden: after a hard OS/JVM kill, an external child process that has already been orphaned/re-parented may no longer be discoverable through portable Java `ProcessHandle.descendants()`. Strong containment for that case requires an OS/container-specific future mechanism such as process groups, job objects or cgroups.
