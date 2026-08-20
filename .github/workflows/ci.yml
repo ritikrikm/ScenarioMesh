@@ -103,6 +103,14 @@ jobs:
           grep -Fq 'after heap recycling at ' heap-recycling.log
           grep -Fq ' PASSED b_sameWorkerContinues()' heap-recycling.log
           grep -Fq ' PASSED c_sameWorkerStillContinues()' heap-recycling.log
+      - name: Per-task cleanup hook executes after every task
+        working-directory: examples/cleanup-hook-example
+        run: |
+          mvn -B clean test
+          test -f target/cleanup-hook.log
+          test "$(wc -l < target/cleanup-hook.log)" -eq 2
+          grep -Fq 'firstTask()|worker-1|attempt=1' target/cleanup-hook.log
+          grep -Fq 'secondTask()|worker-1|attempt=1' target/cleanup-hook.log
       - name: Custom Surefire selection remains normal Maven execution
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
@@ -118,6 +126,7 @@ jobs:
           test -f examples/testng-example/target/scenariomesh/report.html
           test -f examples/failsafe-junit5-example/target/scenariomesh/report.html
           test -f examples/failsafe-junit5-example/target/scenariomesh/deferred-verification.properties
+          test -f examples/cleanup-hook-example/target/scenariomesh/report.html
       - name: Verify modern report content and machine-readable timing
         run: |
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
