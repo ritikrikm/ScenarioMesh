@@ -7,6 +7,7 @@ import org.apache.maven.model.Plugin;
 import org.apache.maven.project.MavenProject;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -59,6 +60,7 @@ final class ProjectCompatibilityDetector {
             return CompatibilityDecision.passThrough("requested Maven lifecycle could not be determined safely");
         }
 
+        Map<String, String> frameworkSystemProperties = frameworkSystemProperties(session, project, frameworks);
         Plugin failsafe = plugin(project, FAILSAFE);
         MavenExecutionPlan.PluginParticipation failsafeParticipation =
                 executionPlan.get().failsafeParticipation(failsafe);
@@ -93,7 +95,7 @@ final class ProjectCompatibilityDetector {
                         analysis.includeClassNameRegexes(),
                         analysis.excludeClassNameRegexes(),
                         analysis.jvmArgs(),
-                        analysis.systemProperties(),
+                        mergeSystemProperties(analysis.systemProperties(), frameworkSystemProperties),
                         analysis.testFailureIgnore());
             }
         }
@@ -127,7 +129,39 @@ final class ProjectCompatibilityDetector {
                 : surefireAnalysis.includeClassNameRegexes();
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                includes, List.of(), List.of(), Map.of(), false);
+                includes, List.of(), List.of(), frameworkSystemProperties, false);
+    }
+
+    private Map<String, String> frameworkSystemProperties(
+            MavenSession session,
+            MavenProject project,
+            FrameworkSignals frameworks) {
+        if (!frameworks.testNgOnly()) {
+            return Map.of();
+        }
+        Map<String, String> properties = new LinkedHashMap<>();
+        copyResolvedProperty(session, project, "groups", properties);
+        copyResolvedProperty(session, project, "excludedGroups", properties);
+        return Map.copyOf(properties);
+    }
+
+    private void copyResolvedProperty(
+            MavenSession session,
+            MavenProject project,
+            String key,
+            Map<String, String> destination) {
+        String value = resolveProperty(session, project, key);
+        if (value != null && !value.isBlank()) {
+            destination.put(key, value);
+        }
+    }
+
+    private Map<String, String> mergeSystemProperties(
+            Map<String, String> primary,
+            Map<String, String> overrides) {
+        Map<String, String> merged = new LinkedHashMap<>(primary);
+        merged.putAll(overrides);
+        return Map.copyOf(merged);
     }
 
     private String resolveProperty(MavenSession session, MavenProject project, String key) {
