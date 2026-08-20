@@ -8,6 +8,7 @@ import io.scenariomesh.coordinator.RunRequest;
 import io.scenariomesh.coordinator.ScenarioMeshRunner;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ResultStatus;
+import io.scenariomesh.reporting.LatestReportCleaner;
 import io.scenariomesh.reporting.ReportWriter;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
@@ -93,6 +94,12 @@ public final class RunMojo extends AbstractMojo {
                     selection,
                     executorJvmArgs == null ? List.of() : executorJvmArgs,
                     executorSystemProperties == null ? Map.of() : executorSystemProperties);
+
+            // Once ScenarioMesh owns this invocation, stale top-level aliases must not
+            // survive a new run that crashes before report publication. Historical
+            // runs/<runId> artifacts are retained by the reporting layer.
+            new LatestReportCleaner().clear(config.reportingDirectory());
+
             RunOutcome outcome = new ScenarioMeshRunner().run(request);
             ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
             long passed = outcome.results().stream().filter(result -> result.passed()).count();
@@ -149,6 +156,8 @@ public final class RunMojo extends AbstractMojo {
         getLog().info("Execution phase ownership  : " + (deferFailureUntilVerify ? "integration-test/verify" : "test"));
         getLog().info("Adapter intent             : " + config.executionAdapter());
         getLog().info("Adapter mismatch policy    : " + config.adapterMismatchPolicy().externalValue());
+        getLog().info("Infrastructure retries     : " + config.infrastructureRetries()
+                + (config.infrastructureRetries() > 0 ? " (at-least-once under uncertain worker/transport failure)" : ""));
         getLog().info("Workers                    : " + config.workerCount() + " isolated JVM(s)");
         getLog().info("Scheduler                  : FIFO dynamic assignment");
         getLog().info("Live worker console logs   : " + enabled(config.liveConsoleLogs()));
