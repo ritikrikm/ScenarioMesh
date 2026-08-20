@@ -1,5 +1,7 @@
 package io.scenariomesh.cli;
 
+import org.w3c.dom.Document;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +18,7 @@ final class InitPlanner {
         if (!Files.isRegularFile(pom)) {
             throw new IllegalArgumentException("ScenarioMesh init requires a Maven project with pom.xml: " + projectDirectory);
         }
+        validatePom(pom);
         if (version == null || version.isBlank()) {
             throw new IllegalArgumentException("ScenarioMesh version must not be blank");
         }
@@ -48,6 +51,14 @@ final class InitPlanner {
         }
 
         return new InitPlan(projectDirectory, changes);
+    }
+
+    private void validatePom(Path pom) throws Exception {
+        String xml = Files.readString(pom, StandardCharsets.UTF_8);
+        Document document = XmlDocuments.parse(xml, "pom.xml");
+        if (document.getDocumentElement() == null || !"project".equals(document.getDocumentElement().getNodeName())) {
+            throw new IllegalArgumentException("pom.xml root element must be <project>");
+        }
     }
 
     private String readIfPresent(Path path) throws Exception {
