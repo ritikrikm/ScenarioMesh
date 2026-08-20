@@ -49,6 +49,10 @@ final class MavenExtensionXml {
                 root.appendChild(match);
             } else {
                 Element versionElement = child(match, "version");
+                String existingVersion = versionElement == null ? null : versionElement.getTextContent().trim();
+                if (version.equals(existingVersion) && existing != null) {
+                    return existing;
+                }
                 if (versionElement == null) {
                     append(document, match, "version", version);
                 } else {
