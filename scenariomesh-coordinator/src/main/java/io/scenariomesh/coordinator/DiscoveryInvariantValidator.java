@@ -15,10 +15,14 @@ import java.util.Set;
  */
 final class DiscoveryInvariantValidator {
     void validate(List<String> selectedAdapters, List<ScenarioTask> tasks) {
-        Set<String> adapterIds = Set.copyOf(selectedAdapters);
+        Set<String> adapterIds = new HashSet<>(selectedAdapters);
         Map<String, Integer> idCounts = new HashMap<>();
         Map<String, Integer> selectorCounts = new HashMap<>();
         List<String> violations = new ArrayList<>();
+
+        if (adapterIds.size() != selectedAdapters.size()) {
+            violations.add("discovery selected duplicate adapter ids");
+        }
 
         for (ScenarioTask task : tasks) {
             String id = task.id().value();
@@ -50,10 +54,6 @@ final class DiscoveryInvariantValidator {
                         + "' appears " + count + " times");
             }
         });
-
-        if (new HashSet<>(adapterIds).size() != selectedAdapters.size()) {
-            violations.add("discovery selected duplicate adapter ids");
-        }
 
         if (!violations.isEmpty()) {
             throw new IllegalStateException(
