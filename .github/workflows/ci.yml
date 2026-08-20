@@ -16,6 +16,31 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install
+      - name: ScenarioMesh init packaged CLI is safe and idempotent
+        run: |
+          cli="scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
+          test -f "$cli"
+          java -jar "$cli" version | grep -Fxq '0.1.0-SNAPSHOT'
+          project="$RUNNER_TEMP/scenariomesh init fixture"
+          mkdir -p "$project"
+          printf '%s\n' '<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>fixture</artifactId><version>1</version></project>' > "$project/pom.xml"
+          java -jar "$cli" init --project "$project"
+          test -f "$project/.mvn/extensions.xml"
+          test -f "$project/scenariomesh.yml"
+          grep -Fq '<artifactId>scenariomesh-maven-extension</artifactId>' "$project/.mvn/extensions.xml"
+          grep -Fq '<version>0.1.0-SNAPSHOT</version>' "$project/.mvn/extensions.xml"
+          grep -Fq 'configVersion: 1' "$project/scenariomesh.yml"
+          before_extensions="$(sha256sum "$project/.mvn/extensions.xml")"
+          before_config="$(sha256sum "$project/scenariomesh.yml")"
+          java -jar "$cli" init --project "$project" | grep -Fq 'already initialized; no changes required'
+          test "$before_extensions" = "$(sha256sum "$project/.mvn/extensions.xml")"
+          test "$before_config" = "$(sha256sum "$project/scenariomesh.yml")"
+          dry="$RUNNER_TEMP/scenariomesh dry run fixture"
+          mkdir -p "$dry"
+          cp "$project/pom.xml" "$dry/pom.xml"
+          java -jar "$cli" init --dry-run --project "$dry" | grep -Fq 'CREATE .mvn/extensions.xml'
+          test ! -e "$dry/.mvn/extensions.xml"
+          test ! -e "$dry/scenariomesh.yml"
       - name: JUnit 5 normal Maven command with YAML config
         working-directory: examples/junit5-example
         run: mvn -B test
