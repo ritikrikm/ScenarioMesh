@@ -44,6 +44,7 @@ import java.util.stream.Collectors;
 
 final class WorkerPool implements AutoCloseable {
     private final ObjectMapper mapper = JsonCodec.create();
+    private final ExecutionResultValidator resultValidator = new ExecutionResultValidator();
     private final RunRequest request;
     private final Path dir;
     private final String token = UUID.randomUUID().toString();
@@ -87,10 +88,11 @@ final class WorkerPool implements AutoCloseable {
         return List.copyOf(results);
     }
 
-    private void loop(WorkerConnection initialConnection,
-                      SchedulingStrategy scheduler,
-                      ConcurrentLinkedQueue<ExecutionResult> results,
-                      RunProgress progress) {
+    private void loop(
+            WorkerConnection initialConnection,
+            SchedulingStrategy scheduler,
+            ConcurrentLinkedQueue<ExecutionResult> results,
+            RunProgress progress) {
         WorkerConnection connection = initialConnection;
         int tasksOnCurrentWorker = 0;
         for (;;) {
@@ -116,12 +118,12 @@ final class WorkerPool implements AutoCloseable {
                 if (response == null) {
                     result = failure(task, connection.workerId, attempt, started,
                             "Worker disconnected before returning a result");
-                } else if (response.type() == Protocol.Type.RESULT && response.result() != null) {
-                    result = response.result();
-                    telemetry = response.telemetry();
                 } else {
-                    result = failure(task, connection.workerId, attempt, started,
-                            response.error() == null ? "Unexpected worker response: " + response.type() : response.error());
+                    result = resultValidator.validateOrFailure(
+                            task, connection.workerId, attempt, started, response);
+                    if (!isProtocolValidationFailure(result)) {
+                        telemetry = response.telemetry();
+                    }
                 }
             } catch (SocketTimeoutException exception) {
                 result = failure(task, connection.workerId, attempt, started,
@@ -149,18 +151,21 @@ final class WorkerPool implements AutoCloseable {
             attempts.remove(task.id());
             results.add(result);
             int completed = progress.completed.incrementAndGet();
-            if (!result.passed()) {
+            if (!result.buildSuccessful()) {
                 progress.failed.incrementAndGet();
             }
             logger.workerCompleted(connection.workerId, result, completed, progress.failed.get(),
                     progress.busy.get(), progress.total);
 
-            if (result.status() == ResultStatus.WORKER_FAILURE) {
+            if (requiresWorkerRetirement(result)) {
+                String reason = isProtocolValidationFailure(result)
+                        ? "protocol result validation failure"
+                        : "worker failure";
                 if (scheduler.queued() == 0) {
-                    retireConnection(connection, "worker failure with no queued work remaining");
+                    retireConnection(connection, reason + " with no queued work remaining");
                     return;
                 }
-                WorkerConnection replacement = replace(connection, "worker failure");
+                WorkerConnection replacement = replace(connection, reason);
                 if (replacement == null) {
                     return;
                 }
@@ -193,6 +198,14 @@ final class WorkerPool implements AutoCloseable {
                 || result.status() == ResultStatus.INFRASTRUCTURE_FAILURE;
     }
 
+    private boolean requiresWorkerRetirement(ExecutionResult result) {
+        return result.status() == ResultStatus.WORKER_FAILURE || isProtocolValidationFailure(result);
+    }
+
+    private boolean isProtocolValidationFailure(ExecutionResult result) {
+        return ExecutionResultValidator.FAILURE_TYPE.equals(result.failureType());
+    }
+
     private String recycleReason(int tasksOnWorker, WorkerTelemetry telemetry) {
         if (request.config().taskCountRecyclingEnabled()
                 && tasksOnWorker >= request.config().maxTasksPerWorker()) {
@@ -207,9 +220,10 @@ final class WorkerPool implements AutoCloseable {
 
     private ExecutionResult failure(ScenarioTask task, String id, int attempt, Instant started, String message) {
         Instant finished = Instant.now();
-        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.WORKER_FAILURE,
-                Duration.between(started, finished), new WorkerId(id), attempt, started, finished,
-                message, "WorkerFailure");
+        return new ExecutionResult(
+                task.id(), task.displayName(), ResultStatus.WORKER_FAILURE,
+                Duration.between(started, finished), new WorkerId(id), attempt,
+                started, finished, message, "WorkerFailure");
     }
 
     private String safeMessage(Exception exception) {
@@ -366,7 +380,10 @@ final class WorkerPool implements AutoCloseable {
             connection.socket.setSoTimeout(Math.toIntExact(request.config().workerShutdownTimeout().toMillis()));
             connection.write(Envelope.stop(connection.workerId));
             Envelope response = connection.read();
-            if (response == null || response.type() != Protocol.Type.ACK) {
+            if (response == null
+                    || response.protocolVersion() != Protocol.VERSION
+                    || response.type() != Protocol.Type.ACK
+                    || !connection.workerId.equals(response.workerId())) {
                 logger.progress(connection.workerId + " did not acknowledge STOP; process cleanup will continue.");
             }
         } catch (Exception exception) {
