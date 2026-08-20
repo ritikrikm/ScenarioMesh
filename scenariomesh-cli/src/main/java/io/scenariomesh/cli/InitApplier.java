@@ -10,11 +10,21 @@ import java.util.Collections;
 import java.util.List;
 
 final class InitApplier {
+    private final FileWriter fileWriter;
+
+    InitApplier() {
+        this(new AtomicFileWriter());
+    }
+
+    InitApplier(FileWriter fileWriter) {
+        this.fileWriter = fileWriter;
+    }
+
     void apply(InitPlan plan) throws Exception {
         List<InitPlan.FileChange> applied = new ArrayList<>();
         try {
             for (InitPlan.FileChange change : plan.changes()) {
-                writeAtomically(change.path(), change.after());
+                fileWriter.write(change.path(), change.after());
                 applied.add(change);
             }
         } catch (Exception failure) {
@@ -31,7 +41,7 @@ final class InitApplier {
                 if (change.before() == null) {
                     Files.deleteIfExists(change.path());
                 } else {
-                    writeAtomically(change.path(), change.before());
+                    fileWriter.write(change.path(), change.before());
                 }
             } catch (Exception rollbackFailure) {
                 original.addSuppressed(rollbackFailure);
@@ -39,21 +49,28 @@ final class InitApplier {
         }
     }
 
-    private void writeAtomically(Path target, String content) throws Exception {
-        Path parent = target.getParent();
-        Files.createDirectories(parent);
-        Path temporary = Files.createTempFile(parent, ".scenariomesh-init-", ".tmp");
-        try {
-            Files.writeString(temporary, content, StandardCharsets.UTF_8);
+    interface FileWriter {
+        void write(Path target, String content) throws Exception;
+    }
+
+    private static final class AtomicFileWriter implements FileWriter {
+        @Override
+        public void write(Path target, String content) throws Exception {
+            Path parent = target.getParent();
+            Files.createDirectories(parent);
+            Path temporary = Files.createTempFile(parent, ".scenariomesh-init-", ".tmp");
             try {
-                Files.move(temporary, target,
-                        StandardCopyOption.ATOMIC_MOVE,
-                        StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                Files.writeString(temporary, content, StandardCharsets.UTF_8);
+                try {
+                    Files.move(temporary, target,
+                            StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } finally {
+                Files.deleteIfExists(temporary);
             }
-        } finally {
-            Files.deleteIfExists(temporary);
         }
     }
 }
