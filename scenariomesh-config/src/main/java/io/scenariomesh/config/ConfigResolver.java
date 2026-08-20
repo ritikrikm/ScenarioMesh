@@ -51,6 +51,7 @@ public final class ConfigResolver {
                 intValue(value(ConfigKey.WORKER_COUNT, properties, environment, yaml), defaults.workerCount(), ConfigKey.WORKER_COUNT),
                 durationValue(value(ConfigKey.DISCOVERY_TIMEOUT, properties, environment, yaml), defaults.discoveryTimeout(), ConfigKey.DISCOVERY_TIMEOUT),
                 durationValue(value(ConfigKey.WORKER_STARTUP_TIMEOUT, properties, environment, yaml), defaults.workerStartupTimeout(), ConfigKey.WORKER_STARTUP_TIMEOUT),
+                durationValue(value(ConfigKey.WORKER_TASK_TIMEOUT, properties, environment, yaml), defaults.workerTaskTimeout(), ConfigKey.WORKER_TASK_TIMEOUT),
                 durationValue(value(ConfigKey.WORKER_SHUTDOWN_TIMEOUT, properties, environment, yaml), defaults.workerShutdownTimeout(), ConfigKey.WORKER_SHUTDOWN_TIMEOUT),
                 pathValue(value(ConfigKey.REPORTING_DIRECTORY, properties, environment, yaml), projectDirectory, defaults.reportingDirectory()),
                 listValue(value(ConfigKey.WORKER_JVM_ARGS, properties, environment, yaml), defaults.workerJvmArgs()),
