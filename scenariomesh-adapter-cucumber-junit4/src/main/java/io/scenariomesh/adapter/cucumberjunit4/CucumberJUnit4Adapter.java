@@ -35,6 +35,7 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
             "cucumber.api.junit.Cucumber");
 
     private final JUnit4DescriptionLeaves descriptionLeaves = new JUnit4DescriptionLeaves();
+    private final CucumberJsonReportIsolation jsonReportIsolation = new CucumberJsonReportIsolation();
 
     @Override public String id() { return ID; }
     @Override public String framework() { return "cucumber-junit4"; }
@@ -71,6 +72,18 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     public ExecutionResult execute(ScenarioTask task, ExecutionContext context) throws Exception {
         Selector selector = Selector.parse(task.selector());
         Class<?> runnerClass = Class.forName(selector.runnerClass(), false, context.classLoader());
+        return jsonReportIsolation.execute(
+                task,
+                context,
+                runnerClass,
+                () -> executeSelected(task, context, selector, runnerClass));
+    }
+
+    private ExecutionResult executeSelected(
+            ScenarioTask task,
+            ExecutionContext context,
+            Selector selector,
+            Class<?> runnerClass) {
         Request base = Request.aClass(runnerClass);
         Description selected = descriptionAtPath(base.getRunner().getDescription(), selector.path());
         if (selected == null) {
@@ -162,16 +175,10 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     }
 
     private boolean ownsGenericJUnitExecution(Class<?> candidate, RunWith runWith) {
-        if (runWith != null) {
-            return true;
-        }
-        if (TestCase.class.isAssignableFrom(candidate)) {
-            return true;
-        }
+        if (runWith != null) return true;
+        if (TestCase.class.isAssignableFrom(candidate)) return true;
         for (Method method : candidate.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(Test.class)) {
-                return true;
-            }
+            if (method.isAnnotationPresent(Test.class)) return true;
         }
         return false;
     }
@@ -187,8 +194,12 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     }
 
     private boolean present(ClassLoader classLoader, String name) {
-        try { Class.forName(name, false, classLoader); return true; }
-        catch (ClassNotFoundException ignored) { return false; }
+        try {
+            Class.forName(name, false, classLoader);
+            return true;
+        } catch (ClassNotFoundException ignored) {
+            return false;
+        }
     }
 
     private static String safeMessage(Throwable throwable) {
@@ -201,6 +212,7 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
             return runnerClass + "#" + path.stream().map(String::valueOf)
                     .reduce((left, right) -> left + "." + right).orElse("");
         }
+
         static Selector parse(String value) {
             int separator = value.indexOf('#');
             if (separator < 0) throw new IllegalArgumentException("Invalid JUnit 4 selector: " + value);
