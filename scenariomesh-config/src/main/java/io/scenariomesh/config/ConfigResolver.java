@@ -44,11 +44,22 @@ public final class ConfigResolver {
         Map<String, Object> yaml = loaded.values();
         ScenarioMeshConfig defaults = ScenarioMeshConfig.defaults(buildDirectory);
 
+        int workerCount = intValue(value(ConfigKey.WORKER_COUNT, properties, environment, yaml),
+                defaults.workerCount(), ConfigKey.WORKER_COUNT);
+        Object minimumReadyRaw = value(ConfigKey.WORKER_MINIMUM_READY, properties, environment, yaml);
+        int minimumReady = minimumReadyRaw == null
+                ? workerCount
+                : intValue(minimumReadyRaw, workerCount, ConfigKey.WORKER_MINIMUM_READY);
+
         ScenarioMeshConfig resolved = new ScenarioMeshConfig(
                 booleanValue(value(ConfigKey.ENABLED, properties, environment, yaml), defaults.enabled(), ConfigKey.ENABLED),
                 stringValue(value(ConfigKey.EXECUTION_ADAPTER, properties, environment, yaml), defaults.executionAdapter()),
                 mismatchPolicy(value(ConfigKey.ADAPTER_MISMATCH_POLICY, properties, environment, yaml), defaults.adapterMismatchPolicy()),
-                intValue(value(ConfigKey.WORKER_COUNT, properties, environment, yaml), defaults.workerCount(), ConfigKey.WORKER_COUNT),
+                intValue(value(ConfigKey.INFRASTRUCTURE_RETRIES, properties, environment, yaml), defaults.infrastructureRetries(), ConfigKey.INFRASTRUCTURE_RETRIES),
+                workerCount,
+                minimumReady,
+                intValue(value(ConfigKey.WORKER_MAX_TASKS, properties, environment, yaml), defaults.maxTasksPerWorker(), ConfigKey.WORKER_MAX_TASKS),
+                intValue(value(ConfigKey.WORKER_MAX_HEAP_PERCENT, properties, environment, yaml), defaults.maxHeapUsagePercent(), ConfigKey.WORKER_MAX_HEAP_PERCENT),
                 durationValue(value(ConfigKey.DISCOVERY_TIMEOUT, properties, environment, yaml), defaults.discoveryTimeout(), ConfigKey.DISCOVERY_TIMEOUT),
                 durationValue(value(ConfigKey.WORKER_STARTUP_TIMEOUT, properties, environment, yaml), defaults.workerStartupTimeout(), ConfigKey.WORKER_STARTUP_TIMEOUT),
                 durationValue(value(ConfigKey.WORKER_TASK_TIMEOUT, properties, environment, yaml), defaults.workerTaskTimeout(), ConfigKey.WORKER_TASK_TIMEOUT),
