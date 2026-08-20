@@ -56,6 +56,38 @@ class InitPlannerTest {
     }
 
     @Test
+    void reusesAncestorRepositoryExtensionsFileForNestedMavenProject() throws Exception {
+        Files.createDirectory(temp.resolve(".git"));
+        Path rootMvn = Files.createDirectories(temp.resolve(".mvn"));
+        Path rootExtensions = rootMvn.resolve("extensions.xml");
+        Files.writeString(rootExtensions, "<extensions/>\n");
+        Path module = Files.createDirectories(temp.resolve("modules/service-a"));
+        Files.writeString(module.resolve("pom.xml"), "<project/>");
+
+        InitPlan plan = planner.plan(module, "1.2.3");
+        applier.apply(plan);
+
+        assertTrue(Files.readString(rootExtensions).contains("scenariomesh-maven-extension"));
+        assertFalse(Files.exists(module.resolve(".mvn/extensions.xml")));
+        assertTrue(Files.exists(module.resolve("scenariomesh.yml")));
+    }
+
+    @Test
+    void ignoresUnrelatedSiblingExtensionsFileInMonorepo() throws Exception {
+        Files.createDirectory(temp.resolve(".git"));
+        Path sibling = Files.createDirectories(temp.resolve("service-b/.mvn"));
+        Files.writeString(sibling.resolve("extensions.xml"), "<extensions/>\n");
+        Path selected = Files.createDirectories(temp.resolve("service-a"));
+        Files.writeString(selected.resolve("pom.xml"), "<project/>");
+
+        InitPlan plan = planner.plan(selected, "1.2.3");
+        applier.apply(plan);
+
+        assertTrue(Files.exists(selected.resolve(".mvn/extensions.xml")));
+        assertFalse(Files.readString(sibling.resolve("extensions.xml")).contains("scenariomesh-maven-extension"));
+    }
+
+    @Test
     void updatesExistingScenarioMeshExtensionVersionWithoutDuplicatingIt() throws Exception {
         Files.writeString(temp.resolve("pom.xml"), "<project/>");
         Path mvn = Files.createDirectories(temp.resolve(".mvn"));
