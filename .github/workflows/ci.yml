@@ -47,6 +47,23 @@ jobs:
           grep -q 'worker-2 PASSED c_alsoRunsAfterReplacement' crash-recovery.log
           grep -q 'WORKER_FAILURE' target/scenariomesh/summary.json
           grep -q 'worker-2' target/scenariomesh/summary.json
+      - name: Normal test failure keeps worker alive
+        working-directory: examples/test-failure-continuation-example
+        run: |
+          set +e
+          mvn -B test > test-failure-continuation.log 2>&1
+          exit_code=$?
+          set -e
+          cat test-failure-continuation.log
+          test "$exit_code" -ne 0
+          test -f target/scenariomesh/summary.json
+          grep -q 'TEST_FAILURE' target/scenariomesh/summary.json
+          grep -q 'worker-1 PASSED b_sameWorkerContinues' test-failure-continuation.log
+          grep -q 'worker-1 PASSED c_sameWorkerStillContinues' test-failure-continuation.log
+          if grep -q ' REPLACED ' test-failure-continuation.log; then
+            echo 'Normal test failure incorrectly replaced the worker'
+            exit 1
+          fi
       - name: Custom Surefire selection remains normal Maven execution
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
