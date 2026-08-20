@@ -82,13 +82,12 @@ public final class ReportWriter {
 
         StringBuilder rows = new StringBuilder();
         for (ExecutionResult result : summary.results()) {
-            String status = result.status().name();
             String category = statusCategory(result.status());
             rows.append("<tr data-status=\"").append(category).append("\" data-worker=\"")
                     .append(htmlEscape(result.workerId().value())).append("\" data-name=\"")
                     .append(htmlEscape(result.displayName().toLowerCase(Locale.ROOT))).append("\">")
                     .append("<td><span class=\"badge ").append(category).append("\">")
-                    .append(htmlEscape(status)).append("</span></td>")
+                    .append(htmlEscape(statusLabel(result.status()))).append("</span></td>")
                     .append("<td><div class=\"scenario-name\">").append(htmlEscape(result.displayName()))
                     .append("</div><div class=\"scenario-id\">").append(htmlEscape(result.scenarioId().value())).append("</div></td>")
                     .append("<td>").append(htmlEscape(result.workerId().value())).append("</td>")
@@ -119,23 +118,23 @@ public final class ReportWriter {
                   <section class="cards">
                     <div class="card"><div class="label">Scenarios</div><div class="value">%d</div></div>
                     <div class="card"><div class="label">Passed</div><div class="value positive">%d</div></div>
-                    <div class="card"><div class="label">Failed</div><div class="value negative">%d</div></div>
-                    <div class="card"><div class="label">Infrastructure</div><div class="value">%d</div></div>
-                    <div class="card"><div class="label">Wall-clock duration</div><div class="value">%s</div></div>
-                    <div class="card"><div class="label">Estimated time saved</div><div class="value %s">%s</div></div>
+                    <div class="card"><div class="label">Failed tests</div><div class="value negative">%d</div></div>
+                    <div class="card"><div class="label">Infrastructure errors</div><div class="value">%d</div><div class="note">Worker/runtime errors, not assertion failures.</div></div>
+                    <div class="card"><div class="label">Actual elapsed time</div><div class="value">%s</div></div>
+                    <div class="card"><div class="label">Estimated parallel time saved</div><div class="value %s">%s</div></div>
                   </section>
                   <section class="grid">
-                    <div class="panel"><h2>Timing</h2>
-                      <div class="timing-line"><span>Observed ScenarioMesh wall-clock</span><strong>%s</strong></div>
-                      <div class="timing-line"><span>Sequential-equivalent scenario work</span><strong>%s</strong></div>
-                      <div class="timing-line"><span>Estimated time saved</span><strong class="%s">%s</strong></div>
-                      <div class="timing-line"><span>Observed speedup</span><strong>%s×</strong></div>
-                      <div class="note">Sequential-equivalent time is the sum of the actual durations reported by every scenario in this run. It is an estimate of serial scenario work, not a second sequential execution. This avoids rerunning stateful tests merely to create a benchmark.</div>
+                    <div class="panel"><h2>Timing explained</h2>
+                      <div class="timing-line"><span>Actual elapsed time <span class="muted">— real time you waited</span></span><strong>%s</strong></div>
+                      <div class="timing-line"><span>Estimated serial execution time <span class="muted">— sum of all scenario durations</span></span><strong>%s</strong></div>
+                      <div class="timing-line"><span>Estimated parallel time saved <span class="muted">— serial estimate minus elapsed time</span></span><strong class="%s">%s</strong></div>
+                      <div class="timing-line"><span>Estimated speedup vs serial <span class="muted">— serial estimate ÷ elapsed time</span></span><strong>%s×</strong></div>
+                      <div class="note">Estimated serial execution time is calculated from the actual scenario durations observed in this parallel run. ScenarioMesh does not rerun the suite sequentially, so this is an estimate rather than a separately measured non-parallel baseline.</div>
                     </div>
-                    <div class="panel"><h2>Worker execution time</h2><div class="workers">%s</div><div class="note">Worker time is the sum of scenario execution durations assigned to that worker. It excludes worker startup and idle time.</div></div>
+                    <div class="panel"><h2>Worker execution time</h2><div class="workers">%s</div><div class="note">Worker time is the sum of scenario durations handled by that worker. Workers run at the same time, so worker times must not be added to obtain the real elapsed time. Startup and idle time are excluded.</div></div>
                   </section>
                   <section class="panel"><div class="toolbar">
-                    <div class="filters"><button class="filter active" data-filter="all">All <span>%d</span></button><button class="filter" data-filter="passed">Passed <span>%d</span></button><button class="filter" data-filter="failed">Failed <span>%d</span></button><button class="filter" data-filter="infrastructure">Infrastructure <span>%d</span></button></div>
+                    <div class="filters"><button class="filter active" data-filter="all">All <span>%d</span></button><button class="filter" data-filter="passed">Passed <span>%d</span></button><button class="filter" data-filter="failed">Failed <span>%d</span></button><button class="filter" data-filter="infrastructure">Infrastructure errors <span>%d</span></button></div>
                     <select id="workerFilter">%s</select><input id="search" type="search" placeholder="Search scenarios…">
                   </div>
                   <div class="table-wrap"><table><thead><tr><th>Status</th><th>Scenario</th><th>Worker</th><th>Duration</th><th>Failure</th></tr></thead><tbody id="rows">%s</tbody></table><div class="empty" id="empty">No scenarios match these filters.</div></div></section>
@@ -157,6 +156,12 @@ public final class ReportWriter {
         if (status == ResultStatus.PASSED) return "passed";
         if (status == ResultStatus.TEST_FAILURE) return "failed";
         return "infrastructure";
+    }
+
+    private String statusLabel(ResultStatus status) {
+        if (status == ResultStatus.PASSED) return "PASSED";
+        if (status == ResultStatus.TEST_FAILURE) return "TEST FAILURE";
+        return "INFRASTRUCTURE ERROR";
     }
 
     private String formatDuration(long millis) {
