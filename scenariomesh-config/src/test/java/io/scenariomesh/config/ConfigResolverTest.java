@@ -29,6 +29,7 @@ class ConfigResolverTest {
         assertEquals(AdapterMismatchPolicy.FAIL, config.adapterMismatchPolicy());
         assertEquals(4, config.workerCount());
         assertEquals(Duration.ofMinutes(2), config.discoveryTimeout());
+        assertEquals(Duration.ofMinutes(15), config.workerTaskTimeout());
         assertEquals(project.resolve("target/scenariomesh").toAbsolutePath().normalize(), config.reportingDirectory());
         assertTrue(config.liveConsoleLogs());
         assertTrue(config.workerLogFiles());
@@ -48,6 +49,7 @@ class ConfigResolverTest {
                   workers:
                     count: 7
                     startupTimeout: PT45S
+                    taskTimeout: PT5M
                     shutdownTimeout: PT15S
                     jvmArgs:
                       - -Xmx1g
@@ -72,6 +74,7 @@ class ConfigResolverTest {
         assertEquals(AdapterMismatchPolicy.USE_DETECTED, config.adapterMismatchPolicy());
         assertEquals(7, config.workerCount());
         assertEquals(Duration.ofSeconds(45), config.workerStartupTimeout());
+        assertEquals(Duration.ofMinutes(5), config.workerTaskTimeout());
         assertEquals(Duration.ofSeconds(15), config.workerShutdownTimeout());
         assertEquals(Duration.ofMinutes(3), config.discoveryTimeout());
         assertEquals(2, config.workerJvmArgs().size());
@@ -90,6 +93,7 @@ class ConfigResolverTest {
                   configVersion: 1
                   workers:
                     count: 5
+                    taskTimeout: PT7M
                   execution:
                     adapter: testng
                   logging:
@@ -99,10 +103,17 @@ class ConfigResolverTest {
         ScenarioMeshConfig config = resolver.resolve(
                 project,
                 project.resolve("target"),
-                Map.of("scenariomesh.workers.count", "9", "scenariomesh.logging.liveConsole", "true"),
-                Map.of("SCENARIOMESH_WORKERS_COUNT", "8", "SCENARIOMESH_EXECUTION_ADAPTER", "junit-platform"));
+                Map.of(
+                        "scenariomesh.workers.count", "9",
+                        "scenariomesh.workers.taskTimeout", "PT3M",
+                        "scenariomesh.logging.liveConsole", "true"),
+                Map.of(
+                        "SCENARIOMESH_WORKERS_COUNT", "8",
+                        "SCENARIOMESH_WORKERS_TASK_TIMEOUT", "PT4M",
+                        "SCENARIOMESH_EXECUTION_ADAPTER", "junit-platform"));
 
         assertEquals(9, config.workerCount());
+        assertEquals(Duration.ofMinutes(3), config.workerTaskTimeout());
         assertEquals("junit-platform", config.executionAdapter());
         assertTrue(config.liveConsoleLogs());
     }
@@ -116,6 +127,29 @@ class ConfigResolverTest {
                 Map.of());
 
         assertEquals(6, config.workerCount());
+    }
+
+    @Test
+    void keepsLegacyWorkerTaskTimeoutPropertyAsAlias() {
+        ScenarioMeshConfig config = resolver.resolve(
+                project,
+                project.resolve("target"),
+                Map.of("scenariomesh.worker.taskTimeout", "PT90S"),
+                Map.of());
+
+        assertEquals(Duration.ofSeconds(90), config.workerTaskTimeout());
+    }
+
+    @Test
+    void rejectsNonPositiveWorkerTaskTimeout() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve(
+                        project,
+                        project.resolve("target"),
+                        Map.of("scenariomesh.workers.taskTimeout", "PT0S"),
+                        Map.of()));
+
+        assertTrue(error.getMessage().contains("workers.taskTimeout"));
     }
 
     @Test
