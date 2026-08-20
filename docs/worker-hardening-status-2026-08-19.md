@@ -82,6 +82,13 @@ Config regression coverage now checks:
 
 Existing CI provides the wider E2E regression gate on Java 17 and Java 21 and runs ScenarioMesh through normal Maven commands for JUnit 5, Cucumber JUnit Platform, Cucumber JUnit 4, TestNG, Failsafe, and pass-through projects.
 
+### Verification status
+
+- Source/config regression tests: added to the branch.
+- Branch integrity: verified; the hardening branch is ahead of `agent/mvp-runtime` and contains only the intended Point 1 code/test/documentation changes.
+- E2E CI: push-triggered by the repository workflow, but the currently available GitHub connector only exposes PR-triggered workflow runs for direct inspection. Therefore **Point 1 is not marked E2E-passed yet** from this session.
+- Point 2 must not be treated as started until Point 1 E2E result is observable/confirmed.
+
 ### Remaining limitation after Point 1
 
 A timed-out worker is retired but is **not yet replaced**. Pool capacity can therefore shrink during a run. Worker replacement is deliberately a separate future point because it needs an explicit mutable worker lifecycle and coordinator-owned replacement semantics.
@@ -90,7 +97,7 @@ A timed-out worker is retired but is **not yet replaced**. Pool capacity can the
 
 | Area | Status | Size |
 |---|---|---|
-| Task execution timeout | Implemented in test branch | Small/medium |
+| Task execution timeout | Implemented; E2E confirmation pending | Small/medium |
 | Retire worker after communication failure | Implemented with Point 1 | Small |
 | Worker replacement | Future | Large |
 | Infrastructure-only task retry/requeue | Future | Medium/large |
