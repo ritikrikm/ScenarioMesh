@@ -11,7 +11,11 @@ public record ScenarioMeshConfig(
         boolean enabled,
         String executionAdapter,
         AdapterMismatchPolicy adapterMismatchPolicy,
+        int infrastructureRetries,
         int workerCount,
+        int minimumReadyWorkers,
+        int maxTasksPerWorker,
+        int maxHeapUsagePercent,
         Duration discoveryTimeout,
         Duration workerStartupTimeout,
         Duration workerTaskTimeout,
@@ -29,8 +33,16 @@ public record ScenarioMeshConfig(
     public ScenarioMeshConfig {
         executionAdapter = normalizeAdapter(executionAdapter);
         Objects.requireNonNull(adapterMismatchPolicy, "adapterMismatchPolicy");
+        requireNonNegative(infrastructureRetries, "execution.infrastructureRetries");
         if (workerCount < 1) {
             throw new IllegalArgumentException("Invalid configuration: workers.count must be greater than 0");
+        }
+        if (minimumReadyWorkers < 1 || minimumReadyWorkers > workerCount) {
+            throw new IllegalArgumentException("Invalid configuration: workers.minimumReady must be between 1 and workers.count");
+        }
+        requireNonNegative(maxTasksPerWorker, "workers.maxTasksPerWorker");
+        if (maxHeapUsagePercent < 0 || maxHeapUsagePercent > 100) {
+            throw new IllegalArgumentException("Invalid configuration: workers.maxHeapUsagePercent must be between 0 and 100");
         }
         requirePositive(discoveryTimeout, "discovery.timeout");
         requireSocketTimeout(workerStartupTimeout, "workers.startupTimeout");
@@ -46,12 +58,24 @@ public record ScenarioMeshConfig(
         return AUTO_ADAPTER.equals(executionAdapter);
     }
 
+    public boolean taskCountRecyclingEnabled() {
+        return maxTasksPerWorker > 0;
+    }
+
+    public boolean heapRecyclingEnabled() {
+        return maxHeapUsagePercent > 0;
+    }
+
     public static ScenarioMeshConfig defaults(Path buildDirectory) {
         return new ScenarioMeshConfig(
                 true,
                 AUTO_ADAPTER,
                 AdapterMismatchPolicy.FAIL,
+                0,
                 4,
+                4,
+                0,
+                0,
                 Duration.ofMinutes(2),
                 Duration.ofSeconds(30),
                 Duration.ofMinutes(15),
@@ -74,6 +98,12 @@ public record ScenarioMeshConfig(
     private static void requirePositive(Duration value, String name) {
         if (value == null || value.isNegative() || value.isZero()) {
             throw new IllegalArgumentException("Invalid configuration: " + name + " must be greater than 0");
+        }
+    }
+
+    private static void requireNonNegative(int value, String name) {
+        if (value < 0) {
+            throw new IllegalArgumentException("Invalid configuration: " + name + " must not be negative");
         }
     }
 
