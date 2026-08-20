@@ -7,6 +7,8 @@ import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
+import junit.framework.TestCase;
+import org.junit.Test;
 import org.junit.runner.Description;
 import org.junit.runner.JUnitCore;
 import org.junit.runner.Request;
@@ -14,6 +16,7 @@ import org.junit.runner.Result;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -50,10 +53,6 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         for (Class<?> runner : findCucumberRunnerClasses(context)) {
             Description root = Request.aClass(runner).getRunner().getDescription();
             for (JUnit4DescriptionLeaves.Leaf leaf : descriptionLeaves.collect(root)) {
-                // Correctness identity follows the native executable selector that Maven/JUnit would run.
-                // Human-readable Cucumber names are diagnostics only: generated Scenario Outline rows can
-                // legitimately have identical feature/scenario names while being owned by different runner
-                // classes and generated feature resources.
                 String selector = new Selector(runner.getName(), leaf.selectorPath()).encode();
                 Description description = leaf.description();
                 tasks.add(new ScenarioTask(
@@ -84,24 +83,44 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         Instant started = Instant.now();
         Result result = new JUnitCore().run(base.filterWith(selected));
         Instant finished = Instant.now();
-        if (!result.wasSuccessful()) {
+        Duration duration = Duration.between(started, finished);
+
+        if (result.getFailureCount() > 0) {
             Throwable failure = result.getFailures().isEmpty() ? null : result.getFailures().get(0).getException();
             return new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE,
-                    Duration.between(started, finished), context.workerId(), context.attempt(), started, finished,
-                    failure == null ? result.getFailures().toString() : failure.getMessage(),
+                    duration, context.workerId(), context.attempt(), started, finished,
+                    failure == null ? result.getFailures().toString() : safeMessage(failure),
                     failure == null ? null : failure.getClass().getName());
         }
-        if (result.getRunCount() == 0) {
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
-                    Duration.between(started, finished), context.workerId(), context.attempt(), started, finished,
-                    "JUnit 4 selected scenario produced zero executed tests", "SelectionFailure");
+
+        int assumptions = result.getAssumptionFailureCount();
+        int ignored = result.getIgnoreCount();
+        if (assumptions > 0 || ignored > 0) {
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED,
+                    duration, context.workerId(), context.attempt(), started, finished,
+                    assumptions > 0
+                            ? "JUnit 4 skipped the selected scenario because an assumption failed"
+                            : "JUnit 4 ignored the selected scenario",
+                    assumptions > 0 ? "JUnit4AssumptionSkipped" : "JUnit4Ignored");
         }
+
+        if (result.getRunCount() != 1) {
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                    duration, context.workerId(), context.attempt(), started, finished,
+                    "JUnit 4 selected scenario produced " + result.getRunCount()
+                            + " executed tests; ScenarioMesh requires exactly one terminal execution per task",
+                    "SelectionMultiplicityFailure");
+        }
+
         return new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED,
-                Duration.between(started, finished), context.workerId(), context.attempt(), started, finished, null, null);
+                duration, context.workerId(), context.attempt(), started, finished, null, null);
     }
 
     private List<Class<?>> findCucumberRunnerClasses(AdapterContext context) throws IOException {
-        List<Class<?>> result = new ArrayList<>();
+        List<Class<?>> runners = new ArrayList<>();
+        List<String> inspectionFailures = new ArrayList<>();
+        List<String> unsupportedJUnitOwners = new ArrayList<>();
+
         for (Path root : context.testRoots()) {
             if (!Files.isDirectory(root)) continue;
             try (Stream<Path> stream = Files.walk(root)) {
@@ -117,15 +136,44 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
                         Class<?> candidate = Class.forName(name, false, context.classLoader());
                         RunWith runWith = candidate.getAnnotation(RunWith.class);
                         if (runWith != null && CUCUMBER_RUNNERS.contains(runWith.value().getName())) {
-                            result.add(candidate);
+                            runners.add(candidate);
+                        } else if (ownsGenericJUnitExecution(candidate, runWith)) {
+                            unsupportedJUnitOwners.add(candidate.getName());
                         }
-                    } catch (LinkageError | ClassNotFoundException ignored) {
-                        // A non-loadable test class is not a Cucumber runner candidate.
+                    } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
+                        inspectionFailures.add(name + " -> " + safeMessage(exception));
                     }
                 }
             }
         }
-        return result;
+
+        if (!inspectionFailures.isEmpty()) {
+            throw new IllegalStateException(
+                    "Cucumber JUnit 4 discovery could not safely inspect selected candidate class(es): "
+                            + String.join("; ", inspectionFailures));
+        }
+        if (!unsupportedJUnitOwners.isEmpty()) {
+            throw new IllegalStateException(
+                    "Cucumber JUnit 4 takeover found ordinary JUnit-owned test class(es) that this adapter cannot execute: "
+                            + String.join(", ", unsupportedJUnitOwners)
+                            + ". ScenarioMesh will not silently omit them.");
+        }
+        return runners;
+    }
+
+    private boolean ownsGenericJUnitExecution(Class<?> candidate, RunWith runWith) {
+        if (runWith != null) {
+            return true;
+        }
+        if (TestCase.class.isAssignableFrom(candidate)) {
+            return true;
+        }
+        for (Method method : candidate.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Test.class)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Description descriptionAtPath(Description root, List<Integer> path) {
@@ -141,6 +189,11 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     private boolean present(ClassLoader classLoader, String name) {
         try { Class.forName(name, false, classLoader); return true; }
         catch (ClassNotFoundException ignored) { return false; }
+    }
+
+    private static String safeMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.isBlank() ? throwable.getClass().getName() : message;
     }
 
     private record Selector(String runnerClass, List<Integer> path) {
