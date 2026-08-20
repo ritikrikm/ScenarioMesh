@@ -64,9 +64,9 @@ public final class RunMojo extends AbstractMojo {
 
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         try {
-            Map<String, String> runtimeProperties = stringProperties(session.getSystemProperties());
-            runtimeProperties.putAll(stringProperties(session.getUserProperties()));
-            Map<String, String> configProperties = new LinkedHashMap<>(runtimeProperties);
+            Map<String, String> userProperties = stringProperties(session.getUserProperties());
+            Map<String, String> configProperties = stringProperties(session.getSystemProperties());
+            configProperties.putAll(userProperties);
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
             ConfigResolution resolution = new ConfigResolver().resolveDetailed(
                     projectDirectory, buildDirectory, configProperties, System.getenv());
@@ -88,7 +88,7 @@ public final class RunMojo extends AbstractMojo {
                     projectDirectory,
                     runtimeClasspath(),
                     new TestRootResolver().resolve(project),
-                    runtimeProperties,
+                    userProperties,
                     config,
                     selection,
                     executorJvmArgs == null ? List.of() : executorJvmArgs,
