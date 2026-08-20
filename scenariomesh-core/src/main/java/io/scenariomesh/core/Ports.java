@@ -41,9 +41,18 @@ public final class Ports {
         }
     }
 
+    /**
+     * Optional worker-side cleanup extension loaded with {@link java.util.ServiceLoader}.
+     * Implementations must clean only resources owned by the completed task/worker.
+     */
+    public interface WorkerTaskCleanup {
+        void afterTask(ScenarioTask task, ExecutionContext context, ExecutionResult result) throws Exception;
+    }
+
     public interface SchedulingStrategy {
         void load(Collection<ScenarioTask> tasks);
         ScenarioTask nextEligible(Predicate<ScenarioTask> eligible);
+        void requeue(ScenarioTask task);
         int queued();
     }
 }
