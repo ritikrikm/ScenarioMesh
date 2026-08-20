@@ -111,6 +111,13 @@ jobs:
           test "$(wc -l < target/cleanup-hook.log)" -eq 2
           grep -Fq 'firstTask()|worker-1|attempt=1' target/cleanup-hook.log
           grep -Fq 'secondTask()|worker-1|attempt=1' target/cleanup-hook.log
+      - name: Retiring worker kills descendant process tree
+        working-directory: examples/process-tree-cleanup-example
+        run: |
+          mvn -B clean test > process-tree-cleanup.log 2>&1
+          cat process-tree-cleanup.log
+          grep -Fq 'worker-2 REPLACED worker-1 after task-count recycling after 1 task(s)' process-tree-cleanup.log
+          grep -Fq 'worker-2 PASSED b_recycledWorkerKilledChild()' process-tree-cleanup.log
       - name: Custom Surefire selection remains normal Maven execution
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
@@ -127,6 +134,7 @@ jobs:
           test -f examples/failsafe-junit5-example/target/scenariomesh/report.html
           test -f examples/failsafe-junit5-example/target/scenariomesh/deferred-verification.properties
           test -f examples/cleanup-hook-example/target/scenariomesh/report.html
+          test -f examples/process-tree-cleanup-example/target/scenariomesh/report.html
       - name: Verify modern report content and machine-readable timing
         run: |
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
