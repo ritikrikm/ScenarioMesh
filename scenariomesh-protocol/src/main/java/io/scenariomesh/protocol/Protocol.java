@@ -4,7 +4,12 @@ import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ScenarioTask;
 
 public final class Protocol {
-    public static final int VERSION = 2;
+    /**
+     * Version 3 adds explicit SKIPPED terminal-result semantics and a stricter
+     * coordinator RESULT-envelope contract. Older workers must not be mixed
+     * with a v3 coordinator.
+     */
+    public static final int VERSION = 3;
 
     private Protocol() {}
 
