@@ -1,0 +1,12 @@
+scenariomesh:
+  configVersion: 1
+  workers:
+    count: 1
+    taskTimeout: PT10S
+    startupTimeout: PT30S
+    shutdownTimeout: PT10S
+  logging:
+    liveConsole: true
+    workerFiles: true
+    showConfiguration: true
+    showProgress: true
