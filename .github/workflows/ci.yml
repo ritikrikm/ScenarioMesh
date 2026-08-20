@@ -31,6 +31,22 @@ jobs:
       - name: Failsafe verify lifecycle takeover
         working-directory: examples/failsafe-junit5-example
         run: mvn -B clean compile verify
+      - name: Worker crash replacement preserves queued execution
+        working-directory: examples/worker-crash-recovery-example
+        run: |
+          set +e
+          mvn -B test > crash-recovery.log 2>&1
+          exit_code=$?
+          set -e
+          cat crash-recovery.log
+          test "$exit_code" -ne 0
+          test -f target/scenariomesh/report.html
+          test -f target/scenariomesh/summary.json
+          grep -q 'worker-2 REPLACED worker-1' crash-recovery.log
+          grep -q 'worker-2 PASSED b_runsAfterReplacement' crash-recovery.log
+          grep -q 'worker-2 PASSED c_alsoRunsAfterReplacement' crash-recovery.log
+          grep -q 'WORKER_FAILURE' target/scenariomesh/summary.json
+          grep -q 'worker-2' target/scenariomesh/summary.json
       - name: Custom Surefire selection remains normal Maven execution
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
