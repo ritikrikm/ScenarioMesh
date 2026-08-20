@@ -51,7 +51,7 @@ jobs:
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
           grep -q 'data-filter="failed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
           grep -q 'Worker execution time' examples/cucumber-junit4-example/target/scenariomesh/report.html
-          grep -q 'Sequential-equivalent scenario work' examples/cucumber-junit4-example/target/scenariomesh/report.html
+          grep -q 'Estimated serial execution time' examples/cucumber-junit4-example/target/scenariomesh/report.html
           grep -q '"sequentialEquivalentMillis"' examples/cucumber-junit4-example/target/scenariomesh/summary.json
           grep -q '"estimatedTimeSavedMillis"' examples/cucumber-junit4-example/target/scenariomesh/summary.json
           grep -q '"workers"' examples/cucumber-junit4-example/target/scenariomesh/summary.json
