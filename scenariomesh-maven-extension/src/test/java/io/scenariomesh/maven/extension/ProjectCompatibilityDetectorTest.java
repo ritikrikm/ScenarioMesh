@@ -10,6 +10,7 @@ import org.apache.maven.project.MavenProject;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -42,15 +43,29 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
-    void junit5PlusTestNgPassesThroughBecauseOwnershipIsMixed() {
+    void multipleFrameworkSignalsAreCandidatesAndRuntimeDiscoveryProvesOwnership() {
         MavenProject project = project(
                 dependency("org.junit.jupiter", "junit-jupiter"),
                 dependency("org.testng", "testng"));
 
         var decision = detector.evaluate(session("test"), project);
 
-        assertFalse(decision.compatible());
-        assertTrue(decision.reason().contains("multiple supported test-framework owners"), decision.reason());
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals(Set.of("junit-platform", "testng"), decision.frameworks());
+        assertTrue(decision.reason().contains("runtime discovery"), decision.reason());
+    }
+
+    @Test
+    void cucumberJUnit4PlusTestNgDoesNotFailCompatibilityOnDependenciesAlone() {
+        MavenProject project = project(
+                dependency("io.cucumber", "cucumber-junit"),
+                dependency("org.testng", "testng"),
+                dependency("junit", "junit"));
+
+        var decision = detector.evaluate(session("test"), project);
+
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals(Set.of("cucumber-junit4", "testng"), decision.frameworks());
     }
 
     @Test
