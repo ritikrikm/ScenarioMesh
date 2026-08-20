@@ -20,6 +20,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -99,7 +100,7 @@ final class WorkerPool implements AutoCloseable {
             ExecutionResult result;
             try {
                 connection.write(Envelope.run(connection.workerId, task));
-                Envelope response = connection.read();
+                Envelope response = connection.read(request.config().workerTaskTimeout());
                 if (response == null) {
                     result = failure(task, connection.workerId, started, "Worker disconnected before returning a result");
                 } else if (response.type() == Protocol.Type.RESULT && response.result() != null) {
@@ -108,6 +109,9 @@ final class WorkerPool implements AutoCloseable {
                     result = failure(task, connection.workerId, started,
                             response.error() == null ? "Unexpected worker response: " + response.type() : response.error());
                 }
+            } catch (SocketTimeoutException exception) {
+                result = failure(task, connection.workerId, started,
+                        "Worker exceeded task timeout " + request.config().workerTaskTimeout());
             } catch (Exception exception) {
                 result = failure(task, connection.workerId, started, exception.getMessage());
             }
@@ -122,6 +126,7 @@ final class WorkerPool implements AutoCloseable {
                     progress.busy.get(), progress.total);
 
             if (result.status() == ResultStatus.WORKER_FAILURE) {
+                retire(connection.workerId);
                 return;
             }
         }
@@ -132,6 +137,14 @@ final class WorkerPool implements AutoCloseable {
         return new ExecutionResult(task.id(), task.displayName(), ResultStatus.WORKER_FAILURE,
                 Duration.between(started, finished), new WorkerId(id), 1, started, finished,
                 message, "WorkerFailure");
+    }
+
+    private void retire(String workerId) {
+        Process process = processes.get(workerId);
+        if (process != null && process.isAlive()) {
+            logger.progress(workerId + " RETIRED after worker failure; remaining workers will continue.");
+            process.destroyForcibly();
+        }
     }
 
     private void launch() throws Exception {
@@ -296,6 +309,20 @@ final class WorkerPool implements AutoCloseable {
         private Envelope read() throws Exception {
             String line = reader.readLine();
             return line == null ? null : mapper.readValue(line, Envelope.class);
+        }
+
+        private Envelope read(Duration timeout) throws Exception {
+            int originalTimeout = socket.getSoTimeout();
+            try {
+                socket.setSoTimeout(Math.toIntExact(timeout.toMillis()));
+                return read();
+            } finally {
+                try {
+                    socket.setSoTimeout(originalTimeout);
+                } catch (Exception ignored) {
+                    // Worker may have disconnected while the task was running.
+                }
+            }
         }
 
         private void write(Envelope envelope) throws Exception {
