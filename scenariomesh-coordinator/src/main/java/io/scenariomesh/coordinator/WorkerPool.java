@@ -3,11 +3,13 @@ package io.scenariomesh.coordinator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
+import io.scenariomesh.core.Domain.ScenarioId;
 import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Domain.WorkerId;
 import io.scenariomesh.core.Ports.SchedulingStrategy;
 import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
+import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 import io.scenariomesh.scheduler.FifoSchedulingStrategy;
 import io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.WorkerMain;
@@ -26,8 +28,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -36,6 +40,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 final class WorkerPool implements AutoCloseable {
     private final ObjectMapper mapper = JsonCodec.create();
@@ -45,6 +50,7 @@ final class WorkerPool implements AutoCloseable {
     private final ServerSocket server;
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, Thread> outputPumps = new ConcurrentHashMap<>();
+    private final Map<ScenarioId, Integer> attempts = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<WorkerConnection> connections = new CopyOnWriteArrayList<>();
     private final AtomicInteger workerSequence = new AtomicInteger();
     private final Object replacementLock = new Object();
@@ -86,6 +92,7 @@ final class WorkerPool implements AutoCloseable {
                       ConcurrentLinkedQueue<ExecutionResult> results,
                       RunProgress progress) {
         WorkerConnection connection = initialConnection;
+        int tasksOnCurrentWorker = 0;
         for (;;) {
             ScenarioTask task = scheduler.nextEligible(candidate -> true);
             if (task == null) {
@@ -93,34 +100,54 @@ final class WorkerPool implements AutoCloseable {
                 return;
             }
 
+            int attempt = attempts.merge(task.id(), 1, Integer::sum);
             int busy = progress.busy.incrementAndGet();
-            logger.progress(connection.workerId + " RUN " + task.displayName()
+            logger.progress(connection.workerId + " RUN " + task.displayName() + " attempt=" + attempt
                     + " | completed=" + progress.completed.get() + "/" + progress.total
                     + " busy=" + busy
-                    + " queued=" + Math.max(0, progress.total - progress.completed.get() - busy));
+                    + " queued=" + scheduler.queued());
 
             Instant started = Instant.now();
             ExecutionResult result;
+            WorkerTelemetry telemetry = null;
             try {
-                connection.write(Envelope.run(connection.workerId, task));
+                connection.write(Envelope.run(connection.workerId, task, attempt));
                 Envelope response = connection.read(request.config().workerTaskTimeout());
                 if (response == null) {
-                    result = failure(task, connection.workerId, started, "Worker disconnected before returning a result");
+                    result = failure(task, connection.workerId, attempt, started,
+                            "Worker disconnected before returning a result");
                 } else if (response.type() == Protocol.Type.RESULT && response.result() != null) {
                     result = response.result();
+                    telemetry = response.telemetry();
                 } else {
-                    result = failure(task, connection.workerId, started,
+                    result = failure(task, connection.workerId, attempt, started,
                             response.error() == null ? "Unexpected worker response: " + response.type() : response.error());
                 }
             } catch (SocketTimeoutException exception) {
-                result = failure(task, connection.workerId, started,
+                result = failure(task, connection.workerId, attempt, started,
                         "Worker exceeded task timeout " + request.config().workerTaskTimeout());
             } catch (Exception exception) {
-                result = failure(task, connection.workerId, started, safeMessage(exception));
+                result = failure(task, connection.workerId, attempt, started, safeMessage(exception));
             }
 
-            results.add(result);
             progress.busy.decrementAndGet();
+
+            if (retryable(result) && attempt <= request.config().infrastructureRetries()) {
+                scheduler.requeue(task);
+                logger.progress(connection.workerId + " RETRY " + task.displayName()
+                        + " after " + result.status() + " | nextAttempt=" + (attempt + 1)
+                        + " queued=" + scheduler.queued());
+                WorkerConnection replacement = replace(connection, "retryable " + result.status());
+                if (replacement == null) {
+                    return;
+                }
+                connection = replacement;
+                tasksOnCurrentWorker = 0;
+                continue;
+            }
+
+            attempts.remove(task.id());
+            results.add(result);
             int completed = progress.completed.incrementAndGet();
             if (!result.passed()) {
                 progress.failed.incrementAndGet();
@@ -133,19 +160,55 @@ final class WorkerPool implements AutoCloseable {
                     retireConnection(connection, "worker failure with no queued work remaining");
                     return;
                 }
-                WorkerConnection replacement = replace(connection);
+                WorkerConnection replacement = replace(connection, "worker failure");
                 if (replacement == null) {
                     return;
                 }
                 connection = replacement;
+                tasksOnCurrentWorker = 0;
+                continue;
+            }
+
+            tasksOnCurrentWorker++;
+            String recycleReason = recycleReason(tasksOnCurrentWorker, telemetry);
+            if (recycleReason != null) {
+                if (scheduler.queued() == 0) {
+                    logger.progress(connection.workerId + " reached recycle condition (" + recycleReason
+                            + ") with no queued work remaining.");
+                    stop(connection);
+                    return;
+                }
+                WorkerConnection replacement = replace(connection, recycleReason);
+                if (replacement == null) {
+                    return;
+                }
+                connection = replacement;
+                tasksOnCurrentWorker = 0;
             }
         }
     }
 
-    private ExecutionResult failure(ScenarioTask task, String id, Instant started, String message) {
+    private boolean retryable(ExecutionResult result) {
+        return result.status() == ResultStatus.WORKER_FAILURE
+                || result.status() == ResultStatus.INFRASTRUCTURE_FAILURE;
+    }
+
+    private String recycleReason(int tasksOnWorker, WorkerTelemetry telemetry) {
+        if (request.config().taskCountRecyclingEnabled()
+                && tasksOnWorker >= request.config().maxTasksPerWorker()) {
+            return "task-count recycling after " + tasksOnWorker + " task(s)";
+        }
+        if (request.config().heapRecyclingEnabled() && telemetry != null
+                && telemetry.heapUsagePercent() >= request.config().maxHeapUsagePercent()) {
+            return "heap recycling at " + telemetry.heapUsagePercent() + "%";
+        }
+        return null;
+    }
+
+    private ExecutionResult failure(ScenarioTask task, String id, int attempt, Instant started, String message) {
         Instant finished = Instant.now();
         return new ExecutionResult(task.id(), task.displayName(), ResultStatus.WORKER_FAILURE,
-                Duration.between(started, finished), new WorkerId(id), 1, started, finished,
+                Duration.between(started, finished), new WorkerId(id), attempt, started, finished,
                 message, "WorkerFailure");
     }
 
@@ -154,20 +217,21 @@ final class WorkerPool implements AutoCloseable {
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
-    private WorkerConnection replace(WorkerConnection failedConnection) {
+    private WorkerConnection replace(WorkerConnection oldConnection, String reason) {
         synchronized (replacementLock) {
-            String failedId = failedConnection.workerId;
-            retireConnection(failedConnection, "worker failure");
+            String oldId = oldConnection.workerId;
+            retireConnection(oldConnection, reason);
             String replacementId = nextWorkerId();
             try {
                 launchWorker(replacementId);
                 WorkerConnection replacement = acceptWorker(replacementId);
                 connections.add(replacement);
-                logger.progress(replacement.workerId + " REPLACED " + failedId + " and is ready for queued work.");
+                logger.progress(replacement.workerId + " REPLACED " + oldId + " after " + reason
+                        + " and is ready for queued work.");
                 return replacement;
             } catch (Exception exception) {
                 retireProcess(replacementId);
-                logger.progress("Replacement for " + failedId + " failed to start: " + safeMessage(exception)
+                logger.progress("Replacement for " + oldId + " failed to start: " + safeMessage(exception)
                         + "; remaining workers will continue.");
                 return null;
             }
@@ -186,10 +250,11 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private void retireProcess(String workerId) {
-        Process process = processes.get(workerId);
-        if (process != null && process.isAlive()) {
-            process.destroyForcibly();
+        Process process = processes.remove(workerId);
+        if (process != null) {
+            destroyProcessTree(process, true);
         }
+        outputPumps.remove(workerId);
     }
 
     private void launchInitialWorkers() throws Exception {
@@ -244,9 +309,31 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private void acceptInitialWorkers() throws Exception {
-        while (connections.size() < request.config().workerCount()) {
-            WorkerConnection connection = acceptWorker(null);
-            connections.add(connection);
+        try {
+            while (connections.size() < request.config().workerCount()) {
+                WorkerConnection connection = acceptWorker(null);
+                connections.add(connection);
+            }
+        } catch (SocketTimeoutException timeout) {
+            if (connections.size() < request.config().minimumReadyWorkers()) {
+                throw new IllegalStateException("Only " + connections.size() + " of " + request.config().workerCount()
+                        + " workers became ready; minimum required is " + request.config().minimumReadyWorkers(), timeout);
+            }
+            logger.progress("Starting in degraded capacity with " + connections.size() + "/"
+                    + request.config().workerCount() + " workers ready (minimumReady="
+                    + request.config().minimumReadyWorkers() + ").");
+            retireUnconnectedProcesses();
+        }
+    }
+
+    private void retireUnconnectedProcesses() {
+        Set<String> connectedIds = connections.stream()
+                .map(connection -> connection.workerId)
+                .collect(Collectors.toSet());
+        for (String workerId : new ArrayList<>(processes.keySet())) {
+            if (!connectedIds.contains(workerId)) {
+                retireProcess(workerId);
+            }
         }
     }
 
@@ -293,6 +380,27 @@ final class WorkerPool implements AutoCloseable {
         }
     }
 
+    private void destroyProcessTree(Process process, boolean force) {
+        List<ProcessHandle> descendants = process.toHandle().descendants().toList();
+        for (int index = descendants.size() - 1; index >= 0; index--) {
+            ProcessHandle descendant = descendants.get(index);
+            if (descendant.isAlive()) {
+                if (force) {
+                    descendant.destroyForcibly();
+                } else {
+                    descendant.destroy();
+                }
+            }
+        }
+        if (process.isAlive()) {
+            if (force) {
+                process.destroyForcibly();
+            } else {
+                process.destroy();
+            }
+        }
+    }
+
     @Override
     public void close() {
         for (WorkerConnection connection : connections) {
@@ -303,13 +411,9 @@ final class WorkerPool implements AutoCloseable {
             }
         }
 
-        // Signal every child first so the configured shutdown timeout applies to the pool as a whole,
-        // not once per worker. This is important for CI and for target frameworks that leave non-daemon
-        // helper threads alive after their test work has completed.
+        // Signal every worker process tree first so the configured shutdown timeout applies to the pool as a whole.
         for (Process process : processes.values()) {
-            if (process.isAlive()) {
-                process.destroy();
-            }
+            destroyProcessTree(process, false);
         }
 
         long deadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
@@ -319,16 +423,16 @@ final class WorkerPool implements AutoCloseable {
             }
             long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) {
-                process.destroyForcibly();
+                destroyProcessTree(process, true);
                 continue;
             }
             try {
                 if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) {
-                    process.destroyForcibly();
+                    destroyProcessTree(process, true);
                 }
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                process.destroyForcibly();
+                destroyProcessTree(process, true);
             }
         }
 
