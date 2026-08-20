@@ -20,9 +20,7 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 
 import java.io.File;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -89,7 +87,7 @@ public final class RunMojo extends AbstractMojo {
             RunRequest request = new RunRequest(
                     projectDirectory,
                     runtimeClasspath(),
-                    testRoots(),
+                    new TestRootResolver().resolve(project),
                     userProperties,
                     config,
                     selection,
@@ -200,14 +198,5 @@ public final class RunMojo extends AbstractMojo {
             }
         }
         return List.copyOf(paths);
-    }
-
-    private List<Path> testRoots() {
-        List<Path> roots = new ArrayList<>();
-        Path standard = Path.of(project.getBuild().getTestOutputDirectory()).toAbsolutePath().normalize();
-        if (Files.isDirectory(standard)) {
-            roots.add(standard);
-        }
-        return List.copyOf(roots);
     }
 }
