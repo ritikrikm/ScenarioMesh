@@ -76,11 +76,9 @@ final class FailsafeCompatibility {
         }
 
         List<String> includes = settings.includes.isEmpty()
-                ? DEFAULT_INCLUDE_PATTERNS.stream().map(FailsafeCompatibility::mavenClassPatternToRegex).toList()
-                : settings.includes.stream().map(FailsafeCompatibility::mavenClassPatternToRegex).toList();
-        List<String> excludes = settings.excludes.stream()
-                .map(FailsafeCompatibility::mavenClassPatternToRegex)
-                .toList();
+                ? MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS)
+                : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
+        List<String> excludes = MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
 
         return new Analysis(
                 true,
@@ -290,35 +288,7 @@ final class FailsafeCompatibility {
     }
 
     static String mavenClassPatternToRegex(String pattern) {
-        String normalized = pattern.replace('\\', '/');
-        if (normalized.endsWith(".java")) normalized = normalized.substring(0, normalized.length() - 5);
-        if (normalized.endsWith(".class")) normalized = normalized.substring(0, normalized.length() - 6);
-
-        boolean optionalPackage = normalized.startsWith("**/");
-        if (optionalPackage) normalized = normalized.substring(3);
-
-        StringBuilder regex = new StringBuilder();
-        if (optionalPackage) regex.append("(?:.*\\.)?");
-        for (int index = 0; index < normalized.length(); index++) {
-            char ch = normalized.charAt(index);
-            if (ch == '/') {
-                regex.append("\\.");
-            } else if (ch == '*') {
-                if (index + 1 < normalized.length() && normalized.charAt(index + 1) == '*') {
-                    regex.append(".*");
-                    index++;
-                } else {
-                    regex.append("[^.]*");
-                }
-            } else if (ch == '?') {
-                regex.append("[^.]");
-            } else if (".[]{}()+-^$|".indexOf(ch) >= 0) {
-                regex.append('\\').append(ch);
-            } else {
-                regex.append(ch);
-            }
-        }
-        return regex.toString();
+        return MavenClassNamePatterns.toRegex(pattern);
     }
 
     private boolean meaningful(Xpp3Dom node) {
