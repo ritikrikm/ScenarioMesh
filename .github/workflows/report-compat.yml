@@ -1,0 +1,35 @@
+name: report-compat
+on: [push, pull_request]
+
+jobs:
+  cluecumber-junit4:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and install ScenarioMesh
+        run: mvn -B -ntp clean install
+      - name: Run Cucumber JUnit4 with downstream Cluecumber report
+        working-directory: examples/cucumber-junit4-example
+        run: mvn -B -ntp clean verify | tee cluecumber-compat.log
+      - name: Verify ScenarioMesh preserved the native reporting contract
+        working-directory: examples/cucumber-junit4-example
+        run: |
+          grep -Fq 'ScenarioMesh selected adapter: cucumber-junit4' cluecumber-compat.log
+          grep -Fq 'ScenarioMesh: preserving Cluecumber JSON input at' cluecumber-compat.log
+          test -d target/cucumber-report
+          count="$(find target/cucumber-report -maxdepth 1 -name 'scenariomesh-*.json' -type f | wc -l)"
+          test "$count" -gt 0
+          test -d target/cluecumber-report
+          test -f target/cluecumber-report/index.html
+          if find target/cucumber-report -maxdepth 1 -name 'scenariomesh-*.json' -type f -size 0 | grep -q .; then
+            echo 'ScenarioMesh produced an empty Cucumber JSON artifact'
+            exit 1
+          fi
