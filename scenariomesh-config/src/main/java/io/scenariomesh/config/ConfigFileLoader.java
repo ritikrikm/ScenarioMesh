@@ -27,6 +27,7 @@ final class ConfigFileLoader {
             "execution.adapterMismatchPolicy",
             "workers.count",
             "workers.startupTimeout",
+            "workers.taskTimeout",
             "workers.shutdownTimeout",
             "workers.jvmArgs",
             "discovery.timeout",
