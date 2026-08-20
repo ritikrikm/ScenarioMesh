@@ -16,6 +16,7 @@ enum ConfigKey {
     ADAPTER_MISMATCH_POLICY("scenariomesh.execution.adapterMismatchPolicy"),
     WORKER_COUNT("scenariomesh.workers.count", "scenariomesh.workers"),
     WORKER_STARTUP_TIMEOUT("scenariomesh.workers.startupTimeout", "scenariomesh.worker.startupTimeout"),
+    WORKER_TASK_TIMEOUT("scenariomesh.workers.taskTimeout", "scenariomesh.worker.taskTimeout"),
     WORKER_SHUTDOWN_TIMEOUT("scenariomesh.workers.shutdownTimeout", "scenariomesh.worker.shutdownTimeout"),
     WORKER_JVM_ARGS("scenariomesh.workers.jvmArgs", "scenariomesh.worker.jvmArgs"),
     DISCOVERY_TIMEOUT("scenariomesh.discovery.timeout"),
