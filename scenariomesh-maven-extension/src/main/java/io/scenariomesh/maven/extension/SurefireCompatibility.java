@@ -23,6 +23,11 @@ final class SurefireCompatibility {
     private static final String DEFAULT_TEST_EXECUTION_ID = "default-test";
     private static final String TEST_PHASE = "test";
     private static final String TEST_GOAL = "test";
+    private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of(
+            "**/Test*.java",
+            "**/*Test.java",
+            "**/*Tests.java",
+            "**/*TestCase.java");
 
     Analysis analyze(Plugin surefire) {
         List<String> reasons = new ArrayList<>();
@@ -62,7 +67,14 @@ final class SurefireCompatibility {
                     + "ScenarioMesh cannot prove single-execution equivalence");
         }
 
-        return new Analysis(explicitlySkipsTests, List.copyOf(reasons));
+        return new Analysis(
+                explicitlySkipsTests,
+                List.copyOf(reasons),
+                defaultIncludeClassNameRegexes());
+    }
+
+    static List<String> defaultIncludeClassNameRegexes() {
+        return MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS);
     }
 
     /**
@@ -168,9 +180,14 @@ final class SurefireCompatibility {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    record Analysis(boolean explicitlySkipsTests, List<String> reasons) {
+    record Analysis(
+            boolean explicitlySkipsTests,
+            List<String> reasons,
+            List<String> includeClassNameRegexes) {
         Analysis {
             reasons = List.copyOf(reasons == null ? List.of() : reasons);
+            includeClassNameRegexes = List.copyOf(
+                    includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
         }
     }
 
