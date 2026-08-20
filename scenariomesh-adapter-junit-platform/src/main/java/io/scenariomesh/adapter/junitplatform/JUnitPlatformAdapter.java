@@ -34,6 +34,7 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqu
 
 public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String ID = "junit-platform";
+    private final DiscoveredExecutionMerger executionMerger = new DiscoveredExecutionMerger();
 
     @Override
     public String id() {
@@ -74,35 +75,35 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
         Launcher launcher = LauncherFactory.create();
         TestPlan plan = launcher.discover(builder.build());
-        List<ScenarioTask> tasks = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
+        List<TestIdentifier> discoveredLeaves = new ArrayList<>();
         for (TestIdentifier root : plan.getRoots()) {
             for (TestIdentifier identifier : plan.getDescendants(root)) {
-                if (!identifier.isTest() || !plan.getChildren(identifier).isEmpty()) {
-                    continue;
+                if (identifier.isTest() && plan.getChildren(identifier).isEmpty()) {
+                    discoveredLeaves.add(identifier);
                 }
-                String uniqueId = identifier.getUniqueId();
-                if (!seen.add(uniqueId)) {
-                    continue;
-                }
-                Set<String> tags = new HashSet<>();
-                for (TestTag tag : identifier.getTags()) {
-                    tags.add(tag.getName());
-                }
-                String framework = uniqueId.contains("[engine:cucumber]")
-                        ? "cucumber-junit-platform"
-                        : "junit5";
-                tasks.add(new ScenarioTask(
-                        ScenarioIds.from(ID, uniqueId),
-                        identifier.getDisplayName(),
-                        ID,
-                        framework,
-                        null,
-                        null,
-                        uniqueId,
-                        tags,
-                        Map.of("uniqueId", uniqueId)));
             }
+        }
+
+        List<ScenarioTask> tasks = new ArrayList<>();
+        for (TestIdentifier identifier : executionMerger.merge(discoveredLeaves)) {
+            String uniqueId = identifier.getUniqueId();
+            Set<String> tags = new HashSet<>();
+            for (TestTag tag : identifier.getTags()) {
+                tags.add(tag.getName());
+            }
+            String framework = uniqueId.contains("[engine:cucumber]")
+                    ? "cucumber-junit-platform"
+                    : "junit5";
+            tasks.add(new ScenarioTask(
+                    ScenarioIds.from(ID, uniqueId),
+                    identifier.getDisplayName(),
+                    ID,
+                    framework,
+                    null,
+                    null,
+                    uniqueId,
+                    tags,
+                    Map.of("uniqueId", uniqueId)));
         }
         return List.copyOf(tasks);
     }
@@ -142,9 +143,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                     "SelectionFailure");
         }
 
-        // ScenarioMesh dispatches one discovered leaf task at a time. If a unique-id
-        // selection expands to several terminal tests, we cannot safely attribute one
-        // aggregate result back to this ScenarioTask.
         if (found != 1) {
             return infrastructureFailure(task, context, started, finished,
                     "JUnit Platform selection for " + task.selector() + " resolved to " + found
@@ -157,14 +155,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                     ? null
                     : summary.getFailures().get(0).getException();
             return new ExecutionResult(
-                    task.id(),
-                    task.displayName(),
-                    ResultStatus.TEST_FAILURE,
-                    duration,
-                    context.workerId(),
-                    context.attempt(),
-                    started,
-                    finished,
+                    task.id(), task.displayName(), ResultStatus.TEST_FAILURE, duration,
+                    context.workerId(), context.attempt(), started, finished,
                     failure == null ? "Test failed" : safeMessage(failure),
                     failure == null ? null : failure.getClass().getName());
         }
@@ -186,10 +178,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         }
 
         return infrastructureFailure(
-                task,
-                context,
-                started,
-                finished,
+                task, context, started, finished,
                 "JUnit Platform produced an ambiguous terminal summary for " + task.selector()
                         + " (found=" + found
                         + ", started=" + startedCount
