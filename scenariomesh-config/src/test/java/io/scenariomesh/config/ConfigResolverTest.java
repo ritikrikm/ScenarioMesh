@@ -153,6 +153,25 @@ class ConfigResolverTest {
     }
 
     @Test
+    void rejectsWorkerSocketTimeoutsThatCannotBeRepresentedBySocketApi() {
+        String tooLarge = Duration.ofMillis((long) Integer.MAX_VALUE + 1L).toString();
+
+        for (String property : new String[]{
+                "scenariomesh.workers.startupTimeout",
+                "scenariomesh.workers.taskTimeout",
+                "scenariomesh.workers.shutdownTimeout"}) {
+            IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                    () -> resolver.resolve(
+                            project,
+                            project.resolve("target"),
+                            Map.of(property, tooLarge),
+                            Map.of()));
+
+            assertTrue(error.getMessage().contains("must not exceed"));
+        }
+    }
+
+    @Test
     void rejectsUnknownYamlKeysInsteadOfSilentlyIgnoringTypos() throws Exception {
         Files.writeString(project.resolve("scenariomesh.yml"), """
                 scenariomesh:
