@@ -47,12 +47,11 @@ final class ProjectCompatibilityDetector {
             return CompatibilityDecision.passThrough(
                     "generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
         }
-        if (frameworks.supportedOwnerCount() > 1) {
-            return CompatibilityDecision.passThrough(
-                    "multiple supported test-framework owners are present ("
-                            + String.join(", ", frameworks.names())
-                            + "); ScenarioMesh will not suppress Maven until complete multi-adapter ownership is implemented");
-        }
+        // Dependency/model signals are candidates, not proof of executable ownership.
+        // Multiple candidate frameworks are intentionally allowed through this gate so the
+        // isolated runtime discovery process can probe every registered adapter. Runtime
+        // discovery will take over only when ownership is unique (or explicitly configured);
+        // ambiguous executable ownership fails safely instead of guessing or merging.
         if (propertyPresent(session, project, "groups") || propertyPresent(session, project, "excludedGroups")) {
             return CompatibilityDecision.passThrough(
                     "Maven group filtering is present; ScenarioMesh will not take over until discovery can reproduce group inclusion/exclusion exactly");
@@ -258,7 +257,7 @@ final class ProjectCompatibilityDetector {
             return new CompatibilityDecision(
                     true,
                     frameworks,
-                    "supported framework/model configuration detected",
+                    "supported framework/model configuration detected; executable adapter ownership will be proven by runtime discovery",
                     executorKind,
                     phase,
                     deferFailure,
@@ -297,7 +296,7 @@ final class ProjectCompatibilityDetector {
             if (junitPlatform) names.add("junit-platform");
             if (cucumberJUnit4) names.add("cucumber-junit4");
             if (testNg) names.add("testng");
-            return Set.copyOf(names);
+            return Set.copyOf(names());
         }
     }
 }
