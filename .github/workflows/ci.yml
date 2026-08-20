@@ -72,6 +72,7 @@ jobs:
           grep -Fq 'worker-2 REPLACED worker-1 after retryable WORKER_FAILURE' crash-retry.log
           grep -Fq 'worker-2 RUN a_crashWorker() attempt=2' crash-retry.log
           grep -Fq 'worker-2 PASSED a_crashWorker()' crash-retry.log
+          grep -Fq 'at-least-once under uncertain worker/transport failure' crash-retry.log
           if grep -Fq 'WORKER_FAILURE' target/scenariomesh/summary.json; then
             echo 'Recovered infrastructure attempt leaked into terminal results'
             exit 1
@@ -142,6 +143,9 @@ jobs:
       - name: Mixed JUnit 4 and JUnit 5 remains native Maven execution
         working-directory: examples/mixed-junit4-junit5-pass-through-example
         run: mvn -B clean test
+      - name: TestNG group filtering remains native Maven execution
+        working-directory: examples/testng-group-pass-through-example
+        run: mvn -B clean test -Dgroups=smoke
       - name: Verify reports were generated
         run: |
           test -f examples/junit5-example/target/scenariomesh-yaml/report.html
@@ -177,3 +181,8 @@ jobs:
           test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.JupiterTest.xml
           test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
           test ! -e examples/mixed-junit4-junit5-pass-through-example/target/scenariomesh/report.html
+      - name: Verify TestNG group-filtered project was not taken over
+        run: |
+          test -f examples/testng-group-pass-through-example/target/surefire-reports/TEST-example.GroupedTest.xml
+          grep -Fq 'tests="1"' examples/testng-group-pass-through-example/target/surefire-reports/TEST-example.GroupedTest.xml
+          test ! -e examples/testng-group-pass-through-example/target/scenariomesh/report.html
