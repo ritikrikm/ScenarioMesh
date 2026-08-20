@@ -26,12 +26,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -45,7 +45,9 @@ final class WorkerPool implements AutoCloseable {
     private final ServerSocket server;
     private final Map<String, Process> processes = new HashMap<>();
     private final Map<String, Thread> outputPumps = new HashMap<>();
-    private final List<WorkerConnection> connections = new ArrayList<>();
+    private final CopyOnWriteArrayList<WorkerConnection> connections = new CopyOnWriteArrayList<>();
+    private final AtomicInteger workerSequence = new AtomicInteger();
+    private final Object replacementLock = new Object();
     private final RunLogger logger;
 
     WorkerPool(RunRequest request, Path dir, RunLogger logger) throws Exception {
@@ -56,8 +58,8 @@ final class WorkerPool implements AutoCloseable {
         server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
         server.setSoTimeout(Math.toIntExact(request.config().workerStartupTimeout().toMillis()));
         try {
-            launch();
-            accept();
+            launchInitialWorkers();
+            acceptInitialWorkers();
         } catch (Exception exception) {
             close();
             throw exception;
@@ -71,7 +73,7 @@ final class WorkerPool implements AutoCloseable {
         RunProgress progress = new RunProgress(tasks.size());
         ExecutorService executor = Executors.newFixedThreadPool(connections.size());
         logger.progress("Scheduler FIFO loaded " + tasks.size() + " task(s); " + connections.size() + " worker(s) ready.");
-        for (WorkerConnection connection : connections) {
+        for (WorkerConnection connection : List.copyOf(connections)) {
             executor.submit(() -> loop(connection, scheduler, results, progress));
         }
         executor.shutdown();
@@ -79,10 +81,11 @@ final class WorkerPool implements AutoCloseable {
         return List.copyOf(results);
     }
 
-    private void loop(WorkerConnection connection,
+    private void loop(WorkerConnection initialConnection,
                       SchedulingStrategy scheduler,
                       ConcurrentLinkedQueue<ExecutionResult> results,
                       RunProgress progress) {
+        WorkerConnection connection = initialConnection;
         for (;;) {
             ScenarioTask task = scheduler.nextEligible(candidate -> true);
             if (task == null) {
@@ -113,7 +116,7 @@ final class WorkerPool implements AutoCloseable {
                 result = failure(task, connection.workerId, started,
                         "Worker exceeded task timeout " + request.config().workerTaskTimeout());
             } catch (Exception exception) {
-                result = failure(task, connection.workerId, started, exception.getMessage());
+                result = failure(task, connection.workerId, started, safeMessage(exception));
             }
 
             results.add(result);
@@ -126,8 +129,15 @@ final class WorkerPool implements AutoCloseable {
                     progress.busy.get(), progress.total);
 
             if (result.status() == ResultStatus.WORKER_FAILURE) {
-                retire(connection.workerId);
-                return;
+                if (scheduler.queued() == 0) {
+                    retireConnection(connection, "worker failure with no queued work remaining");
+                    return;
+                }
+                WorkerConnection replacement = replace(connection);
+                if (replacement == null) {
+                    return;
+                }
+                connection = replacement;
             }
         }
     }
@@ -139,66 +149,126 @@ final class WorkerPool implements AutoCloseable {
                 message, "WorkerFailure");
     }
 
-    private void retire(String workerId) {
+    private String safeMessage(Exception exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+    }
+
+    private WorkerConnection replace(WorkerConnection failedConnection) {
+        synchronized (replacementLock) {
+            String failedId = failedConnection.workerId;
+            retireConnection(failedConnection, "worker failure");
+            String replacementId = nextWorkerId();
+            try {
+                launchWorker(replacementId);
+                WorkerConnection replacement = acceptWorker(replacementId);
+                connections.add(replacement);
+                logger.progress(replacement.workerId + " REPLACED " + failedId + " and is ready for queued work.");
+                return replacement;
+            } catch (Exception exception) {
+                retireProcess(replacementId);
+                logger.progress("Replacement for " + failedId + " failed to start: " + safeMessage(exception)
+                        + "; remaining workers will continue.");
+                return null;
+            }
+        }
+    }
+
+    private void retireConnection(WorkerConnection connection, String reason) {
+        connections.remove(connection);
+        try {
+            connection.close();
+        } catch (Exception ignored) {
+            // A failed worker connection may already be closed.
+        }
+        logger.progress(connection.workerId + " RETIRED after " + reason + ".");
+        retireProcess(connection.workerId);
+    }
+
+    private void retireProcess(String workerId) {
         Process process = processes.get(workerId);
         if (process != null && process.isAlive()) {
-            logger.progress(workerId + " RETIRED after worker failure; remaining workers will continue.");
             process.destroyForcibly();
         }
     }
 
-    private void launch() throws Exception {
-        Path logs = dir.resolve("logs");
-        if (request.config().workerLogFiles()) {
-            Files.createDirectories(logs);
-        }
-        String host = InetAddress.getLoopbackAddress().getHostAddress();
-        int port = server.getLocalPort();
-        for (int index = 1; index <= request.config().workerCount(); index++) {
-            String id = "worker-" + index;
-            List<String> args = List.of(
-                    "--host", host,
-                    "--port", Integer.toString(port),
-                    "--token", token,
-                    "--worker-id", id);
-            List<String> command = JavaProcessSupport.command(
-                    request.runtimeClasspath(),
-                    request.effectiveJvmArgs(),
-                    request.effectiveSystemProperties(),
-                    WorkerMain.class.getName(),
-                    args);
-            Process process = new ProcessBuilder(command)
-                    .directory(request.projectDirectory().toFile())
-                    .redirectErrorStream(true)
-                    .start();
-            processes.put(id, process);
-
-            Thread pump = new Thread(
-                    new WorkerOutputPump(id, process, request.config(), logs.resolve(id + ".log"), logger),
-                    "scenariomesh-output-" + id);
-            pump.setDaemon(true);
-            pump.start();
-            outputPumps.put(id, pump);
-            logger.progress("Starting " + id + " (pid=" + process.pid() + ")");
+    private void launchInitialWorkers() throws Exception {
+        prepareLogsDirectory();
+        for (int index = 0; index < request.config().workerCount(); index++) {
+            launchWorker(nextWorkerId());
         }
     }
 
-    private void accept() throws Exception {
+    private String nextWorkerId() {
+        return "worker-" + workerSequence.incrementAndGet();
+    }
+
+    private Path logsDirectory() {
+        return dir.resolve("logs");
+    }
+
+    private void prepareLogsDirectory() throws Exception {
+        if (request.config().workerLogFiles()) {
+            Files.createDirectories(logsDirectory());
+        }
+    }
+
+    private void launchWorker(String id) throws Exception {
+        prepareLogsDirectory();
+        String host = InetAddress.getLoopbackAddress().getHostAddress();
+        int port = server.getLocalPort();
+        List<String> args = List.of(
+                "--host", host,
+                "--port", Integer.toString(port),
+                "--token", token,
+                "--worker-id", id);
+        List<String> command = JavaProcessSupport.command(
+                request.runtimeClasspath(),
+                request.effectiveJvmArgs(),
+                request.effectiveSystemProperties(),
+                WorkerMain.class.getName(),
+                args);
+        Process process = new ProcessBuilder(command)
+                .directory(request.projectDirectory().toFile())
+                .redirectErrorStream(true)
+                .start();
+        processes.put(id, process);
+
+        Thread pump = new Thread(
+                new WorkerOutputPump(id, process, request.config(), logsDirectory().resolve(id + ".log"), logger),
+                "scenariomesh-output-" + id);
+        pump.setDaemon(true);
+        pump.start();
+        outputPumps.put(id, pump);
+        logger.progress("Starting " + id + " (pid=" + process.pid() + ")");
+    }
+
+    private void acceptInitialWorkers() throws Exception {
         while (connections.size() < request.config().workerCount()) {
+            WorkerConnection connection = acceptWorker(null);
+            connections.add(connection);
+        }
+    }
+
+    private WorkerConnection acceptWorker(String expectedWorkerId) throws Exception {
+        for (;;) {
             Socket socket = server.accept();
             WorkerConnection connection = new WorkerConnection(socket);
             Envelope hello = connection.read();
-            if (hello == null
-                    || hello.protocolVersion() != Protocol.VERSION
-                    || hello.type() != Protocol.Type.HELLO
-                    || !token.equals(hello.token())
-                    || !processes.containsKey(hello.workerId())) {
+            boolean valid = hello != null
+                    && hello.protocolVersion() == Protocol.VERSION
+                    && hello.type() == Protocol.Type.HELLO
+                    && token.equals(hello.token())
+                    && processes.containsKey(hello.workerId())
+                    && (expectedWorkerId == null || expectedWorkerId.equals(hello.workerId()))
+                    && connections.stream().noneMatch(existing -> hello.workerId().equals(existing.workerId));
+            if (!valid) {
                 connection.close();
                 continue;
             }
             connection.workerId = hello.workerId();
-            connections.add(connection);
             logger.progress(connection.workerId + " READY");
+            return connection;
         }
     }
 
