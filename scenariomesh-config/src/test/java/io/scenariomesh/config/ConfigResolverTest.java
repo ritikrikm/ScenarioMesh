@@ -27,7 +27,11 @@ class ConfigResolverTest {
         assertTrue(config.enabled());
         assertEquals("auto", config.executionAdapter());
         assertEquals(AdapterMismatchPolicy.FAIL, config.adapterMismatchPolicy());
+        assertEquals(0, config.infrastructureRetries());
         assertEquals(4, config.workerCount());
+        assertEquals(4, config.minimumReadyWorkers());
+        assertEquals(0, config.maxTasksPerWorker());
+        assertEquals(0, config.maxHeapUsagePercent());
         assertEquals(Duration.ofMinutes(2), config.discoveryTimeout());
         assertEquals(Duration.ofMinutes(15), config.workerTaskTimeout());
         assertEquals(project.resolve("target/scenariomesh").toAbsolutePath().normalize(), config.reportingDirectory());
@@ -46,8 +50,12 @@ class ConfigResolverTest {
                   execution:
                     adapter: cucumber-junit4
                     adapterMismatchPolicy: use-detected
+                    infrastructureRetries: 2
                   workers:
                     count: 7
+                    minimumReady: 4
+                    maxTasksPerWorker: 50
+                    maxHeapUsagePercent: 85
                     startupTimeout: PT45S
                     taskTimeout: PT5M
                     shutdownTimeout: PT15S
@@ -72,7 +80,11 @@ class ConfigResolverTest {
         assertFalse(config.enabled());
         assertEquals("cucumber-junit4", config.executionAdapter());
         assertEquals(AdapterMismatchPolicy.USE_DETECTED, config.adapterMismatchPolicy());
+        assertEquals(2, config.infrastructureRetries());
         assertEquals(7, config.workerCount());
+        assertEquals(4, config.minimumReadyWorkers());
+        assertEquals(50, config.maxTasksPerWorker());
+        assertEquals(85, config.maxHeapUsagePercent());
         assertEquals(Duration.ofSeconds(45), config.workerStartupTimeout());
         assertEquals(Duration.ofMinutes(5), config.workerTaskTimeout());
         assertEquals(Duration.ofSeconds(15), config.workerShutdownTimeout());
@@ -84,6 +96,18 @@ class ConfigResolverTest {
         assertFalse(config.showConfiguration());
         assertFalse(config.showProgress());
         assertEquals(project.resolve("scenariomesh.yml").toAbsolutePath().normalize(), resolution.configFile().orElseThrow());
+    }
+
+    @Test
+    void minimumReadyDefaultsToResolvedWorkerCount() {
+        ScenarioMeshConfig config = resolver.resolve(
+                project,
+                project.resolve("target"),
+                Map.of("scenariomesh.workers.count", "9"),
+                Map.of());
+
+        assertEquals(9, config.workerCount());
+        assertEquals(9, config.minimumReadyWorkers());
     }
 
     @Test
@@ -113,6 +137,7 @@ class ConfigResolverTest {
                         "SCENARIOMESH_EXECUTION_ADAPTER", "junit-platform"));
 
         assertEquals(9, config.workerCount());
+        assertEquals(9, config.minimumReadyWorkers());
         assertEquals(Duration.ofMinutes(3), config.workerTaskTimeout());
         assertEquals("junit-platform", config.executionAdapter());
         assertTrue(config.liveConsoleLogs());
@@ -127,6 +152,7 @@ class ConfigResolverTest {
                 Map.of());
 
         assertEquals(6, config.workerCount());
+        assertEquals(6, config.minimumReadyWorkers());
     }
 
     @Test
@@ -138,6 +164,26 @@ class ConfigResolverTest {
                 Map.of());
 
         assertEquals(Duration.ofSeconds(90), config.workerTaskTimeout());
+    }
+
+    @Test
+    void rejectsInvalidResilienceRanges() {
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve(project, project.resolve("target"),
+                        Map.of("scenariomesh.execution.infrastructureRetries", "-1"), Map.of()))
+                .getMessage().contains("infrastructureRetries"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve(project, project.resolve("target"),
+                        Map.of("scenariomesh.workers.count", "2", "scenariomesh.workers.minimumReady", "3"), Map.of()))
+                .getMessage().contains("minimumReady"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve(project, project.resolve("target"),
+                        Map.of("scenariomesh.workers.maxTasksPerWorker", "-1"), Map.of()))
+                .getMessage().contains("maxTasksPerWorker"));
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> resolver.resolve(project, project.resolve("target"),
+                        Map.of("scenariomesh.workers.maxHeapUsagePercent", "101"), Map.of()))
+                .getMessage().contains("maxHeapUsagePercent"));
     }
 
     @Test
