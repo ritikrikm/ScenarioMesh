@@ -29,7 +29,7 @@ final class TestRootResolver {
             if (!candidate.startsWith(buildDirectory)) {
                 continue;
             }
-            if (candidate.equals(mainOutput) || candidate.startsWith(mainOutput.resolve("."))) {
+            if (candidate.startsWith(mainOutput)) {
                 continue;
             }
             roots.add(candidate);
