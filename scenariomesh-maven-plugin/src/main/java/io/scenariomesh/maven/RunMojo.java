@@ -98,11 +98,13 @@ public final class RunMojo extends AbstractMojo {
             RunOutcome outcome = new ScenarioMeshRunner().run(request);
             ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
             long passed = outcome.results().stream().filter(result -> result.passed()).count();
-            long failed = outcome.results().size() - passed;
+            long skipped = outcome.results().stream().filter(result -> result.skipped()).count();
+            long failed = outcome.results().size() - passed - skipped;
             boolean effectiveSuccess = effectiveSuccess(outcome);
             getLog().info("ScenarioMesh selected adapter: " + String.join(", ", outcome.adapters()));
             getLog().info("ScenarioMesh results: discovered=" + outcome.tasks().size()
-                    + ", passed=" + passed + ", failed=" + failed + ", duration=" + outcome.duration());
+                    + ", passed=" + passed + ", skipped=" + skipped
+                    + ", failed=" + failed + ", duration=" + outcome.duration());
             getLog().info("ScenarioMesh report: " + reports.latestHtml());
             if (testFailureIgnore && !outcome.successful() && effectiveSuccess) {
                 getLog().warn("ScenarioMesh observed test failures, but Maven executor testFailureIgnore=true; infrastructure failures are still fatal.");
@@ -173,7 +175,7 @@ public final class RunMojo extends AbstractMojo {
             return false;
         }
         return outcome.results().stream()
-                .allMatch(result -> result.passed() || result.status() == ResultStatus.TEST_FAILURE);
+                .allMatch(result -> result.buildSuccessful() || result.status() == ResultStatus.TEST_FAILURE);
     }
 
     private Map<String, String> stringProperties(java.util.Properties properties) {
