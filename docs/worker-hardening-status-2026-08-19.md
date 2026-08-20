@@ -245,8 +245,6 @@ Regression coverage was added for oversized startup/task/shutdown socket timeout
 
 **Final E2E confirmation for these review fixes is pending a fresh Java 17/21 CI run.**
 
-Verification trigger commit intentionally contains no behavior change beyond this documentation line; it exists to create an inspectable PR workflow run for the current branch head.
-
 ---
 
 ## Current hardening backlog
