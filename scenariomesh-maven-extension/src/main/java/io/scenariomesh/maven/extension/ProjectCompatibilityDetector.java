@@ -7,7 +7,6 @@ import org.apache.maven.model.Plugin;
 import org.apache.maven.project.MavenProject;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -54,13 +53,16 @@ final class ProjectCompatibilityDetector {
                             + String.join(", ", frameworks.names())
                             + "); ScenarioMesh will not suppress Maven until complete multi-adapter ownership is implemented");
         }
+        if (propertyPresent(session, project, "groups") || propertyPresent(session, project, "excludedGroups")) {
+            return CompatibilityDecision.passThrough(
+                    "Maven group filtering is present; ScenarioMesh will not take over until discovery can reproduce group inclusion/exclusion exactly");
+        }
 
         Optional<MavenExecutionPlan> executionPlan = MavenExecutionPlan.from(session);
         if (executionPlan.isEmpty()) {
             return CompatibilityDecision.passThrough("requested Maven lifecycle could not be determined safely");
         }
 
-        Map<String, String> frameworkSystemProperties = frameworkSystemProperties(session, project, frameworks);
         Plugin failsafe = plugin(project, FAILSAFE);
         MavenExecutionPlan.PluginParticipation failsafeParticipation =
                 executionPlan.get().failsafeParticipation(failsafe);
@@ -95,7 +97,7 @@ final class ProjectCompatibilityDetector {
                         analysis.includeClassNameRegexes(),
                         analysis.excludeClassNameRegexes(),
                         analysis.jvmArgs(),
-                        mergeSystemProperties(analysis.systemProperties(), frameworkSystemProperties),
+                        analysis.systemProperties(),
                         analysis.testFailureIgnore());
             }
         }
@@ -116,10 +118,6 @@ final class ProjectCompatibilityDetector {
             reasons.add("Maven test-selection property '" + unsafe
                     + "' is present and is not yet reproduced by ScenarioMesh discovery");
         }
-        if ((propertyPresent(session, project, "groups") || propertyPresent(session, project, "excludedGroups"))
-                && !frameworks.testNgOnly()) {
-            reasons.add("group filtering is present for a non-TestNG-only project and cannot yet be guaranteed equivalent");
-        }
         if (!reasons.isEmpty()) {
             return CompatibilityDecision.passThrough(String.join("; ", reasons));
         }
@@ -129,39 +127,7 @@ final class ProjectCompatibilityDetector {
                 : surefireAnalysis.includeClassNameRegexes();
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                includes, List.of(), List.of(), frameworkSystemProperties, false);
-    }
-
-    private Map<String, String> frameworkSystemProperties(
-            MavenSession session,
-            MavenProject project,
-            FrameworkSignals frameworks) {
-        if (!frameworks.testNgOnly()) {
-            return Map.of();
-        }
-        Map<String, String> properties = new LinkedHashMap<>();
-        copyResolvedProperty(session, project, "groups", properties);
-        copyResolvedProperty(session, project, "excludedGroups", properties);
-        return Map.copyOf(properties);
-    }
-
-    private void copyResolvedProperty(
-            MavenSession session,
-            MavenProject project,
-            String key,
-            Map<String, String> destination) {
-        String value = resolveProperty(session, project, key);
-        if (value != null && !value.isBlank()) {
-            destination.put(key, value);
-        }
-    }
-
-    private Map<String, String> mergeSystemProperties(
-            Map<String, String> primary,
-            Map<String, String> overrides) {
-        Map<String, String> merged = new LinkedHashMap<>(primary);
-        merged.putAll(overrides);
-        return Map.copyOf(merged);
+                includes, List.of(), List.of(), Map.of(), false);
     }
 
     private String resolveProperty(MavenSession session, MavenProject project, String key) {
@@ -324,10 +290,6 @@ final class ProjectCompatibilityDetector {
             if (cucumberJUnit4) count++;
             if (testNg) count++;
             return count;
-        }
-
-        boolean testNgOnly() {
-            return testNg && !junitPlatform && !cucumberJUnit4;
         }
 
         Set<String> names() {
