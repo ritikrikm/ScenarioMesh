@@ -47,6 +47,12 @@ final class ProjectCompatibilityDetector {
             return CompatibilityDecision.passThrough(
                     "generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
         }
+        if (frameworks.supportedOwnerCount() > 1) {
+            return CompatibilityDecision.passThrough(
+                    "multiple supported test-framework owners are present ("
+                            + String.join(", ", frameworks.names())
+                            + "); ScenarioMesh will not suppress Maven until complete multi-adapter ownership is implemented");
+        }
 
         Optional<MavenExecutionPlan> executionPlan = MavenExecutionPlan.from(session);
         if (executionPlan.isEmpty()) {
@@ -94,12 +100,13 @@ final class ProjectCompatibilityDetector {
 
         List<String> reasons = new ArrayList<>();
         Plugin surefire = plugin(project, SUREFIRE);
+        SurefireCompatibility.Analysis surefireAnalysis = null;
         if (surefire != null) {
-            SurefireCompatibility.Analysis analysis = surefireCompatibility.analyze(surefire);
-            if (analysis.explicitlySkipsTests()) {
+            surefireAnalysis = surefireCompatibility.analyze(surefire);
+            if (surefireAnalysis.explicitlySkipsTests()) {
                 return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             }
-            reasons.addAll(analysis.reasons());
+            reasons.addAll(surefireAnalysis.reasons());
         }
 
         String unsafe = firstPresentProperty(session, project, SUREFIRE_UNSAFE_SELECTION_PROPERTIES);
@@ -114,9 +121,13 @@ final class ProjectCompatibilityDetector {
         if (!reasons.isEmpty()) {
             return CompatibilityDecision.passThrough(String.join("; ", reasons));
         }
+
+        List<String> includes = surefireAnalysis == null
+                ? SurefireCompatibility.defaultIncludeClassNameRegexes()
+                : surefireAnalysis.includeClassNameRegexes();
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(), List.of(), List.of(), Map.of(), false);
+                includes, List.of(), List.of(), Map.of(), false);
     }
 
     private String resolveProperty(MavenSession session, MavenProject project, String key) {
@@ -166,6 +177,8 @@ final class ProjectCompatibilityDetector {
     private boolean propertyPresent(MavenSession session, MavenProject project, String key) {
         String userValue = session.getUserProperties().getProperty(key);
         if (userValue != null && !userValue.isBlank()) return true;
+        String systemValue = session.getSystemProperties().getProperty(key);
+        if (systemValue != null && !systemValue.isBlank()) return true;
         String projectValue = project.getProperties().getProperty(key);
         return projectValue != null && !projectValue.isBlank();
     }
@@ -206,21 +219,24 @@ final class ProjectCompatibilityDetector {
         return String.valueOf(groupId) + ":" + String.valueOf(artifactId);
     }
 
-    private Plugin plugin(MavenProject project, String key) { return project.getPlugin(key); }
+    private Plugin plugin(MavenProject project, String key) {
+        return project.getPlugin(key);
+    }
 
     enum ExecutorKind { SUREFIRE, FAILSAFE }
 
-    record CompatibilityDecision(boolean compatible,
-                                 Set<String> frameworks,
-                                 String reason,
-                                 ExecutorKind executorKind,
-                                 String takeoverPhase,
-                                 boolean deferFailureUntilVerify,
-                                 List<String> includeClassNameRegexes,
-                                 List<String> excludeClassNameRegexes,
-                                 List<String> executorJvmArgs,
-                                 Map<String, String> executorSystemProperties,
-                                 boolean testFailureIgnore) {
+    record CompatibilityDecision(
+            boolean compatible,
+            Set<String> frameworks,
+            String reason,
+            ExecutorKind executorKind,
+            String takeoverPhase,
+            boolean deferFailureUntilVerify,
+            List<String> includeClassNameRegexes,
+            List<String> excludeClassNameRegexes,
+            List<String> executorJvmArgs,
+            Map<String, String> executorSystemProperties,
+            boolean testFailureIgnore) {
         CompatibilityDecision {
             frameworks = Set.copyOf(frameworks == null ? Set.of() : frameworks);
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
@@ -229,15 +245,16 @@ final class ProjectCompatibilityDetector {
             executorSystemProperties = Map.copyOf(executorSystemProperties == null ? Map.of() : executorSystemProperties);
         }
 
-        static CompatibilityDecision takeOver(Set<String> frameworks,
-                                              ExecutorKind executorKind,
-                                              String phase,
-                                              boolean deferFailure,
-                                              List<String> includes,
-                                              List<String> excludes,
-                                              List<String> jvmArgs,
-                                              Map<String, String> systemProperties,
-                                              boolean testFailureIgnore) {
+        static CompatibilityDecision takeOver(
+                Set<String> frameworks,
+                ExecutorKind executorKind,
+                String phase,
+                boolean deferFailure,
+                List<String> includes,
+                List<String> excludes,
+                List<String> jvmArgs,
+                Map<String, String> systemProperties,
+                boolean testFailureIgnore) {
             return new CompatibilityDecision(
                     true,
                     frameworks,
@@ -258,14 +275,32 @@ final class ProjectCompatibilityDetector {
         }
     }
 
-    private record FrameworkSignals(boolean junitPlatform, boolean cucumberJUnit4, boolean testNg, boolean directJUnit4) {
-        boolean supported(){return junitPlatform||cucumberJUnit4||testNg;}
-        boolean testNgOnly(){return testNg&&!junitPlatform&&!cucumberJUnit4;}
-        Set<String> names(){
-            Set<String> names=new LinkedHashSet<>();
-            if(junitPlatform)names.add("junit-platform");
-            if(cucumberJUnit4)names.add("cucumber-junit4");
-            if(testNg)names.add("testng");
+    private record FrameworkSignals(
+            boolean junitPlatform,
+            boolean cucumberJUnit4,
+            boolean testNg,
+            boolean directJUnit4) {
+        boolean supported() {
+            return junitPlatform || cucumberJUnit4 || testNg;
+        }
+
+        int supportedOwnerCount() {
+            int count = 0;
+            if (junitPlatform) count++;
+            if (cucumberJUnit4) count++;
+            if (testNg) count++;
+            return count;
+        }
+
+        boolean testNgOnly() {
+            return testNg && !junitPlatform && !cucumberJUnit4;
+        }
+
+        Set<String> names() {
+            Set<String> names = new LinkedHashSet<>();
+            if (junitPlatform) names.add("junit-platform");
+            if (cucumberJUnit4) names.add("cucumber-junit4");
+            if (testNg) names.add("testng");
             return Set.copyOf(names);
         }
     }
