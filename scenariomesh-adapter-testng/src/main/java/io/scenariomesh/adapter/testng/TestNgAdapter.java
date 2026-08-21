@@ -14,9 +14,12 @@ import org.testng.ITestContext;
 import org.testng.ITestListener;
 import org.testng.ITestResult;
 import org.testng.TestNG;
+import org.testng.annotations.Factory;
+import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 import java.io.IOException;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,15 +36,8 @@ import java.util.stream.Stream;
 public final class TestNgAdapter implements ScenarioAdapter {
     public static final String ID = "testng";
 
-    @Override
-    public String id() {
-        return ID;
-    }
-
-    @Override
-    public String framework() {
-        return "testng";
-    }
+    @Override public String id() { return ID; }
+    @Override public String framework() { return "testng"; }
 
     @Override
     public boolean isAvailable(ClassLoader classLoader) {
@@ -60,9 +56,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
         Set<String> seen = new HashSet<>();
 
         for (Path root : context.testRoots()) {
-            if (!Files.isDirectory(root)) {
-                continue;
-            }
+            if (!Files.isDirectory(root)) continue;
             try (Stream<Path> stream = Files.walk(root)) {
                 for (Path file : stream
                         .filter(path -> path.toString().endsWith(".class"))
@@ -73,10 +67,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
                             .replace('/', '.')
                             .replace('\\', '.')
                             .replaceAll("\\.class$", "");
-                    if (!context.discoverySelection().matchesClassName(className)) {
-                        continue;
-                    }
-
+                    if (!context.discoverySelection().matchesClassName(className)) continue;
                     try {
                         Class<?> candidate = Class.forName(className, false, context.classLoader());
                         discoverMethods(candidate, tasks, seen);
@@ -96,6 +87,8 @@ public final class TestNgAdapter implements ScenarioAdapter {
     }
 
     private void discoverMethods(Class<?> candidate, List<ScenarioTask> tasks, Set<String> seen) {
+        rejectUnsupportedClassSemantics(candidate);
+
         Test classAnnotation = candidate.getAnnotation(Test.class);
         if (classAnnotation != null) {
             throw new IllegalStateException(
@@ -105,9 +98,9 @@ public final class TestNgAdapter implements ScenarioAdapter {
 
         for (Method method : candidate.getDeclaredMethods()) {
             Test annotation = method.getAnnotation(Test.class);
-            if (annotation == null) {
-                continue;
-            }
+            if (annotation == null) continue;
+
+            rejectUnsupportedMultiplicity(candidate, method, annotation);
             if (annotation.dependsOnMethods().length > 0 || annotation.dependsOnGroups().length > 0) {
                 throw new IllegalStateException(
                         "TestNG dependency ordering is not yet supported safely for isolated method execution: "
@@ -115,24 +108,49 @@ public final class TestNgAdapter implements ScenarioAdapter {
             }
 
             String selector = candidate.getName() + "#" + method.toGenericString();
-            if (!seen.add(selector)) {
-                continue;
-            }
+            if (!seen.add(selector)) continue;
 
             Map<String, String> metadata = new LinkedHashMap<>();
             metadata.put("className", candidate.getName());
             metadata.put("methodName", method.getName());
             metadata.put("enabled", Boolean.toString(annotation.enabled()));
             tasks.add(new ScenarioTask(
-                    ScenarioIds.from(ID, selector),
-                    candidate.getName() + "." + method.getName(),
-                    ID,
-                    framework(),
-                    null,
-                    null,
-                    selector,
-                    Set.of(annotation.groups()),
-                    Map.copyOf(metadata)));
+                    ScenarioIds.from(ID, selector), candidate.getName() + "." + method.getName(),
+                    ID, framework(), null, null, selector, Set.of(annotation.groups()), Map.copyOf(metadata)));
+        }
+    }
+
+    private void rejectUnsupportedClassSemantics(Class<?> candidate) {
+        for (Constructor<?> constructor : candidate.getDeclaredConstructors()) {
+            if (constructor.isAnnotationPresent(Factory.class)) {
+                throw new IllegalStateException(
+                        "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
+                                + candidate.getName());
+            }
+        }
+        for (Method method : candidate.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Factory.class)) {
+                throw new IllegalStateException(
+                        "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
+                                + candidate.getName() + "." + method.getName());
+            }
+        }
+    }
+
+    private void rejectUnsupportedMultiplicity(Class<?> candidate, Method method, Test annotation) {
+        String owner = candidate.getName() + "." + method.getName();
+        if (!annotation.dataProvider().isBlank()) {
+            throw new IllegalStateException(
+                    "TestNG data-provider multiplicity is not yet supported safely for isolated execution: " + owner);
+        }
+        if (annotation.invocationCount() != 1) {
+            throw new IllegalStateException(
+                    "TestNG invocationCount=" + annotation.invocationCount()
+                            + " is not yet supported safely for isolated execution: " + owner);
+        }
+        if (method.isAnnotationPresent(Parameters.class)) {
+            throw new IllegalStateException(
+                    "TestNG @Parameters requires suite/context semantics that are not yet reproduced safely: " + owner);
         }
     }
 
@@ -141,8 +159,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
         Instant started = Instant.now();
         if ("false".equalsIgnoreCase(task.metadata().get("enabled"))) {
             Instant finished = Instant.now();
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.SKIPPED,
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED,
                     Duration.between(started, finished), context.workerId(), context.attempt(),
                     started, finished, "TestNG test is disabled", "TestNGDisabled");
         }
@@ -157,12 +174,8 @@ public final class TestNgAdapter implements ScenarioAdapter {
 
         String groups = context.properties().get("groups");
         String excludedGroups = context.properties().get("excludedGroups");
-        if (groups != null && !groups.isBlank()) {
-            testNg.setGroups(groups);
-        }
-        if (excludedGroups != null && !excludedGroups.isBlank()) {
-            testNg.setExcludedGroups(excludedGroups);
-        }
+        if (groups != null && !groups.isBlank()) testNg.setGroups(groups);
+        if (excludedGroups != null && !excludedGroups.isBlank()) testNg.setExcludedGroups(excludedGroups);
 
         testNg.setMethodInterceptor(new ExactMethodInterceptor(generic));
         CapturingListener listener = new CapturingListener();
@@ -170,18 +183,12 @@ public final class TestNgAdapter implements ScenarioAdapter {
         testNg.addListener((IConfigurationListener) listener);
         testNg.run();
         Instant finished = Instant.now();
-
         return classify(task, context, started, finished, listener);
     }
 
-    private ExecutionResult classify(
-            ScenarioTask task,
-            ExecutionContext context,
-            Instant started,
-            Instant finished,
-            CapturingListener listener) {
+    private ExecutionResult classify(ScenarioTask task, ExecutionContext context,
+                                     Instant started, Instant finished, CapturingListener listener) {
         Duration duration = Duration.between(started, finished);
-
         if (listener.configurationFailure != null) {
             return testFailure(task, context, started, finished, duration,
                     listener.configurationFailure, "TestNG configuration failed");
@@ -194,34 +201,30 @@ public final class TestNgAdapter implements ScenarioAdapter {
             String detail = listener.skipCause == null
                     ? "TestNG skipped the selected test"
                     : "TestNG skipped the selected test: " + message(listener.skipCause);
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.SKIPPED, duration,
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED, duration,
                     context.workerId(), context.attempt(), started, finished,
                     detail, listener.skipCause == null ? "TestNGSkipped" : listener.skipCause.getClass().getName());
         }
-        if (listener.successes > 0) {
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.PASSED, duration,
+        if (listener.successes == 1) {
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED, duration,
                     context.workerId(), context.attempt(), started, finished, null, null);
         }
-
-        return new ExecutionResult(
-                task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE, duration,
+        if (listener.successes > 1) {
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE, duration,
+                    context.workerId(), context.attempt(), started, finished,
+                    "TestNG selected method produced " + listener.successes
+                            + " successful invocations; ScenarioMesh requires exactly one terminal execution per task",
+                    "SelectionMultiplicityFailure");
+        }
+        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE, duration,
                 context.workerId(), context.attempt(), started, finished,
-                "TestNG did not execute selected method " + task.displayName(),
-                "SelectionFailure");
+                "TestNG did not execute selected method " + task.displayName(), "SelectionFailure");
     }
 
-    private ExecutionResult testFailure(
-            ScenarioTask task,
-            ExecutionContext context,
-            Instant started,
-            Instant finished,
-            Duration duration,
-            Throwable failure,
-            String defaultMessage) {
-        return new ExecutionResult(
-                task.id(), task.displayName(), ResultStatus.TEST_FAILURE, duration,
+    private ExecutionResult testFailure(ScenarioTask task, ExecutionContext context,
+                                        Instant started, Instant finished, Duration duration,
+                                        Throwable failure, String defaultMessage) {
+        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE, duration,
                 context.workerId(), context.attempt(), started, finished,
                 failure == null ? defaultMessage : message(failure),
                 failure == null ? null : failure.getClass().getName());
@@ -234,19 +237,13 @@ public final class TestNgAdapter implements ScenarioAdapter {
 
     private static final class ExactMethodInterceptor implements IMethodInterceptor {
         private final String generic;
-
-        private ExactMethodInterceptor(String generic) {
-            this.generic = generic;
-        }
-
+        private ExactMethodInterceptor(String generic) { this.generic = generic; }
         @Override
         public List<IMethodInstance> intercept(List<IMethodInstance> methods, ITestContext context) {
-            return methods.stream()
-                    .filter(instance -> {
-                        Method method = instance.getMethod().getConstructorOrMethod().getMethod();
-                        return method != null && method.toGenericString().equals(generic);
-                    })
-                    .toList();
+            return methods.stream().filter(instance -> {
+                Method method = instance.getMethod().getConstructorOrMethod().getMethod();
+                return method != null && method.toGenericString().equals(generic);
+            }).toList();
         }
     }
 
@@ -257,33 +254,15 @@ public final class TestNgAdapter implements ScenarioAdapter {
         private Throwable failure;
         private Throwable skipCause;
         private Throwable configurationFailure;
-
-        @Override
-        public void onTestSuccess(ITestResult result) {
-            successes++;
+        @Override public void onTestSuccess(ITestResult result) { successes++; }
+        @Override public void onTestFailure(ITestResult result) {
+            failures++; if (failure == null) failure = result.getThrowable();
         }
-
-        @Override
-        public void onTestFailure(ITestResult result) {
-            failures++;
-            if (failure == null) {
-                failure = result.getThrowable();
-            }
+        @Override public void onTestSkipped(ITestResult result) {
+            skipped++; if (skipCause == null) skipCause = result.getThrowable();
         }
-
-        @Override
-        public void onTestSkipped(ITestResult result) {
-            skipped++;
-            if (skipCause == null) {
-                skipCause = result.getThrowable();
-            }
-        }
-
-        @Override
-        public void onConfigurationFailure(ITestResult result) {
-            if (configurationFailure == null) {
-                configurationFailure = result.getThrowable();
-            }
+        @Override public void onConfigurationFailure(ITestResult result) {
+            if (configurationFailure == null) configurationFailure = result.getThrowable();
         }
     }
 }
