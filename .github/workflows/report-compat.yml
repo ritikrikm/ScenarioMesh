@@ -16,20 +16,34 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B -ntp clean install
+      - name: Seed stale native JSON outside current invocation
+        working-directory: examples/cucumber-junit4-example
+        run: |
+          mvn -B -ntp clean
+          mkdir -p target/cucumber-report
+          printf '%s\n' '[]' > target/cucumber-report/stale-native.json
       - name: Run Cucumber JUnit4 with downstream Cluecumber report
         working-directory: examples/cucumber-junit4-example
-        run: mvn -B -ntp clean verify | tee cluecumber-compat.log
-      - name: Verify ScenarioMesh preserved the native reporting contract
+        run: mvn -B -ntp verify | tee cluecumber-compat.log
+      - name: Verify ScenarioMesh preserved exact native reporting contract
         working-directory: examples/cucumber-junit4-example
         run: |
           grep -Fq 'ScenarioMesh selected adapter: cucumber-junit4' cluecumber-compat.log
-          grep -Fq 'ScenarioMesh: preserving Cluecumber JSON input at' cluecumber-compat.log
-          test -d target/cucumber-report
-          count="$(find target/cucumber-report -maxdepth 1 -name 'scenariomesh-*.json' -type f | wc -l)"
-          test "$count" -gt 0
-          test -d target/cluecumber-report
-          test -f target/cluecumber-report/index.html
-          if find target/cucumber-report -maxdepth 1 -name 'scenariomesh-*.json' -type f -size 0 | grep -q .; then
+          grep -Fq 'ScenarioMesh results: discovered=6, passed=6, skipped=0, failed=0' cluecumber-compat.log
+          grep -Fq 'ScenarioMesh: preserving Cluecumber JSON input for this invocation at' cluecumber-compat.log
+
+          test -f target/cucumber-report/stale-native.json
+          run_dirs="$(find target/cucumber-report -mindepth 1 -maxdepth 1 -type d -name 'scenariomesh-*' | wc -l)"
+          test "$run_dirs" -eq 1
+          run_dir="$(find target/cucumber-report -mindepth 1 -maxdepth 1 -type d -name 'scenariomesh-*' | head -n 1)"
+          test -n "$run_dir"
+
+          count="$(find "$run_dir" -maxdepth 1 -name 'scenariomesh-*.json' -type f | wc -l)"
+          test "$count" -eq 6
+          if find "$run_dir" -maxdepth 1 -name 'scenariomesh-*.json' -type f -size 0 | grep -q .; then
             echo 'ScenarioMesh produced an empty Cucumber JSON artifact'
             exit 1
           fi
+
+          test -d target/cluecumber-report
+          test -f target/cluecumber-report/index.html
