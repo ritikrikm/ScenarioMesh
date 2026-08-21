@@ -19,33 +19,43 @@ class DownstreamReportCompatibilityTest {
     private final DownstreamReportCompatibility compatibility = new DownstreamReportCompatibility();
 
     @Test
-    void resolvesCluecumberSourceDirectoryAndPublishesRuntimeContract() {
+    void resolvesCluecumberSourceDirectoryAndScopesItToInvocation() {
         MavenProject project = project();
         Plugin plugin = cluecumber("${project.build.directory}/cucumber-report");
         project.getBuild().addPlugin(plugin);
 
-        var analysis = compatibility.analyze(project);
+        var analysis = compatibility.prepare(project, "run-123");
 
         assertTrue(analysis.present());
         assertTrue(analysis.supported(), analysis.reason());
         assertEquals(
-                new File(project.getBuild().getDirectory(), "cucumber-report").toPath().toAbsolutePath().normalize(),
+                new File(project.getBuild().getDirectory(), "cucumber-report/scenariomesh-run-123")
+                        .toPath().toAbsolutePath().normalize(),
                 analysis.sourceJsonDirectory());
         assertEquals(
                 analysis.sourceJsonDirectory().toString(),
                 analysis.runtimeProperties().get(RuntimePropertyNames.CLUECUMBER_JSON_DIRECTORY));
+
+        Xpp3Dom config = (Xpp3Dom) plugin.getExecutions().get(0).getConfiguration();
+        assertEquals(
+                analysis.sourceJsonDirectory().toString(),
+                config.getChild("sourceJsonReportDirectory").getValue());
     }
 
     @Test
-    void unresolvedCluecumberDirectoryRefusesUnsafeTakeoverContract() {
+    void unresolvedCluecumberDirectoryRefusesUnsafeTakeoverContractWithoutMutation() {
         MavenProject project = project();
-        project.getBuild().addPlugin(cluecumber("${unknown.directory}/cucumber-report"));
+        Plugin plugin = cluecumber("${unknown.directory}/cucumber-report");
+        project.getBuild().addPlugin(plugin);
 
-        var analysis = compatibility.analyze(project);
+        var analysis = compatibility.prepare(project, "run-123");
 
         assertTrue(analysis.present());
         assertFalse(analysis.supported());
         assertTrue(analysis.runtimeProperties().isEmpty());
+        Xpp3Dom config = (Xpp3Dom) plugin.getExecutions().get(0).getConfiguration();
+        assertEquals("${unknown.directory}/cucumber-report",
+                config.getChild("sourceJsonReportDirectory").getValue());
     }
 
     private MavenProject project() {
