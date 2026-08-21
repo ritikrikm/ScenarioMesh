@@ -63,13 +63,13 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
-            DownstreamReportCompatibility.Analysis reportAnalysis = downstreamReportCompatibility.analyze(project);
+            String invocationId = UUID.randomUUID().toString();
+            DownstreamReportCompatibility.Analysis reportAnalysis = downstreamReportCompatibility.prepare(project, invocationId);
             if (reportAnalysis.present() && !reportAnalysis.supported()) {
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + reportAnalysis.reason());
                 continue;
             }
 
-            String invocationId = UUID.randomUUID().toString();
             injectScenarioMesh(project, decision, invocationId, reportAnalysis.runtimeProperties());
             suppressOwnedExecutor(project, decision.executorKind());
             String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
@@ -79,7 +79,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                     + ", signals=" + String.join(", ", decision.frameworks())
                     + ", adapterIntent=" + config.executionAdapter() + configText + ")");
             if (reportAnalysis.present()) {
-                info("ScenarioMesh: preserving Cluecumber JSON input at " + reportAnalysis.sourceJsonDirectory());
+                info("ScenarioMesh: preserving Cluecumber JSON input for this invocation at "
+                        + reportAnalysis.sourceJsonDirectory());
             }
         }
     }
