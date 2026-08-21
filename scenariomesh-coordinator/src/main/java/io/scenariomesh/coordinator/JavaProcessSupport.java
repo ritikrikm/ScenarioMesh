@@ -2,9 +2,12 @@ package io.scenariomesh.coordinator;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 final class JavaProcessSupport {
     private JavaProcessSupport() {}
@@ -32,6 +35,45 @@ final class JavaProcessSupport {
         command.add(mainClass);
         command.addAll(args);
         return command;
+    }
+
+    static void terminateProcessTree(Process process, Duration gracefulWait) {
+        if (process == null) return;
+        List<ProcessHandle> descendants = process.toHandle().descendants()
+                .sorted(Comparator.comparingLong(ProcessHandle::pid).reversed())
+                .toList();
+
+        descendants.forEach(JavaProcessSupport::destroyQuietly);
+        destroyQuietly(process.toHandle());
+        waitQuietly(process, gracefulWait);
+
+        descendants.stream().filter(ProcessHandle::isAlive).forEach(JavaProcessSupport::destroyForciblyQuietly);
+        if (process.isAlive()) process.destroyForcibly();
+        waitQuietly(process, gracefulWait);
+    }
+
+    private static void destroyQuietly(ProcessHandle handle) {
+        try {
+            if (handle.isAlive()) handle.destroy();
+        } catch (RuntimeException ignored) {
+            // Best-effort cleanup; force-kill path follows.
+        }
+    }
+
+    private static void destroyForciblyQuietly(ProcessHandle handle) {
+        try {
+            if (handle.isAlive()) handle.destroyForcibly();
+        } catch (RuntimeException ignored) {
+            // Caller cannot do more than best effort at process teardown.
+        }
+    }
+
+    private static void waitQuietly(Process process, Duration wait) {
+        try {
+            process.waitFor(Math.max(1L, wait.toMillis()), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static Path javaExecutable() {
