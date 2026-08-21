@@ -15,49 +15,73 @@ final class DownstreamReportCompatibility {
     private static final String REPORTING_GOAL = "reporting";
     private static final String SOURCE_DIRECTORY = "sourceJsonReportDirectory";
 
-    Analysis analyze(MavenProject project) {
+    Analysis prepare(MavenProject project, String invocationId) {
         Plugin plugin = project.getPlugin(CLUECUMBER);
         if (plugin == null) {
             return Analysis.notPresent();
         }
 
-        String configured = configuredSourceDirectory(plugin);
-        if (configured == null || configured.isBlank()) {
+        ConfigLocation location = configuredSourceDirectory(plugin);
+        if (location == null || location.value() == null || location.value().isBlank()) {
             return Analysis.unsupported(
                     "Cluecumber reporting is configured but sourceJsonReportDirectory could not be resolved safely");
         }
 
         try {
-            String resolved = resolveKnownExpressions(project, configured.trim());
-            Path path = Path.of(resolved);
-            if (!path.isAbsolute()) {
-                path = project.getBasedir().toPath().resolve(path);
+            String resolved = resolveKnownExpressions(project, location.value().trim());
+            Path basePath = Path.of(resolved);
+            if (!basePath.isAbsolute()) {
+                basePath = project.getBasedir().toPath().resolve(basePath);
             }
-            return Analysis.supported(path.toAbsolutePath().normalize());
+            Path runPath = basePath.toAbsolutePath().normalize()
+                    .resolve("scenariomesh-" + safeInvocation(invocationId));
+
+            // Cluecumber must read only artifacts from THIS ScenarioMesh invocation.
+            // Pointing it at a run-scoped directory prevents stale/native JSON from a
+            // previous or parallel execution being counted a second time.
+            setChildValue(location.configuration(), SOURCE_DIRECTORY, runPath.toString());
+            return Analysis.supported(runPath);
         } catch (RuntimeException exception) {
             return Analysis.unsupported(
-                    "Cluecumber sourceJsonReportDirectory is not a usable path: " + configured);
+                    "Cluecumber sourceJsonReportDirectory is not a usable path: " + location.value());
         }
     }
 
-    private String configuredSourceDirectory(Plugin plugin) {
+    private ConfigLocation configuredSourceDirectory(Plugin plugin) {
         for (PluginExecution execution : plugin.getExecutions()) {
             if (execution.getGoals().contains(REPORTING_GOAL)) {
-                String value = childValue(execution.getConfiguration(), SOURCE_DIRECTORY);
+                Xpp3Dom config = asDom(execution.getConfiguration());
+                String value = childValue(config, SOURCE_DIRECTORY);
                 if (value != null && !value.isBlank()) {
-                    return value;
+                    return new ConfigLocation(config, value);
                 }
             }
         }
-        return childValue(plugin.getConfiguration(), SOURCE_DIRECTORY);
+        Xpp3Dom config = asDom(plugin.getConfiguration());
+        String value = childValue(config, SOURCE_DIRECTORY);
+        return value == null ? null : new ConfigLocation(config, value);
     }
 
-    private String childValue(Object configuration, String name) {
-        if (!(configuration instanceof Xpp3Dom root)) {
-            return null;
-        }
+    private Xpp3Dom asDom(Object configuration) {
+        return configuration instanceof Xpp3Dom dom ? dom : null;
+    }
+
+    private String childValue(Xpp3Dom root, String name) {
+        if (root == null) return null;
         Xpp3Dom child = root.getChild(name);
         return child == null ? null : child.getValue();
+    }
+
+    private void setChildValue(Xpp3Dom root, String name, String value) {
+        if (root == null) {
+            throw new IllegalArgumentException("missing Cluecumber configuration");
+        }
+        Xpp3Dom child = root.getChild(name);
+        if (child == null) {
+            child = new Xpp3Dom(name);
+            root.addChild(child);
+        }
+        child.setValue(value);
     }
 
     private String resolveKnownExpressions(MavenProject project, String value) {
@@ -77,6 +101,15 @@ final class DownstreamReportCompatibility {
         }
         return resolved;
     }
+
+    private String safeInvocation(String invocationId) {
+        if (invocationId == null || invocationId.isBlank()) {
+            throw new IllegalArgumentException("missing invocation id");
+        }
+        return invocationId.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    private record ConfigLocation(Xpp3Dom configuration, String value) {}
 
     record Analysis(boolean present, boolean supported, Path sourceJsonDirectory, String reason) {
         static Analysis notPresent() {
