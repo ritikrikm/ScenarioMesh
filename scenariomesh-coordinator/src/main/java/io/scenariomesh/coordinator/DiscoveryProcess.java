@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 final class DiscoveryProcess {
+    private static final Duration TERMINATION_GRACE = Duration.ofSeconds(2);
+
     DiscoveryMain.DiscoveryResult discover(RunRequest request, Path directory) throws Exception {
         Path output = directory.resolve("discovered-scenarios.json");
         Path log = directory.resolve("discovery.log");
@@ -50,7 +52,7 @@ final class DiscoveryProcess {
 
         Duration timeout = request.config().discoveryTimeout();
         if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-            process.destroyForcibly();
+            JavaProcessSupport.terminateProcessTree(process, TERMINATION_GRACE);
             throw new IllegalStateException("ScenarioMesh discovery exceeded " + timeout + ". See " + log);
         }
         if (process.exitValue() != 0) {
