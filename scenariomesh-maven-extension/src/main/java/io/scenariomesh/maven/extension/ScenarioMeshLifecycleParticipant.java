@@ -25,6 +25,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private static final String GROUP_ID = "io.scenariomesh";
     private static final String PLUGIN_ARTIFACT_ID = "scenariomesh-maven-plugin";
     private static final String VERSION = "0.1.0-SNAPSHOT";
+    private static final String RUN_EXECUTION_ID = "scenariomesh-run";
+    private static final String VERIFY_EXECUTION_ID = "scenariomesh-verify";
 
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
     private final DownstreamReportCompatibility downstreamReportCompatibility = new DownstreamReportCompatibility();
@@ -103,25 +105,43 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             plugin.setVersion(VERSION);
             project.getBuild().addPlugin(plugin);
         }
-        if (plugin.getExecutions().stream().noneMatch(execution -> "scenariomesh-run".equals(execution.getId()))) {
-            PluginExecution run = new PluginExecution();
-            run.setId("scenariomesh-run");
-            run.setPhase(decision.takeoverPhase());
-            run.addGoal("run");
-            run.setConfiguration(runConfiguration(decision, invocationId, downstreamRuntimeProperties));
+
+        // Reconcile rather than only "add if absent". A target POM, inherited plugin,
+        // or repeated model mutation may already contain these IDs with stale phase/config.
+        PluginExecution run = execution(plugin, RUN_EXECUTION_ID);
+        if (run == null) {
+            run = new PluginExecution();
+            run.setId(RUN_EXECUTION_ID);
             plugin.addExecution(run);
         }
-        if (decision.deferFailureUntilVerify()
-                && plugin.getExecutions().stream().noneMatch(execution -> "scenariomesh-verify".equals(execution.getId()))) {
-            PluginExecution verify = new PluginExecution();
-            verify.setId("scenariomesh-verify");
+        run.setPhase(decision.takeoverPhase());
+        run.getGoals().clear();
+        run.addGoal("run");
+        run.setConfiguration(runConfiguration(decision, invocationId, downstreamRuntimeProperties));
+
+        if (decision.deferFailureUntilVerify()) {
+            PluginExecution verify = execution(plugin, VERIFY_EXECUTION_ID);
+            if (verify == null) {
+                verify = new PluginExecution();
+                verify.setId(VERIFY_EXECUTION_ID);
+                plugin.addExecution(verify);
+            }
             verify.setPhase("verify");
+            verify.getGoals().clear();
             verify.addGoal("verify");
             Xpp3Dom verifyConfig = new Xpp3Dom("configuration");
             addValue(verifyConfig, "invocationId", invocationId);
             verify.setConfiguration(verifyConfig);
-            plugin.addExecution(verify);
+        } else {
+            plugin.getExecutions().removeIf(execution -> VERIFY_EXECUTION_ID.equals(execution.getId()));
         }
+    }
+
+    private PluginExecution execution(Plugin plugin, String id) {
+        return plugin.getExecutions().stream()
+                .filter(execution -> id.equals(execution.getId()))
+                .findFirst()
+                .orElse(null);
     }
 
     private Xpp3Dom runConfiguration(
