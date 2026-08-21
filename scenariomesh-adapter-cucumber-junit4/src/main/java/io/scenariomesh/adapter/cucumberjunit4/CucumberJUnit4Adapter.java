@@ -17,11 +17,13 @@ import org.junit.runner.RunWith;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -50,17 +52,15 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
     @Override
     public List<ScenarioTask> discover(AdapterContext context) throws Exception {
         List<ScenarioTask> tasks = new ArrayList<>();
-
         for (Class<?> runner : findCucumberRunnerClasses(context)) {
             Description root = Request.aClass(runner).getRunner().getDescription();
             for (JUnit4DescriptionLeaves.Leaf leaf : descriptionLeaves.collect(root)) {
-                String selector = new Selector(runner.getName(), leaf.selectorPath()).encode();
+                String selector = new Selector(runner.getName(), leaf.selectorPath(), leaf.semanticKey()).encode();
                 Description description = leaf.description();
                 tasks.add(new ScenarioTask(
                         ScenarioIds.from(ID, selector), description.getDisplayName(), ID, framework(),
                         null, null, selector, Set.of(),
-                        Map.of(
-                                "runnerClass", runner.getName(),
+                        Map.of("runnerClass", runner.getName(),
                                 "frameworkDescription", leaf.semanticKey(),
                                 "executionIdentity", selector)));
             }
@@ -73,9 +73,7 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         Selector selector = Selector.parse(task.selector());
         Class<?> runnerClass = Class.forName(selector.runnerClass(), false, context.classLoader());
         return jsonReportIsolation.execute(
-                task,
-                context,
-                runnerClass,
+                task, context, runnerClass,
                 () -> executeSelected(task, context, selector, runnerClass));
     }
 
@@ -85,12 +83,15 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
             Selector selector,
             Class<?> runnerClass) {
         Request base = Request.aClass(runnerClass);
-        Description selected = descriptionAtPath(base.getRunner().getDescription(), selector.path());
+        Description root = base.getRunner().getDescription();
+        Description selected = resolveSelectedDescription(root, selector);
         if (selected == null) {
             Instant now = Instant.now();
             return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                     Duration.ZERO, context.workerId(), context.attempt(), now, now,
-                    "Could not resolve JUnit 4 scenario selector " + task.selector(), "SelectionFailure");
+                    "Could not safely resolve JUnit 4 scenario selector " + task.selector()
+                            + "; the runner description tree changed or the semantic identity became ambiguous",
+                    "SelectionFailure");
         }
 
         Instant started = Instant.now();
@@ -129,6 +130,24 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
                 duration, context.workerId(), context.attempt(), started, finished, null, null);
     }
 
+    private Description resolveSelectedDescription(Description root, Selector selector) {
+        Description atPath = descriptionAtPath(root, selector.path());
+        if (selector.semanticKey() == null) return atPath; // Backward-compatible selectors.
+        if (atPath != null) {
+            List<JUnit4DescriptionLeaves.Leaf> leaves = descriptionLeaves.collect(root);
+            for (JUnit4DescriptionLeaves.Leaf leaf : leaves) {
+                if (leaf.description() == atPath && selector.semanticKey().equals(leaf.semanticKey())) {
+                    return atPath;
+                }
+            }
+        }
+
+        List<JUnit4DescriptionLeaves.Leaf> semanticMatches = descriptionLeaves.collect(root).stream()
+                .filter(leaf -> selector.semanticKey().equals(leaf.semanticKey()))
+                .toList();
+        return semanticMatches.size() == 1 ? semanticMatches.get(0).description() : null;
+    }
+
     private List<Class<?>> findCucumberRunnerClasses(AdapterContext context) throws IOException {
         List<Class<?>> runners = new ArrayList<>();
         List<String> inspectionFailures = new ArrayList<>();
@@ -142,9 +161,7 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
                         .sorted(Comparator.naturalOrder()).toList()) {
                     String name = root.relativize(file).toString()
                             .replace('/', '.').replace('\\', '.').replaceAll("\\.class$", "");
-                    if (!context.discoverySelection().matchesClassName(name)) {
-                        continue;
-                    }
+                    if (!context.discoverySelection().matchesClassName(name)) continue;
                     try {
                         Class<?> candidate = Class.forName(name, false, context.classLoader());
                         RunWith runWith = candidate.getAnnotation(RunWith.class);
@@ -207,19 +224,25 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         return message == null || message.isBlank() ? throwable.getClass().getName() : message;
     }
 
-    private record Selector(String runnerClass, List<Integer> path) {
+    private record Selector(String runnerClass, List<Integer> path, String semanticKey) {
         String encode() {
-            return runnerClass + "#" + path.stream().map(String::valueOf)
+            String pathValue = path.stream().map(String::valueOf)
                     .reduce((left, right) -> left + "." + right).orElse("");
+            String semantic = Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(semanticKey.getBytes(StandardCharsets.UTF_8));
+            return runnerClass + "#" + pathValue + "#" + semantic;
         }
 
         static Selector parse(String value) {
-            int separator = value.indexOf('#');
-            if (separator < 0) throw new IllegalArgumentException("Invalid JUnit 4 selector: " + value);
-            String runner = value.substring(0, separator);
-            String pathText = value.substring(separator + 1);
-            if (pathText.isBlank()) return new Selector(runner, List.of());
-            return new Selector(runner, Stream.of(pathText.split("\\.")).map(Integer::parseInt).toList());
+            String[] parts = value.split("#", 3);
+            if (parts.length < 2) throw new IllegalArgumentException("Invalid JUnit 4 selector: " + value);
+            List<Integer> path = parts[1].isBlank()
+                    ? List.of()
+                    : Stream.of(parts[1].split("\\.")).map(Integer::parseInt).toList();
+            String semantic = parts.length == 3
+                    ? new String(Base64.getUrlDecoder().decode(parts[2]), StandardCharsets.UTF_8)
+                    : null;
+            return new Selector(parts[0], path, semantic);
         }
     }
 }
