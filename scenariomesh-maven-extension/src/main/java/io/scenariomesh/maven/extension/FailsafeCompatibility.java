@@ -16,9 +16,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Validates the active Failsafe test execution and translates the subset of
- * Failsafe semantics that ScenarioMesh can reproduce exactly. Unknown semantics
- * remain pass-through material rather than being ignored.
+ * Validates active Failsafe integration-test executions and translates each
+ * execution into an independent ScenarioMesh execution plan. Distinct Maven
+ * executions are never collapsed or deduplicated.
  */
 final class FailsafeCompatibility {
     private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of(
@@ -30,7 +30,6 @@ final class FailsafeCompatibility {
     Analysis analyze(Plugin plugin,
                      MavenExecutionPlan.PluginParticipation participation,
                      Function<String, String> propertyResolver) {
-        List<String> reasons = new ArrayList<>();
         List<PluginExecution> testExecutions = participation.activeExecutions().stream()
                 .filter(this::containsIntegrationTestGoal)
                 .toList();
@@ -39,56 +38,67 @@ final class FailsafeCompatibility {
             return Analysis.unsupported(
                     "Failsafe participates in the invocation but no active integration-test goal could be isolated");
         }
-        if (testExecutions.size() > 1) {
-            return Analysis.unsupported(
-                    "multiple active Failsafe integration-test executions are configured; "
-                            + "ScenarioMesh will not collapse distinct Maven executions into one run");
+
+        List<ExecutionPlan> plans = new ArrayList<>();
+        List<String> allReasons = new ArrayList<>();
+        for (PluginExecution execution : testExecutions) {
+            List<String> reasons = new ArrayList<>();
+            EffectiveSettings settings = new EffectiveSettings();
+            inspectConfiguration(
+                    plugin.getConfiguration(),
+                    "maven-failsafe-plugin configuration",
+                    settings,
+                    reasons,
+                    propertyResolver);
+            inspectConfiguration(
+                    execution.getConfiguration(),
+                    "maven-failsafe-plugin execution '" + executionId(execution) + "'",
+                    settings,
+                    reasons,
+                    propertyResolver);
+
+            if (settings.rerunFailingTestsCount > 0) {
+                reasons.add("rerunFailingTestsCount resolves to " + settings.rerunFailingTestsCount
+                        + "; ScenarioMesh will not risk duplicating retries until exact Failsafe retry semantics are implemented");
+            }
+            if (!reasons.isEmpty()) {
+                allReasons.add("execution '" + executionId(execution) + "': " + String.join("; ", reasons));
+                continue;
+            }
+            if (settings.explicitlySkipped) {
+                plans.add(ExecutionPlan.skipped(executionId(execution)));
+                continue;
+            }
+
+            List<String> includes = settings.includes.isEmpty()
+                    ? MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS)
+                    : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
+            List<String> excludes = MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
+            plans.add(new ExecutionPlan(
+                    executionId(execution),
+                    false,
+                    includes,
+                    excludes,
+                    List.copyOf(settings.jvmArgs),
+                    Map.copyOf(settings.systemProperties),
+                    settings.testFailureIgnore));
         }
 
-        EffectiveSettings settings = new EffectiveSettings();
-        inspectConfiguration(
-                plugin.getConfiguration(),
-                "maven-failsafe-plugin configuration",
-                settings,
-                reasons,
-                propertyResolver);
-
-        PluginExecution execution = testExecutions.get(0);
-        inspectConfiguration(
-                execution.getConfiguration(),
-                "maven-failsafe-plugin execution '" + executionId(execution) + "'",
-                settings,
-                reasons,
-                propertyResolver);
-
-        if (settings.rerunFailingTestsCount > 0) {
-            reasons.add("rerunFailingTestsCount resolves to " + settings.rerunFailingTestsCount
-                    + "; ScenarioMesh will not risk duplicating retries until exact Failsafe retry semantics are implemented");
+        if (!allReasons.isEmpty()) {
+            return Analysis.unsupported(String.join("; ", allReasons));
         }
-        if (!reasons.isEmpty()) {
-            return new Analysis(false, false, List.of(), List.of(), List.of(), Map.of(), false,
-                    String.join("; ", reasons));
-        }
-        if (settings.explicitlySkipped) {
-            return new Analysis(true, true, List.of(), List.of(), List.of(), Map.of(),
-                    settings.testFailureIgnore,
-                    "Failsafe integration tests are explicitly skipped");
+        if (plans.isEmpty()) {
+            return Analysis.unsupported("Failsafe execution analysis produced no reproducible execution plans");
         }
 
-        List<String> includes = settings.includes.isEmpty()
-                ? MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS)
-                : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
-        List<String> excludes = MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
-
-        return new Analysis(
-                true,
-                false,
-                includes,
-                excludes,
-                List.copyOf(settings.jvmArgs),
-                Map.copyOf(settings.systemProperties),
-                settings.testFailureIgnore,
-                "one compatible Failsafe integration-test execution detected");
+        boolean allSkipped = plans.stream().allMatch(ExecutionPlan::explicitlySkipped);
+        long activeCount = plans.stream().filter(plan -> !plan.explicitlySkipped()).count();
+        String reason = allSkipped
+                ? "all active Failsafe integration-test executions are explicitly skipped"
+                : activeCount == 1
+                    ? "one compatible Failsafe integration-test execution detected"
+                    : activeCount + " compatible Failsafe integration-test executions modeled independently";
+        return new Analysis(true, allSkipped, List.copyOf(plans), reason);
     }
 
     private boolean containsIntegrationTestGoal(PluginExecution execution) {
@@ -101,21 +111,15 @@ final class FailsafeCompatibility {
                                       EffectiveSettings settings,
                                       List<String> reasons,
                                       Function<String, String> propertyResolver) {
-        if (!(raw instanceof Xpp3Dom configuration)) {
-            return;
-        }
+        if (!(raw instanceof Xpp3Dom configuration)) return;
         for (Xpp3Dom child : configuration.getChildren()) {
-            if (!meaningful(child)) {
-                continue;
-            }
+            if (!meaningful(child)) continue;
             switch (child.getName()) {
                 case "includes" -> readPatternList(child, settings.includes, location, reasons, propertyResolver);
                 case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
                 case "skip", "skipITs", "skipTests" -> {
                     Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                    if (Boolean.TRUE.equals(value)) {
-                        settings.explicitlySkipped = true;
-                    }
+                    if (Boolean.TRUE.equals(value)) settings.explicitlySkipped = true;
                 }
                 case "useModulePath" -> {
                     Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
@@ -124,25 +128,19 @@ final class FailsafeCompatibility {
                     }
                 }
                 case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver);
-                case "systemPropertyVariables" -> readSystemProperties(
-                        child, location, settings, reasons, propertyResolver);
+                case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
                 case "testFailureIgnore" -> {
                     Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                    if (value != null) {
-                        settings.testFailureIgnore = value;
-                    }
+                    if (value != null) settings.testFailureIgnore = value;
                 }
                 case "rerunFailingTestsCount" -> {
                     Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
-                    if (value != null) {
-                        settings.rerunFailingTestsCount = value;
-                    }
+                    if (value != null) settings.rerunFailingTestsCount = value;
                 }
                 case "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
                         "threadCountMethods", "threadCountSuites", "perCoreThreadCount", "useUnlimitedThreads",
                         "parallelOptimized" -> {
-                    // These control Failsafe's own concurrency implementation. ScenarioMesh replaces
-                    // that mechanism with isolated worker JVMs, so copying these values would be wrong.
+                    // ScenarioMesh replaces Failsafe's own concurrency implementation.
                 }
                 default -> reasons.add(location + " uses unsupported configuration <" + child.getName() + ">");
             }
@@ -187,14 +185,9 @@ final class FailsafeCompatibility {
                 reasons.add(location + " contains nested system property '" + property.getName() + "'");
                 continue;
             }
-            String value = resolve(
-                    property.getValue(),
-                    location + " system property '" + property.getName() + "'",
-                    reasons,
-                    propertyResolver);
-            if (value != null) {
-                settings.systemProperties.put(property.getName(), value);
-            }
+            String value = resolve(property.getValue(),
+                    location + " system property '" + property.getName() + "'", reasons, propertyResolver);
+            if (value != null) settings.systemProperties.put(property.getName(), value);
         }
     }
 
@@ -227,15 +220,9 @@ final class FailsafeCompatibility {
             return null;
         }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
-        if (value == null || value.isBlank()) {
-            return Boolean.FALSE;
-        }
-        if ("true".equalsIgnoreCase(value)) {
-            return Boolean.TRUE;
-        }
-        if ("false".equalsIgnoreCase(value)) {
-            return Boolean.FALSE;
-        }
+        if (value == null || value.isBlank()) return Boolean.FALSE;
+        if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
+        if ("false".equalsIgnoreCase(value)) return Boolean.FALSE;
         reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'");
         return null;
     }
@@ -249,9 +236,7 @@ final class FailsafeCompatibility {
             return null;
         }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
-        if (value == null || value.isBlank()) {
-            return 0;
-        }
+        if (value == null || value.isBlank()) return 0;
         try {
             int parsed = Integer.parseInt(value.trim());
             if (parsed < 0) {
@@ -270,9 +255,7 @@ final class FailsafeCompatibility {
                            List<String> reasons,
                            Function<String, String> propertyResolver) {
         String value = trim(raw);
-        if (value == null) {
-            return "";
-        }
+        if (value == null) return "";
         Matcher matcher = PROPERTY_REFERENCE.matcher(value);
         StringBuffer resolved = new StringBuffer();
         while (matcher.find()) {
@@ -307,23 +290,35 @@ final class FailsafeCompatibility {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    record Analysis(boolean supported,
-                    boolean explicitlySkipped,
-                    List<String> includeClassNameRegexes,
-                    List<String> excludeClassNameRegexes,
-                    List<String> jvmArgs,
-                    Map<String, String> systemProperties,
-                    boolean testFailureIgnore,
-                    String reason) {
-        Analysis {
+    record ExecutionPlan(String executionId,
+                         boolean explicitlySkipped,
+                         List<String> includeClassNameRegexes,
+                         List<String> excludeClassNameRegexes,
+                         List<String> jvmArgs,
+                         Map<String, String> systemProperties,
+                         boolean testFailureIgnore) {
+        ExecutionPlan {
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
             jvmArgs = List.copyOf(jvmArgs == null ? List.of() : jvmArgs);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
         }
 
+        static ExecutionPlan skipped(String executionId) {
+            return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), Map.of(), false);
+        }
+    }
+
+    record Analysis(boolean supported,
+                    boolean explicitlySkipped,
+                    List<ExecutionPlan> executionPlans,
+                    String reason) {
+        Analysis {
+            executionPlans = List.copyOf(executionPlans == null ? List.of() : executionPlans);
+        }
+
         static Analysis unsupported(String reason) {
-            return new Analysis(false, false, List.of(), List.of(), List.of(), Map.of(), false, reason);
+            return new Analysis(false, false, List.of(), reason);
         }
     }
 
