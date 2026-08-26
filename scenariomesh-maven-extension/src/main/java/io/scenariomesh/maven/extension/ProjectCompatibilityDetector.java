@@ -7,6 +7,7 @@ import org.apache.maven.model.Plugin;
 import org.apache.maven.project.MavenProject;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -27,6 +28,10 @@ final class ProjectCompatibilityDetector {
             "test", "surefire.includes", "surefire.excludes", "suiteXmlFiles", "dependenciesToScan");
     private static final Set<String> FAILSAFE_UNSAFE_SELECTION_PROPERTIES = Set.of(
             "it.test", "failsafe.includes", "failsafe.excludes", "suiteXmlFiles", "dependenciesToScan");
+    private static final Set<String> CUCUMBER_SELECTION_PROPERTIES = Set.of(
+            "cucumber.filter.tags", "cucumber.filter.name", "cucumber.features");
+    private static final List<String> FRAMEWORK_PROPERTY_PREFIXES = List.of(
+            "cucumber.", "junit.", "testng.");
 
     private final SurefireCompatibility surefireCompatibility = new SurefireCompatibility();
     private final FailsafeCompatibility failsafeCompatibility = new FailsafeCompatibility();
@@ -56,6 +61,18 @@ final class ProjectCompatibilityDetector {
             return CompatibilityDecision.passThrough(
                     "Maven group filtering is present; ScenarioMesh will not take over until discovery can reproduce group inclusion/exclusion exactly");
         }
+
+        if (frameworks.cucumberJUnit4() || frameworks.junitPlatform()) {
+            String projectOnlySelection = firstProjectOnlyProperty(session, project, CUCUMBER_SELECTION_PROPERTIES);
+            if (projectOnlySelection != null) {
+                return CompatibilityDecision.passThrough(
+                        "Cucumber selection property '" + projectOnlySelection + "' is defined only as a Maven project property; "
+                                + "ScenarioMesh cannot prove that native Surefire/Failsafe would expose it to the test JVM. "
+                                + "Pass it with -D or through the executor's systemPropertyVariables to enable safe takeover.");
+            }
+        }
+
+        Map<String, String> frameworkSystemProperties = invocationFrameworkSystemProperties(session);
 
         Optional<MavenExecutionPlan> executionPlan = MavenExecutionPlan.from(session);
         if (executionPlan.isEmpty()) {
@@ -88,6 +105,8 @@ final class ProjectCompatibilityDetector {
                             "Failsafe test-selection property '" + unsafe
                                     + "' is present and is not yet reproduced by ScenarioMesh discovery");
                 }
+                Map<String, String> systemProperties = new LinkedHashMap<>(analysis.systemProperties());
+                systemProperties.putAll(frameworkSystemProperties);
                 return CompatibilityDecision.takeOver(
                         frameworks.names(),
                         ExecutorKind.FAILSAFE,
@@ -96,7 +115,7 @@ final class ProjectCompatibilityDetector {
                         analysis.includeClassNameRegexes(),
                         analysis.excludeClassNameRegexes(),
                         analysis.jvmArgs(),
-                        analysis.systemProperties(),
+                        systemProperties,
                         analysis.testFailureIgnore());
             }
         }
@@ -126,7 +145,37 @@ final class ProjectCompatibilityDetector {
                 : surefireAnalysis.includeClassNameRegexes();
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                includes, List.of(), List.of(), Map.of(), false);
+                includes, List.of(), List.of(), frameworkSystemProperties, false);
+    }
+
+    private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
+        Map<String, String> values = new LinkedHashMap<>();
+        copyFrameworkProperties(session.getSystemProperties(), values);
+        copyFrameworkProperties(session.getUserProperties(), values);
+        return Map.copyOf(values);
+    }
+
+    private void copyFrameworkProperties(java.util.Properties source, Map<String, String> target) {
+        if (source == null) return;
+        source.forEach((rawKey, rawValue) -> {
+            String key = String.valueOf(rawKey);
+            if (FRAMEWORK_PROPERTY_PREFIXES.stream().anyMatch(key::startsWith)) {
+                target.put(key, String.valueOf(rawValue));
+            }
+        });
+    }
+
+    private String firstProjectOnlyProperty(MavenSession session, MavenProject project, Set<String> keys) {
+        for (String key : keys) {
+            String projectValue = project.getProperties().getProperty(key);
+            if (projectValue == null || projectValue.isBlank()) continue;
+            String userValue = session.getUserProperties().getProperty(key);
+            String systemValue = session.getSystemProperties().getProperty(key);
+            if ((userValue == null || userValue.isBlank()) && (systemValue == null || systemValue.isBlank())) {
+                return key;
+            }
+        }
+        return null;
     }
 
     private String resolveProperty(MavenSession session, MavenProject project, String key) {
