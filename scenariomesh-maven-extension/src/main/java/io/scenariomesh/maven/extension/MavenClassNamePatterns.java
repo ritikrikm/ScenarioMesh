@@ -10,10 +10,9 @@ import java.util.regex.PatternSyntaxException;
  * that ScenarioMesh can reproduce exactly.
  *
  * <p>The goal is deliberately not to emulate every Surefire feature. Patterns
- * are first classified. Supported patterns are translated with path-based
+ * are first classified. Supported patterns are translated with class-file path
  * semantics; unsupported constructs are rejected so the caller can pass the
- * build through to native Maven rather than silently select a different test
- * set.</p>
+ * build through to native Maven rather than silently select a different set.</p>
  */
 final class MavenClassNamePatterns {
     private MavenClassNamePatterns() {}
@@ -57,9 +56,13 @@ final class MavenClassNamePatterns {
     }
 
     private static CompiledPattern compile(String raw) {
-        boolean negated = raw.startsWith("!");
-        String body = negated ? raw.substring(1).trim() : raw.trim();
-        if (body.isEmpty()) throw unsupported(raw, "empty negated selector");
+        if (raw.startsWith("!")) {
+            // Surefire supports inline negation in several selection surfaces. ScenarioMesh
+            // currently carries include/exclude lists separately, so silently converting an
+            // inline negation would lose ordering/combination semantics.
+            throw unsupported(raw, "inline negation is not yet represented exactly; use native Maven pass-through");
+        }
+        String body = raw.trim();
 
         if (body.startsWith("%regex[") && body.endsWith("]")) {
             String expression = body.substring("%regex[".length(), body.length() - 1);
@@ -69,13 +72,13 @@ final class MavenClassNamePatterns {
                 throw unsupported(raw, "invalid %regex expression: " + exception.getDescription());
             }
             // Surefire/Failsafe regex selectors are evaluated against .class paths.
-            return new CompiledPattern(raw, negated, PatternKind.REGEX_CLASS_PATH, expression);
+            return new CompiledPattern(raw, PatternKind.REGEX_CLASS_PATH, expression);
         }
 
         if (body.contains("#")) throw unsupported(raw, "method selectors are not class-selection patterns");
         if (body.contains("%regex[") || body.contains("%regex")) throw unsupported(raw, "malformed %regex selector");
         if (body.indexOf('[') >= 0 || body.indexOf(']') >= 0 || body.indexOf('{') >= 0 || body.indexOf('}') >= 0) {
-            throw unsupported(raw, "character classes/braces are not part of ScenarioMesh's proven Maven glob subset");
+            throw unsupported(raw, "character classes/braces are outside ScenarioMesh's proven Maven glob subset");
         }
 
         String normalized = body.replace('\\', '/');
@@ -83,7 +86,7 @@ final class MavenClassNamePatterns {
         if (normalized.endsWith(".java")) normalized = normalized.substring(0, normalized.length() - 5) + ".class";
         else if (!normalized.endsWith(".class")) normalized = normalized + ".class";
 
-        return new CompiledPattern(raw, negated, PatternKind.GLOB_CLASS_PATH, globToRegex(normalized));
+        return new CompiledPattern(raw, PatternKind.GLOB_CLASS_PATH, globToRegex(normalized));
     }
 
     private static String globToRegex(String normalized) {
@@ -138,8 +141,7 @@ final class MavenClassNamePatterns {
     }
 
     enum PatternKind { GLOB_CLASS_PATH, REGEX_CLASS_PATH }
-
-    record CompiledPattern(String source, boolean negated, PatternKind kind, String regex) {}
+    record CompiledPattern(String source, PatternKind kind, String regex) {}
 
     record SelectionAnalysis(List<CompiledPattern> patterns, List<String> unsupportedReasons) {
         SelectionAnalysis {
