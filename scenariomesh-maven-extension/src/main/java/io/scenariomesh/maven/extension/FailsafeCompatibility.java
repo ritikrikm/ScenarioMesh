@@ -183,7 +183,9 @@ final class FailsafeCompatibility {
             String key = matcher.group(1);
             String replacement = stableLatePropertyResolver.apply(key);
             if (replacement == null) {
-                reasons.add(location + " uses late property replacement @{" + key + "}; its value is not fixed by stable Maven/process sources");
+                reasons.add(location + " uses late property replacement @{" + key + "}; "
+                        + "its value is not fixed by Maven user/system properties, the process environment, or Java system properties. "
+                        + "ScenarioMesh will pass through because an earlier lifecycle plugin may mutate it.");
                 return null;
             }
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
