@@ -94,6 +94,65 @@ class FailsafeCompatibilityTest {
     }
 
     @Test
+    void stableLateArgLinePropertyIsResolvedWithoutVendorSpecificLogic() {
+        Plugin plugin = pluginWithExecution();
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "argLine", "@{instrumentation.args} -Dwork.dir=${work.dir}");
+        plugin.setConfiguration(config);
+
+        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
+        FailsafeCompatibility.Analysis analysis = compatibility.analyze(
+                plugin,
+                participation,
+                key -> "work.dir".equals(key) ? "/tmp/work space" : null,
+                key -> "instrumentation.args".equals(key) ? "-javaagent:/tmp/agent.jar" : null);
+
+        assertTrue(analysis.supported(), analysis.reason());
+        assertEquals(List.of("-javaagent:/tmp/agent.jar", "-Dwork.dir=/tmp/work", "space"),
+                analysis.executionPlans().get(0).jvmArgs());
+    }
+
+    @Test
+    void mutableOrUnknownLateArgLinePropertyFailsClosed() {
+        Plugin plugin = pluginWithExecution();
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "argLine", "@{generated.agent.args} -Xmx512m");
+        plugin.setConfiguration(config);
+
+        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
+        FailsafeCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, participation, key -> null, key -> null);
+
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("earlier lifecycle plugin may mutate it"), analysis.reason());
+    }
+
+    @Test
+    void arbitraryDynamicSystemPropertiesArePreservedGenerically() {
+        Plugin plugin = pluginWithExecution();
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
+        add(properties, "remote.grid.config", "${grid.config.path}");
+        add(properties, "remote.grid.user", "${grid.user}");
+        add(properties, "custom.feature.flag", "enabled");
+        config.addChild(properties);
+        plugin.setConfiguration(config);
+
+        Map<String, String> values = Map.of(
+                "grid.config.path", "/tmp/grid.yml",
+                "grid.user", "ci-user");
+        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
+        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, values::get);
+
+        assertTrue(analysis.supported(), analysis.reason());
+        assertEquals(Map.of(
+                "remote.grid.config", "/tmp/grid.yml",
+                "remote.grid.user", "ci-user",
+                "custom.feature.flag", "enabled"),
+                analysis.executionPlans().get(0).systemProperties());
+    }
+
+    @Test
     void multipleFailsafeExecutionsRemainIndependentPlans() {
         Plugin plugin = pluginWithExecution();
         PluginExecution second = execution("regression-tests");
