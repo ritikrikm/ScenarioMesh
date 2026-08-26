@@ -57,7 +57,7 @@ final class ProjectCompatibilityDetector {
             String projectOnlySelection = firstProjectOnlyProperty(properties, CUCUMBER_SELECTION_PROPERTIES);
             if (projectOnlySelection != null) {
                 return CompatibilityDecision.passThrough(
-                        "Cucumber selection property '" + projectOnlySelection + "' is defined only as an effective Maven project property; "
+                        "Cucumber selection property '" + projectOnlySelection + "' is defined only as a Maven project property in the effective model; "
                                 + "ScenarioMesh cannot prove that native Surefire/Failsafe would expose it to the test JVM. "
                                 + "Pass it with -D or through the executor's systemPropertyVariables to enable safe takeover.");
             }
