@@ -22,9 +22,7 @@ import java.util.regex.Pattern;
  */
 final class FailsafeCompatibility {
     private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of(
-            "**/IT*.java",
-            "**/*IT.java",
-            "**/*ITCase.java");
+            "**/IT*.java", "**/*IT.java", "**/*ITCase.java");
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
     private static final Pattern LATE_PROPERTY_REFERENCE = Pattern.compile("@\\{([^}]+)}");
 
@@ -38,10 +36,14 @@ final class FailsafeCompatibility {
                      MavenExecutionPlan.PluginParticipation participation,
                      Function<String, String> propertyResolver,
                      Function<String, String> stableLatePropertyResolver) {
+        if (plugin.getDependencies() != null && !plugin.getDependencies().isEmpty()) {
+            return Analysis.unsupported(
+                    "maven-failsafe-plugin declares custom provider/plugin dependencies; provider semantics are not yet reproducible");
+        }
+
         List<PluginExecution> testExecutions = participation.activeExecutions().stream()
                 .filter(this::containsIntegrationTestGoal)
                 .toList();
-
         if (testExecutions.isEmpty()) {
             return Analysis.unsupported(
                     "Failsafe participates in the invocation but no active integration-test goal could be isolated");
@@ -52,20 +54,11 @@ final class FailsafeCompatibility {
         for (PluginExecution execution : testExecutions) {
             List<String> reasons = new ArrayList<>();
             EffectiveSettings settings = new EffectiveSettings();
-            inspectConfiguration(
-                    plugin.getConfiguration(),
-                    "maven-failsafe-plugin configuration",
-                    settings,
-                    reasons,
-                    propertyResolver,
-                    stableLatePropertyResolver);
-            inspectConfiguration(
-                    execution.getConfiguration(),
+            inspectConfiguration(plugin.getConfiguration(), "maven-failsafe-plugin configuration",
+                    settings, reasons, propertyResolver, stableLatePropertyResolver);
+            inspectConfiguration(execution.getConfiguration(),
                     "maven-failsafe-plugin execution '" + executionId(execution) + "'",
-                    settings,
-                    reasons,
-                    propertyResolver,
-                    stableLatePropertyResolver);
+                    settings, reasons, propertyResolver, stableLatePropertyResolver);
 
             if (settings.rerunFailingTestsCount > 0) {
                 reasons.add("rerunFailingTestsCount resolves to " + settings.rerunFailingTestsCount
@@ -85,12 +78,8 @@ final class FailsafeCompatibility {
                     : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
             List<String> excludes = MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
             plans.add(new ExecutionPlan(
-                    executionId(execution),
-                    false,
-                    includes,
-                    excludes,
-                    List.copyOf(settings.jvmArgs),
-                    Map.copyOf(settings.systemProperties),
+                    executionId(execution), false, includes, excludes,
+                    List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties),
                     settings.testFailureIgnore));
         }
 
@@ -121,34 +110,54 @@ final class FailsafeCompatibility {
         if (!(raw instanceof Xpp3Dom configuration)) return;
         for (Xpp3Dom child : configuration.getChildren()) {
             if (!meaningful(child)) continue;
-            switch (child.getName()) {
-                case "includes" -> readPatternList(child, settings.includes, location, reasons, propertyResolver);
-                case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
-                case "skip", "skipITs", "skipTests" -> {
-                    Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                    if (Boolean.TRUE.equals(value)) settings.explicitlySkipped = true;
+            String name = child.getName();
+            ExecutorConfigurationSemantics.Classification classification =
+                    ExecutorConfigurationSemantics.forFailsafe(name);
+
+            switch (classification.kind()) {
+                case REPLACED_BY_SCENARIOMESH -> {
+                    // Failsafe concurrency is intentionally replaced by the ScenarioMesh worker pool.
                 }
-                case "useModulePath" -> {
-                    Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                    if (value != null && !Boolean.FALSE.equals(value)) reasons.add(location + " uses <useModulePath> with unsupported semantics");
-                }
-                case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver, stableLatePropertyResolver);
-                case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
-                case "testFailureIgnore" -> {
-                    Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                    if (value != null) settings.testFailureIgnore = value;
-                }
-                case "rerunFailingTestsCount" -> {
-                    Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
-                    if (value != null) settings.rerunFailingTestsCount = value;
-                }
-                case "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
-                        "threadCountMethods", "threadCountSuites", "perCoreThreadCount", "useUnlimitedThreads",
-                        "parallelOptimized" -> {
-                    // ScenarioMesh replaces Failsafe's own concurrency implementation.
-                }
-                default -> reasons.add(location + " uses unsupported configuration <" + child.getName() + ">");
+                case REQUIRES_CAPABILITY -> reasons.add(location + " uses <" + name
+                        + "> which requires ScenarioMesh capability '" + classification.capability() + "'");
+                case UNKNOWN -> reasons.add(location + " uses unsupported configuration <" + name + ">");
+                case PRESERVED -> preserveSetting(child, location, settings, reasons,
+                        propertyResolver, stableLatePropertyResolver);
             }
+        }
+    }
+
+    private void preserveSetting(Xpp3Dom child,
+                                 String location,
+                                 EffectiveSettings settings,
+                                 List<String> reasons,
+                                 Function<String, String> propertyResolver,
+                                 Function<String, String> stableLatePropertyResolver) {
+        switch (child.getName()) {
+            case "includes" -> readPatternList(child, settings.includes, location, reasons, propertyResolver);
+            case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
+            case "skip", "skipITs", "skipTests" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (Boolean.TRUE.equals(value)) settings.explicitlySkipped = true;
+            }
+            case "useModulePath" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null && !Boolean.FALSE.equals(value)) {
+                    reasons.add(location + " uses <useModulePath> with unsupported semantics");
+                }
+            }
+            case "argLine" -> readArgLine(child, location, settings, reasons,
+                    propertyResolver, stableLatePropertyResolver);
+            case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
+            case "testFailureIgnore" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null) settings.testFailureIgnore = value;
+            }
+            case "rerunFailingTestsCount" -> {
+                Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
+                if (value != null) settings.rerunFailingTestsCount = value;
+            }
+            default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
     }
 
@@ -167,10 +176,8 @@ final class FailsafeCompatibility {
             settings.jvmArgs.clear();
             return;
         }
-
         resolved = resolveLate(resolved, location + " <argLine>", reasons, stableLatePropertyResolver);
         if (resolved == null) return;
-
         try {
             String[] translated = CommandLineUtils.translateCommandline(resolved);
             settings.jvmArgs.clear();
@@ -228,8 +235,17 @@ final class FailsafeCompatibility {
                 continue;
             }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
-            if (value == null || value.isBlank()) reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
-            else destination.add(value);
+            if (value == null || value.isBlank()) {
+                reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
+            } else {
+                try {
+                    MavenClassNamePatterns.toRegex(value);
+                    destination.add(value);
+                } catch (IllegalArgumentException unsupportedPattern) {
+                    reasons.add(location + " uses unsupported Maven class selection pattern '" + value
+                            + "': " + unsupportedPattern.getMessage());
+                }
+            }
         }
     }
 
@@ -323,7 +339,6 @@ final class FailsafeCompatibility {
             jvmArgs = List.copyOf(jvmArgs == null ? List.of() : jvmArgs);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
         }
-
         static ExecutionPlan skipped(String executionId) {
             return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), Map.of(), false);
         }
@@ -336,7 +351,6 @@ final class FailsafeCompatibility {
         Analysis {
             executionPlans = List.copyOf(executionPlans == null ? List.of() : executionPlans);
         }
-
         static Analysis unsupported(String reason) { return new Analysis(false, false, List.of(), reason); }
     }
 
