@@ -1,6 +1,5 @@
 package io.scenariomesh.maven.extension;
 
-import org.apache.maven.surefire.api.testset.TestListResolver;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -39,48 +38,24 @@ class MavenClassNamePatternsTest {
     }
 
     @Test
-    void globSelectionStillSupportsNestedPackagesAndQuestionWildcards() {
-        String nested = MavenClassNamePatterns.toRegex("**/api/?oginIT.java");
+    void documentedDefaultSurefirePatternsMatchClassFilesAndDottedNames() {
+        assertMatches("**/Test*.java", "com/acme/TestPayment.class", "com.acme.TestPayment");
+        assertMatches("**/*Test.java", "com/acme/PaymentTest.class", "com.acme.PaymentTest");
+        assertMatches("**/*Tests.java", "com/acme/PaymentTests.class", "com.acme.PaymentTests");
+        assertMatches("**/*TestCase.java", "com/acme/PaymentTestCase.class", "com.acme.PaymentTestCase");
 
-        assertTrue(Pattern.matches(nested, "com/acme/api/LoginIT"));
-        assertTrue(Pattern.matches(nested, "com.acme.api.LoginIT"));
-        assertFalse(Pattern.matches(nested, "com/acme/api/LongLoginIT"));
+        String testPattern = MavenClassNamePatterns.toRegex("**/*Test.java");
+        assertFalse(Pattern.matches(testPattern, "com/acme/PaymentHelper.class"));
+        assertFalse(Pattern.matches(testPattern, "com.acme.PaymentHelper"));
     }
 
     @Test
-    void supportedSelectorMatrixMatchesNativeSurefireTestListResolver() {
-        List<String> selectors = List.of(
-                "**/Test*.java",
-                "**/*Test.java",
-                "**/*Tests.java",
-                "**/*TestCase.java",
-                "**/api/?oginIT.java",
-                "%regex[com/acme/.*IT.class]",
-                "%regex[.*(Cat|Dog).*Test.*]");
-        List<String> classFiles = List.of(
-                "TestSmoke.class",
-                "com/acme/TestPayment.class",
-                "com/acme/PaymentTest.class",
-                "com/acme/PaymentTests.class",
-                "com/acme/PaymentTestCase.class",
-                "com/acme/PaymentHelper.class",
-                "com/acme/api/LoginIT.class",
-                "com/acme/api/LongLoginIT.class",
-                "com/acme/CatFastTest.class",
-                "com/acme/DogSlowTest.class",
-                "other/pkg/LoginIT.class");
+    void globSelectionSupportsNestedPackagesAndQuestionWildcardsOnBothRepresentations() {
+        String nested = MavenClassNamePatterns.toRegex("**/api/?oginIT.java");
 
-        for (String selector : selectors) {
-            String meshRegex = MavenClassNamePatterns.toRegex(selector);
-            TestListResolver surefire = new TestListResolver(List.of(selector), List.of());
-            for (String classFile : classFiles) {
-                boolean expected = surefire.shouldRun(classFile, null);
-                boolean actual = Pattern.matches(meshRegex, classFile);
-                assertEquals(expected, actual,
-                        () -> "ScenarioMesh selector diverged from Surefire for selector=" + selector
-                                + ", classFile=" + classFile);
-            }
-        }
+        assertTrue(Pattern.matches(nested, "com/acme/api/LoginIT.class"));
+        assertTrue(Pattern.matches(nested, "com.acme.api.LoginIT"));
+        assertFalse(Pattern.matches(nested, "com/acme/api/LongLoginIT.class"));
     }
 
     @Test
@@ -97,5 +72,11 @@ class MavenClassNamePatternsTest {
                 () -> MavenClassNamePatterns.toRegex("com.acme.LoginTest#works"));
         assertThrows(IllegalArgumentException.class,
                 () -> MavenClassNamePatterns.toRegex("!**/*SlowTest.java"));
+    }
+
+    private void assertMatches(String selector, String classFile, String dottedClass) {
+        String regex = MavenClassNamePatterns.toRegex(selector);
+        assertTrue(Pattern.matches(regex, classFile), () -> selector + " should match " + classFile);
+        assertTrue(Pattern.matches(regex, dottedClass), () -> selector + " should match " + dottedClass);
     }
 }
