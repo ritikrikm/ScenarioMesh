@@ -1,8 +1,10 @@
 package io.scenariomesh.workerruntime;
 
+import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.SelectedTestClasses;
+import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.UniqueId;
-import org.junit.platform.engine.discovery.ClassNameFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.TestPlan;
@@ -18,20 +20,19 @@ import java.util.List;
 import java.util.ServiceLoader;
 import java.util.Set;
 
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
 
-/**
- * Runtime inventory of the test backends that are actually executable from the target test classpath.
- *
- * <p>Dependency names are intentionally not the source of truth here. For JUnit Platform repositories
- * we ask the Platform to load the target's {@link TestEngine}s and discover a real {@link TestPlan}.
- * Unknown engines are detected, but never assumed to be safe for ScenarioMesh leaf isolation.</p>
- */
+/** Runtime inventory of executable test backends and their proven ScenarioMesh ownership granularity. */
 public final class ExecutionBackendInventory {
-    private static final Set<String> OWNABLE_JUNIT_PLATFORM_ENGINES = Set.of(
-            "junit-jupiter",
-            "cucumber",
-            "junit-platform-suite");
+    /*
+     * P0 deliberately starts empty. JUnit Jupiter has class/container lifecycle,
+     * Cucumber has run-scoped global hooks, and the Suite engine has suite-scoped
+     * lifecycle. Detection alone is therefore insufficient proof for one-leaf-per-JVM takeover.
+     */
+    private static final Set<String> PROVEN_LEAF_OWNABLE_ENGINES = Set.of();
+    private static final Set<String> KNOWN_CONTAINER_OR_RUN_SCOPED_ENGINES = Set.of(
+            "junit-jupiter", "cucumber", "junit-platform-suite");
 
     private ExecutionBackendInventory() {}
 
@@ -57,13 +58,20 @@ public final class ExecutionBackendInventory {
                     .addTestEngines(engines.toArray(TestEngine[]::new))
                     .build();
             Launcher launcher = LauncherFactory.create(config);
-            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request()
-                    .selectors(selectClasspathRoots(new HashSet<>(testRoots)));
-            if (includeClassNameRegexes != null && !includeClassNameRegexes.isEmpty()) {
-                request.filters(ClassNameFilter.includeClassNamePatterns(includeClassNameRegexes.toArray(String[]::new)));
-            }
-            if (excludeClassNameRegexes != null && !excludeClassNameRegexes.isEmpty()) {
-                request.filters(ClassNameFilter.excludeClassNamePatterns(excludeClassNameRegexes.toArray(String[]::new)));
+
+            DiscoverySelection selection = new DiscoverySelection(includeClassNameRegexes, excludeClassNameRegexes);
+            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request();
+            if (selection.includeClassNameRegexes().isEmpty() && selection.excludeClassNameRegexes().isEmpty()) {
+                request.selectors(selectClasspathRoots(new HashSet<>(testRoots)));
+            } else {
+                List<String> selectedClasses = SelectedTestClasses.scan(testRoots, selection);
+                if (selectedClasses.isEmpty()) {
+                    return new Inventory(Ownership.NOT_DETECTED, List.of(), "Maven class selection resolved to zero compiled test classes");
+                }
+                List<DiscoverySelector> selectors = selectedClasses.stream()
+                        .map(className -> (DiscoverySelector) selectClass(className))
+                        .toList();
+                request.selectors(selectors);
             }
 
             TestPlan plan = launcher.discover(request.build());
@@ -77,17 +85,23 @@ public final class ExecutionBackendInventory {
                         .filter(TestIdentifier::isTest)
                         .filter(identifier -> plan.getChildren(identifier).isEmpty())
                         .count();
-                boolean ownable = OWNABLE_JUNIT_PLATFORM_ENGINES.contains(engineId);
-                BackendOwnership backendOwnership = ownable
+                boolean leafOwnable = PROVEN_LEAF_OWNABLE_ENGINES.contains(engineId);
+                ExecutionGranularity granularity = leafOwnable
+                        ? ExecutionGranularity.LEAF
+                        : KNOWN_CONTAINER_OR_RUN_SCOPED_ENGINES.contains(engineId)
+                            ? ExecutionGranularity.CONTAINER_OR_RUN
+                            : ExecutionGranularity.UNKNOWN;
+                BackendOwnership backendOwnership = leafOwnable
                         ? BackendOwnership.OWNABLE
                         : BackendOwnership.DETECTED_NOT_OWNABLE;
-                Set<Capability> capabilities = ownable
+                Set<Capability> capabilities = leafOwnable
                         ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
                                 Capability.ISOLATED_LEAF_EXECUTION, Capability.FILTER_EQUIVALENCE)
                         : Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY);
-                backends.add(new Backend(engineId, "junit-platform", executableLeaves, backendOwnership, capabilities));
+                backends.add(new Backend(engineId, "junit-platform", executableLeaves,
+                        backendOwnership, granularity, capabilities));
                 if (executableLeaves > 0) {
-                    if (ownable) hasOwnableExecutable = true;
+                    if (leafOwnable) hasOwnableExecutable = true;
                     else hasUnownedExecutable = true;
                 }
             }
@@ -96,16 +110,16 @@ public final class ExecutionBackendInventory {
                 return new Inventory(
                         Ownership.DETECTED_NOT_OWNABLE,
                         List.copyOf(backends),
-                        "one or more JUnit Platform engines expose executable leaves but ScenarioMesh has no proven isolated-execution contract for them");
+                        "one or more engines expose executable leaves but independent leaf-JVM execution has not been proven equivalent to their native container/run lifecycle");
             }
             if (hasOwnableExecutable) {
-                return new Inventory(Ownership.OWNABLE, List.copyOf(backends), "all executable JUnit Platform engines are owned by proven ScenarioMesh capabilities");
+                return new Inventory(Ownership.OWNABLE, List.copyOf(backends),
+                        "all executable JUnit Platform engines have a proven ScenarioMesh leaf-execution contract");
             }
-            return new Inventory(Ownership.NOT_DETECTED, List.copyOf(backends), "JUnit Platform engines were loaded but none exposed executable leaves for this selection");
+            return new Inventory(Ownership.NOT_DETECTED, List.copyOf(backends),
+                    "JUnit Platform engines were loaded but none exposed executable leaves for this Maven selection");
         } catch (RuntimeException | LinkageError exception) {
-            return new Inventory(
-                    Ownership.DETECTED_NOT_OWNABLE,
-                    List.of(),
+            return new Inventory(Ownership.DETECTED_NOT_OWNABLE, List.of(),
                     "JUnit Platform backend probing failed: " + message(exception));
         } finally {
             Thread.currentThread().setContextClassLoader(previous);
@@ -117,9 +131,7 @@ public final class ExecutionBackendInventory {
         Set<String> ids = new LinkedHashSet<>();
         try {
             for (TestEngine engine : ServiceLoader.load(TestEngine.class, classLoader)) {
-                if (!ids.add(engine.getId())) {
-                    throw new IllegalStateException("duplicate JUnit Platform engine id '" + engine.getId() + "'");
-                }
+                if (!ids.add(engine.getId())) throw new IllegalStateException("duplicate JUnit Platform engine id '" + engine.getId() + "'");
                 engines.add(engine);
             }
             return List.copyOf(engines);
@@ -141,16 +153,9 @@ public final class ExecutionBackendInventory {
         return value == null || value.isBlank() ? throwable.getClass().getName() : value;
     }
 
-    public enum Ownership {
-        OWNABLE,
-        DETECTED_NOT_OWNABLE,
-        NOT_DETECTED
-    }
-
-    public enum BackendOwnership {
-        OWNABLE,
-        DETECTED_NOT_OWNABLE
-    }
+    public enum Ownership { OWNABLE, DETECTED_NOT_OWNABLE, NOT_DETECTED }
+    public enum BackendOwnership { OWNABLE, DETECTED_NOT_OWNABLE }
+    public enum ExecutionGranularity { LEAF, CLASS, CONTAINER_OR_RUN, UNKNOWN }
 
     public enum Capability {
         DISCOVERY,
@@ -166,6 +171,7 @@ public final class ExecutionBackendInventory {
             String provider,
             long executableLeaves,
             BackendOwnership ownership,
+            ExecutionGranularity granularity,
             Set<Capability> capabilities) {
         public Backend {
             capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);
@@ -184,7 +190,8 @@ public final class ExecutionBackendInventory {
                 Backend backend = backends.get(i);
                 if (i > 0) value.append(", ");
                 value.append(backend.id()).append(":leaves=").append(backend.executableLeaves())
-                        .append(":").append(backend.ownership());
+                        .append(":").append(backend.ownership())
+                        .append(":granularity=").append(backend.granularity());
             }
             return value.append("] (").append(reason).append(')').toString();
         }
