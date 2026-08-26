@@ -6,6 +6,7 @@ import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -118,12 +119,36 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void rejectsDynamicSkipValueBecauseEquivalenceCannotBeProved() {
+    void resolvesDynamicSkipFromEffectiveMavenProperties() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
-        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        Map<String, String> values = Map.of("company.skip.tests", "false");
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, values::get);
+
         assertFalse(analysis.explicitlySkipsTests());
-        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("non-literal <skipTests>")));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+    }
+
+    @Test
+    void resolvedDynamicSkipTrueRemainsPassThroughSignal() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
+
+        Map<String, String> values = Map.of("company.skip.tests", "true");
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, values::get);
+
+        assertTrue(analysis.explicitlySkipsTests());
+    }
+
+    @Test
+    void unresolvedDynamicSkipStillFailsClosed() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, ignored -> null);
+
+        assertFalse(analysis.explicitlySkipsTests());
+        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("unresolved Maven property")));
     }
 
     @Test
