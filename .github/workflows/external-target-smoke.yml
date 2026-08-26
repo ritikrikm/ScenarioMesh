@@ -33,6 +33,8 @@ jobs:
           mkdir -p target
           set -o pipefail
           mvn -B test -Dfixture.browser.enabled=false | tee target/scenariomesh-maven.log
+          # The controlled validator accepts both the legacy takeover marker and
+          # the runtime-ownership-preflight marker introduced by ScenarioMesh.
           python3 scripts/validate_execution.py 7
           test -f target/scenariomesh/report.html
           test -f target/scenariomesh/summary.json
