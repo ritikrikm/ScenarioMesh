@@ -16,6 +16,28 @@ class DownstreamLifecycleCompatibilityTest {
     private final DownstreamLifecycleCompatibility compatibility = new DownstreamLifecycleCompatibility();
 
     @Test
+    void unknownIntegrationTestPeerFailsClosedBecauseSamePhaseOrderMayMatter() {
+        MavenProject project = project();
+        project.getBuild().addPlugin(plugin("com.example", "integration-side-effect", "integration-test"));
+
+        var analysis = compatibility.analyze(project, ProjectCompatibilityDetector.ExecutorKind.FAILSAFE);
+
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("integration-test"), analysis.reason());
+        assertTrue(analysis.reason().contains("same-phase ordering"), analysis.reason());
+    }
+
+    @Test
+    void preIntegrationSetupRemainsAllowedBecauseMavenStillExecutesItNatively() {
+        MavenProject project = project();
+        project.getBuild().addPlugin(plugin("com.example", "environment-setup", "pre-integration-test"));
+
+        var analysis = compatibility.analyze(project, ProjectCompatibilityDetector.ExecutorKind.FAILSAFE);
+
+        assertTrue(analysis.supported(), analysis.reason());
+    }
+
+    @Test
     void unknownPostIntegrationConsumerFailsClosedForFailsafeTakeover() {
         MavenProject project = project();
         project.getBuild().addPlugin(plugin("com.example", "artifact-consumer", "post-integration-test"));
