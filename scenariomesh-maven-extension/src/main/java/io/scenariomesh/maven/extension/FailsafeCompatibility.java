@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 final class FailsafeCompatibility {
     private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of(
             "**/IT*.java", "**/*IT.java", "**/*ITCase.java");
+    private static final List<String> DEFAULT_EXCLUDE_PATTERNS = List.of("**/*$*");
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
     private static final Pattern LATE_PROPERTY_REFERENCE = Pattern.compile("@\\{([^}]+)}");
 
@@ -76,7 +77,9 @@ final class FailsafeCompatibility {
             List<String> includes = settings.includes.isEmpty()
                     ? MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS)
                     : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
-            List<String> excludes = MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
+            List<String> excludes = settings.excludes.isEmpty()
+                    ? MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS)
+                    : MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
             plans.add(new ExecutionPlan(
                     executionId(execution), false, includes, excludes,
                     List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties),
@@ -115,9 +118,7 @@ final class FailsafeCompatibility {
                     ExecutorConfigurationSemantics.forFailsafe(name);
 
             switch (classification.kind()) {
-                case REPLACED_BY_SCENARIOMESH -> {
-                    // Failsafe concurrency is intentionally replaced by the ScenarioMesh worker pool.
-                }
+                case REPLACED_BY_SCENARIOMESH -> { }
                 case REQUIRES_CAPABILITY -> reasons.add(location + " uses <" + name
                         + "> which requires ScenarioMesh capability '" + classification.capability() + "'");
                 case UNKNOWN -> reasons.add(location + " uses unsupported configuration <" + name + ">");
@@ -142,12 +143,9 @@ final class FailsafeCompatibility {
             }
             case "useModulePath" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                if (value != null && !Boolean.FALSE.equals(value)) {
-                    reasons.add(location + " uses <useModulePath> with unsupported semantics");
-                }
+                if (value != null && !Boolean.FALSE.equals(value)) reasons.add(location + " uses <useModulePath> with unsupported semantics");
             }
-            case "argLine" -> readArgLine(child, location, settings, reasons,
-                    propertyResolver, stableLatePropertyResolver);
+            case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver, stableLatePropertyResolver);
             case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
             case "testFailureIgnore" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
@@ -161,35 +159,23 @@ final class FailsafeCompatibility {
         }
     }
 
-    private void readArgLine(Xpp3Dom node,
-                             String location,
-                             EffectiveSettings settings,
-                             List<String> reasons,
+    private void readArgLine(Xpp3Dom node, String location, EffectiveSettings settings, List<String> reasons,
                              Function<String, String> propertyResolver,
                              Function<String, String> stableLatePropertyResolver) {
-        if (node.getChildCount() > 0) {
-            reasons.add(location + " contains a structured <argLine> that cannot be reproduced safely");
-            return;
-        }
+        if (node.getChildCount() > 0) { reasons.add(location + " contains a structured <argLine> that cannot be reproduced safely"); return; }
         String resolved = resolve(node.getValue(), location + " <argLine>", reasons, propertyResolver);
-        if (resolved == null || resolved.isBlank()) {
-            settings.jvmArgs.clear();
-            return;
-        }
+        if (resolved == null || resolved.isBlank()) { settings.jvmArgs.clear(); return; }
         resolved = resolveLate(resolved, location + " <argLine>", reasons, stableLatePropertyResolver);
         if (resolved == null) return;
         try {
-            String[] translated = CommandLineUtils.translateCommandline(resolved);
             settings.jvmArgs.clear();
-            settings.jvmArgs.addAll(List.of(translated));
+            settings.jvmArgs.addAll(List.of(CommandLineUtils.translateCommandline(resolved)));
         } catch (Exception exception) {
             reasons.add(location + " contains an <argLine> that cannot be tokenized safely: " + exception.getMessage());
         }
     }
 
-    private String resolveLate(String value,
-                               String location,
-                               List<String> reasons,
+    private String resolveLate(String value, String location, List<String> reasons,
                                Function<String, String> stableLatePropertyResolver) {
         Matcher matcher = LATE_PROPERTY_REFERENCE.matcher(value);
         StringBuffer resolved = new StringBuffer();
@@ -197,9 +183,7 @@ final class FailsafeCompatibility {
             String key = matcher.group(1);
             String replacement = stableLatePropertyResolver.apply(key);
             if (replacement == null) {
-                reasons.add(location + " uses late property replacement @{" + key + "}; "
-                        + "its value is not fixed by Maven user/system properties, the process environment, or Java system properties. "
-                        + "ScenarioMesh will pass through because an earlier lifecycle plugin may mutate it.");
+                reasons.add(location + " uses late property replacement @{" + key + "}; its value is not fixed by stable Maven/process sources");
                 return null;
             }
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
@@ -208,89 +192,57 @@ final class FailsafeCompatibility {
         return resolved.toString();
     }
 
-    private void readSystemProperties(Xpp3Dom parent,
-                                      String location,
-                                      EffectiveSettings settings,
-                                      List<String> reasons,
-                                      Function<String, String> propertyResolver) {
+    private void readSystemProperties(Xpp3Dom parent, String location, EffectiveSettings settings,
+                                      List<String> reasons, Function<String, String> propertyResolver) {
         for (Xpp3Dom property : parent.getChildren()) {
-            if (property.getChildCount() > 0) {
-                reasons.add(location + " contains nested system property '" + property.getName() + "'");
-                continue;
-            }
-            String value = resolve(property.getValue(),
-                    location + " system property '" + property.getName() + "'", reasons, propertyResolver);
+            if (property.getChildCount() > 0) { reasons.add(location + " contains nested system property '" + property.getName() + "'"); continue; }
+            String value = resolve(property.getValue(), location + " system property '" + property.getName() + "'", reasons, propertyResolver);
             if (value != null) settings.systemProperties.put(property.getName(), value);
         }
     }
 
-    private void readPatternList(Xpp3Dom parent,
-                                 Set<String> destination,
-                                 String location,
-                                 List<String> reasons,
-                                 Function<String, String> propertyResolver) {
+    private void readPatternList(Xpp3Dom parent, Set<String> destination, String location,
+                                 List<String> reasons, Function<String, String> propertyResolver) {
         for (Xpp3Dom item : parent.getChildren()) {
             if (!"include".equals(item.getName()) && !"exclude".equals(item.getName())) {
-                reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">");
-                continue;
+                reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">"); continue;
             }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
-            if (value == null || value.isBlank()) {
-                reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
-            } else {
-                try {
-                    MavenClassNamePatterns.toRegex(value);
-                    destination.add(value);
-                } catch (IllegalArgumentException unsupportedPattern) {
-                    reasons.add(location + " uses unsupported Maven class selection pattern '" + value
-                            + "': " + unsupportedPattern.getMessage());
+            if (value == null || value.isBlank()) reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
+            else {
+                try { MavenClassNamePatterns.toRegex(value); destination.add(value); }
+                catch (IllegalArgumentException unsupportedPattern) {
+                    reasons.add(location + " uses unsupported Maven class selection pattern '" + value + "': " + unsupportedPattern.getMessage());
                 }
             }
         }
     }
 
-    private Boolean resolvedBoolean(Xpp3Dom node,
-                                    String location,
-                                    List<String> reasons,
+    private Boolean resolvedBoolean(Xpp3Dom node, String location, List<String> reasons,
                                     Function<String, String> propertyResolver) {
-        if (node.getChildCount() > 0) {
-            reasons.add(location + " uses structured <" + node.getName() + "> and boolean semantics cannot be proven");
-            return null;
-        }
+        if (node.getChildCount() > 0) { reasons.add(location + " uses structured <" + node.getName() + "> and boolean semantics cannot be proven"); return null; }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null || value.isBlank()) return Boolean.FALSE;
         if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
         if ("false".equalsIgnoreCase(value)) return Boolean.FALSE;
-        reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'");
-        return null;
+        reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'"); return null;
     }
 
-    private Integer resolvedNonNegativeInteger(Xpp3Dom node,
-                                               String location,
-                                               List<String> reasons,
+    private Integer resolvedNonNegativeInteger(Xpp3Dom node, String location, List<String> reasons,
                                                Function<String, String> propertyResolver) {
-        if (node.getChildCount() > 0) {
-            reasons.add(location + " uses structured <" + node.getName() + "> and integer semantics cannot be proven");
-            return null;
-        }
+        if (node.getChildCount() > 0) { reasons.add(location + " uses structured <" + node.getName() + "> and integer semantics cannot be proven"); return null; }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null || value.isBlank()) return 0;
         try {
             int parsed = Integer.parseInt(value.trim());
-            if (parsed < 0) {
-                reasons.add(location + " uses negative <" + node.getName() + "> value '" + value + "'");
-                return null;
-            }
+            if (parsed < 0) { reasons.add(location + " uses negative <" + node.getName() + "> value '" + value + "'"); return null; }
             return parsed;
         } catch (NumberFormatException exception) {
-            reasons.add(location + " uses non-integer <" + node.getName() + "> value '" + value + "'");
-            return null;
+            reasons.add(location + " uses non-integer <" + node.getName() + "> value '" + value + "'"); return null;
         }
     }
 
-    private String resolve(String raw,
-                           String location,
-                           List<String> reasons,
+    private String resolve(String raw, String location, List<String> reasons,
                            Function<String, String> propertyResolver) {
         String value = trim(raw);
         if (value == null) return "";
@@ -298,10 +250,7 @@ final class FailsafeCompatibility {
         StringBuffer resolved = new StringBuffer();
         while (matcher.find()) {
             String replacement = propertyResolver.apply(matcher.group(1));
-            if (replacement == null) {
-                reasons.add(location + " references unresolved Maven property ${" + matcher.group(1) + "}");
-                return null;
-            }
+            if (replacement == null) { reasons.add(location + " references unresolved Maven property ${" + matcher.group(1) + "}"); return null; }
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(resolved);
@@ -309,48 +258,24 @@ final class FailsafeCompatibility {
     }
 
     static String mavenClassPatternToRegex(String pattern) { return MavenClassNamePatterns.toRegex(pattern); }
+    private boolean meaningful(Xpp3Dom node) { return trim(node.getValue()) != null || node.getChildCount() > 0 || (node.getAttributeNames() != null && node.getAttributeNames().length > 0); }
+    private String executionId(PluginExecution execution) { String id = trim(execution.getId()); return id == null ? "<unnamed>" : id; }
+    private static String trim(String value) { if (value == null) return null; String t = value.trim(); return t.isEmpty() ? null : t; }
 
-    private boolean meaningful(Xpp3Dom node) {
-        return trim(node.getValue()) != null || node.getChildCount() > 0
-                || (node.getAttributeNames() != null && node.getAttributeNames().length > 0);
-    }
-
-    private String executionId(PluginExecution execution) {
-        String id = trim(execution.getId());
-        return id == null ? "<unnamed>" : id;
-    }
-
-    private static String trim(String value) {
-        if (value == null) return null;
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    record ExecutionPlan(String executionId,
-                         boolean explicitlySkipped,
-                         List<String> includeClassNameRegexes,
-                         List<String> excludeClassNameRegexes,
-                         List<String> jvmArgs,
-                         Map<String, String> systemProperties,
-                         boolean testFailureIgnore) {
+    record ExecutionPlan(String executionId, boolean explicitlySkipped, List<String> includeClassNameRegexes,
+                         List<String> excludeClassNameRegexes, List<String> jvmArgs,
+                         Map<String, String> systemProperties, boolean testFailureIgnore) {
         ExecutionPlan {
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
             jvmArgs = List.copyOf(jvmArgs == null ? List.of() : jvmArgs);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
         }
-        static ExecutionPlan skipped(String executionId) {
-            return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), Map.of(), false);
-        }
+        static ExecutionPlan skipped(String executionId) { return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), Map.of(), false); }
     }
 
-    record Analysis(boolean supported,
-                    boolean explicitlySkipped,
-                    List<ExecutionPlan> executionPlans,
-                    String reason) {
-        Analysis {
-            executionPlans = List.copyOf(executionPlans == null ? List.of() : executionPlans);
-        }
+    record Analysis(boolean supported, boolean explicitlySkipped, List<ExecutionPlan> executionPlans, String reason) {
+        Analysis { executionPlans = List.copyOf(executionPlans == null ? List.of() : executionPlans); }
         static Analysis unsupported(String reason) { return new Analysis(false, false, List.of(), reason); }
     }
 
