@@ -25,6 +25,7 @@ final class SurefireCompatibility {
             "**/*Test.java",
             "**/*Tests.java",
             "**/*TestCase.java");
+    private static final List<String> DEFAULT_EXCLUDE_PATTERNS = List.of("**/*$*");
 
     Analysis analyze(Plugin surefire) {
         return analyze(surefire, ignored -> null);
@@ -72,11 +73,16 @@ final class SurefireCompatibility {
         return new Analysis(
                 explicitlySkipsTests,
                 List.copyOf(reasons),
-                defaultIncludeClassNameRegexes());
+                defaultIncludeClassNameRegexes(),
+                defaultExcludeClassNameRegexes());
     }
 
     static List<String> defaultIncludeClassNameRegexes() {
         return MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS);
+    }
+
+    static List<String> defaultExcludeClassNameRegexes() {
+        return MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS);
     }
 
     private boolean isStandardLifecycleExecution(PluginExecution execution) {
@@ -105,9 +111,7 @@ final class SurefireCompatibility {
 
             switch (classification.kind()) {
                 case REPLACED_BY_SCENARIOMESH -> {
-                    // forkCount/reuseForks/parallel/thread settings control Surefire's
-                    // concurrency implementation. ScenarioMesh intentionally replaces
-                    // that layer with its worker pool while preserving the selected tests.
+                    // Surefire's concurrency layer is replaced by ScenarioMesh workers.
                 }
                 case REQUIRES_CAPABILITY -> reasons.add(location + " uses <" + name
                         + "> which requires ScenarioMesh capability '" + classification.capability() + "'");
@@ -196,11 +200,14 @@ final class SurefireCompatibility {
     record Analysis(
             boolean explicitlySkipsTests,
             List<String> reasons,
-            List<String> includeClassNameRegexes) {
+            List<String> includeClassNameRegexes,
+            List<String> excludeClassNameRegexes) {
         Analysis {
             reasons = List.copyOf(reasons == null ? List.of() : reasons);
             includeClassNameRegexes = List.copyOf(
                     includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
+            excludeClassNameRegexes = List.copyOf(
+                    excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
         }
     }
 
