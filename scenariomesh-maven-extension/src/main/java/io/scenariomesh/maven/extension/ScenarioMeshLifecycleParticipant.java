@@ -25,6 +25,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private static final String GROUP_ID = "io.scenariomesh";
     private static final String PLUGIN_ARTIFACT_ID = "scenariomesh-maven-plugin";
     private static final String VERSION = "0.1.0-SNAPSHOT";
+    private static final String PREFLIGHT_EXECUTION_ID = "scenariomesh-preflight";
     private static final String RUN_EXECUTION_ID = "scenariomesh-run";
     private static final String VERIFY_EXECUTION_ID = "scenariomesh-verify";
 
@@ -86,25 +87,24 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
+            // Do NOT suppress Surefire/Failsafe while projects are merely being read. Test classes
+            // do not exist yet, so dynamic engine ownership cannot be proven here. A dedicated
+            // process-test-classes preflight will suppress the native executor only after runtime
+            // backend/engine discovery succeeds. If preflight cannot prove ownership, Maven stays native.
             injectScenarioMesh(project, decision, reportInvocationId, reportAnalysis.runtimeProperties());
-            suppressOwnedExecutor(project, decision.executorKind());
             String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
-            info("ScenarioMesh: takeover enabled for " + project.getArtifactId()
+            info("ScenarioMesh: takeover candidate for " + project.getArtifactId()
                     + " (executor=" + decision.executorKind().name().toLowerCase()
                     + ", phase=" + decision.takeoverPhase()
                     + ", executionPlans=" + decision.executorPlans().size()
                     + ", signals=" + String.join(", ", decision.frameworks())
-                    + ", adapterIntent=" + config.executionAdapter() + configText + ")");
+                    + ", adapterIntent=" + config.executionAdapter() + configText
+                    + "); runtime ownership will be proven after test compilation.");
             if (reportAnalysis.present()) {
                 info("ScenarioMesh: preserving Cluecumber JSON input for this invocation at "
                         + reportAnalysis.sourceJsonDirectory());
             }
         }
-    }
-
-    private void suppressOwnedExecutor(MavenProject project, ProjectCompatibilityDetector.ExecutorKind executorKind) {
-        if (executorKind == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE) project.getProperties().setProperty("skipITs", "true");
-        else project.getProperties().setProperty("skipTests", "true");
     }
 
     private void injectScenarioMesh(
@@ -124,6 +124,19 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         // Remove only ScenarioMesh-managed execution IDs so a repeated model mutation cannot
         // leave stale plans behind. User Maven executions are never altered here.
         plugin.getExecutions().removeIf(execution -> isManagedExecutionId(execution.getId()));
+
+        // One project-wide preflight deliberately evaluates every selected runtime family before
+        // setting Maven's global skipTests/skipITs flag. This is conservative for multi-execution
+        // projects: one unknown executable backend keeps the whole project on native Maven rather
+        // than letting one plan suppress tests needed by another plan.
+        PluginExecution preflight = new PluginExecution();
+        preflight.setId(PREFLIGHT_EXECUTION_ID);
+        preflight.setPhase("process-test-classes");
+        preflight.addGoal("preflight");
+        Xpp3Dom preflightConfig = new Xpp3Dom("configuration");
+        addValue(preflightConfig, "takeoverExecutor", decision.executorKind().name().toLowerCase());
+        preflight.setConfiguration(preflightConfig);
+        plugin.addExecution(preflight);
 
         boolean single = decision.executorPlans().size() == 1;
         for (int index = 0; index < decision.executorPlans().size(); index++) {
@@ -153,7 +166,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     }
 
     private boolean isManagedExecutionId(String id) {
-        return id != null && (id.equals(RUN_EXECUTION_ID) || id.startsWith(RUN_EXECUTION_ID + "-")
+        return id != null && (id.equals(PREFLIGHT_EXECUTION_ID)
+                || id.equals(RUN_EXECUTION_ID) || id.startsWith(RUN_EXECUTION_ID + "-")
                 || id.equals(VERIFY_EXECUTION_ID) || id.startsWith(VERIFY_EXECUTION_ID + "-"));
     }
 
