@@ -43,7 +43,7 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
-    void multipleFrameworkSignalsAreCandidatesAndRuntimeDiscoveryProvesOwnership() {
+    void multipleFrameworkSignalsAreCandidatesAndRuntimePreflightProvesOwnership() {
         MavenProject project = project(
                 dependency("org.junit.jupiter", "junit-jupiter"),
                 dependency("org.testng", "testng"));
@@ -52,7 +52,18 @@ class ProjectCompatibilityDetectorTest {
 
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(Set.of("junit-platform", "testng"), decision.frameworks());
-        assertTrue(decision.reason().contains("runtime discovery"), decision.reason());
+        assertTrue(decision.reason().contains("runtime preflight"), decision.reason());
+    }
+
+    @Test
+    void unknownFrameworkDependencyCanReachRuntimePreflightWithoutBeingAssumedOwnable() {
+        MavenProject project = project(dependency("com.example", "future-test-engine"));
+
+        var decision = detector.evaluate(session("test"), project);
+
+        assertTrue(decision.compatible(), decision.reason());
+        assertTrue(decision.frameworks().isEmpty());
+        assertTrue(decision.reason().contains("runtime preflight"), decision.reason());
     }
 
     @Test
