@@ -16,6 +16,9 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install
+      - name: Install realistic third-party TestEngine fixture
+        working-directory: examples/unknown-junit-engine-artifact
+        run: mvn -B clean install
       - name: Unknown JUnit Platform engine remains native Maven
         working-directory: examples/unknown-junit-engine-pass-through-example
         run: |
@@ -24,4 +27,5 @@ jobs:
           grep -Fq 'nextgen-fixture' unknown-engine.log
           grep -Fq 'runtime backend is detected but not safely ownable' unknown-engine.log
           grep -Eq 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0' unknown-engine.log
+          grep -Fq 'runtime preflight selected native Maven pass-through' unknown-engine.log
           test ! -e target/scenariomesh/report.html
