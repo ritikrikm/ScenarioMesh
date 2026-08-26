@@ -7,6 +7,9 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Classifies the effective Surefire model without confusing Maven's generated
@@ -16,6 +19,7 @@ final class SurefireCompatibility {
     private static final String DEFAULT_TEST_EXECUTION_ID = "default-test";
     private static final String TEST_PHASE = "test";
     private static final String TEST_GOAL = "test";
+    private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
     private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of(
             "**/Test*.java",
             "**/*Test.java",
@@ -23,6 +27,10 @@ final class SurefireCompatibility {
             "**/*TestCase.java");
 
     Analysis analyze(Plugin surefire) {
+        return analyze(surefire, ignored -> null);
+    }
+
+    Analysis analyze(Plugin surefire, Function<String, String> propertyResolver) {
         List<String> reasons = new ArrayList<>();
         boolean explicitlySkipsTests = false;
 
@@ -32,7 +40,7 @@ final class SurefireCompatibility {
         }
 
         ConfigurationAnalysis pluginConfiguration = analyzeConfiguration(
-                surefire.getConfiguration(), "maven-surefire-plugin configuration");
+                surefire.getConfiguration(), "maven-surefire-plugin configuration", propertyResolver);
         explicitlySkipsTests |= pluginConfiguration.explicitlySkipsTests();
         reasons.addAll(pluginConfiguration.reasons());
 
@@ -49,7 +57,8 @@ final class SurefireCompatibility {
                 standardLifecycleExecutions++;
                 ConfigurationAnalysis executionConfiguration = analyzeConfiguration(
                         execution.getConfiguration(),
-                        "maven-surefire-plugin execution '" + DEFAULT_TEST_EXECUTION_ID + "'");
+                        "maven-surefire-plugin execution '" + DEFAULT_TEST_EXECUTION_ID + "'",
+                        propertyResolver);
                 explicitlySkipsTests |= executionConfiguration.explicitlySkipsTests();
                 reasons.addAll(executionConfiguration.reasons());
             }
@@ -78,7 +87,9 @@ final class SurefireCompatibility {
         return goals != null && goals.size() == 1 && TEST_GOAL.equals(trimToNull(goals.get(0)));
     }
 
-    private ConfigurationAnalysis analyzeConfiguration(Object rawConfiguration, String location) {
+    private ConfigurationAnalysis analyzeConfiguration(Object rawConfiguration,
+                                                       String location,
+                                                       Function<String, String> propertyResolver) {
         Xpp3Dom configuration = asDom(rawConfiguration);
         if (configuration == null) return ConfigurationAnalysis.empty();
 
@@ -104,17 +115,12 @@ final class SurefireCompatibility {
                 case PRESERVED -> {
                     switch (name) {
                         case "skip", "skipTests" -> {
-                            Boolean value = literalBoolean(child);
-                            if (Boolean.TRUE.equals(value)) {
-                                explicitlySkipsTests = true;
-                            } else if (value == null) {
-                                reasons.add(location + " uses non-literal <" + name
-                                        + ">; ScenarioMesh cannot prove Maven-equivalent skip semantics");
-                            }
+                            Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                            if (Boolean.TRUE.equals(value)) explicitlySkipsTests = true;
                         }
                         case "useModulePath" -> {
-                            Boolean value = literalBoolean(child);
-                            if (!Boolean.FALSE.equals(value)) {
+                            Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                            if (value != null && !Boolean.FALSE.equals(value)) {
                                 reasons.add(location
                                         + " uses <useModulePath> with a value ScenarioMesh does not yet reproduce");
                             }
@@ -128,17 +134,46 @@ final class SurefireCompatibility {
         return new ConfigurationAnalysis(explicitlySkipsTests, List.copyOf(reasons));
     }
 
-    private Xpp3Dom asDom(Object configuration) {
-        return configuration instanceof Xpp3Dom dom ? dom : null;
-    }
-
-    private Boolean literalBoolean(Xpp3Dom node) {
-        if (node.getChildCount() > 0) return null;
-        String value = trimToNull(node.getValue());
+    private Boolean resolvedBoolean(Xpp3Dom node,
+                                    String location,
+                                    List<String> reasons,
+                                    Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <" + node.getName()
+                    + "> and boolean semantics cannot be proven");
+            return null;
+        }
+        String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null) return null;
+        if (value.isBlank()) return Boolean.FALSE;
         if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
         if ("false".equalsIgnoreCase(value)) return Boolean.FALSE;
+        reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'");
         return null;
+    }
+
+    private String resolve(String raw,
+                           String location,
+                           List<String> reasons,
+                           Function<String, String> propertyResolver) {
+        String value = trimToNull(raw);
+        if (value == null) return "";
+        Matcher matcher = PROPERTY_REFERENCE.matcher(value);
+        StringBuffer resolved = new StringBuffer();
+        while (matcher.find()) {
+            String replacement = propertyResolver.apply(matcher.group(1));
+            if (replacement == null) {
+                reasons.add(location + " references unresolved Maven property ${" + matcher.group(1) + "}");
+                return null;
+            }
+            matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(resolved);
+        return resolved.toString();
+    }
+
+    private Xpp3Dom asDom(Object configuration) {
+        return configuration instanceof Xpp3Dom dom ? dom : null;
     }
 
     private boolean hasMeaningfulValue(Xpp3Dom node) {
