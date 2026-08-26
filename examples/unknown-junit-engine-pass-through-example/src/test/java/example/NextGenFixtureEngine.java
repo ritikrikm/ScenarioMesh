@@ -7,7 +7,9 @@ import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.discovery.ClassSelector;
 import org.junit.platform.engine.support.descriptor.AbstractTestDescriptor;
+import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.engine.support.descriptor.EngineDescriptor;
 
 public final class NextGenFixtureEngine implements TestEngine {
@@ -19,7 +21,12 @@ public final class NextGenFixtureEngine implements TestEngine {
     @Override
     public TestDescriptor discover(EngineDiscoveryRequest discoveryRequest, UniqueId uniqueId) {
         EngineDescriptor root = new EngineDescriptor(uniqueId, "NextGen fixture engine");
-        root.addChild(new FixtureTestDescriptor(uniqueId.append("test", "native-pass-through")));
+        for (ClassSelector selector : discoveryRequest.getSelectorsByType(ClassSelector.class)) {
+            if (!TriggerTest.class.getName().equals(selector.getClassName())) continue;
+            root.addChild(new FixtureTestDescriptor(
+                    uniqueId.append("class", TriggerTest.class.getName()).append("test", "native-pass-through"),
+                    ClassSource.from(TriggerTest.class)));
+        }
         return root;
     }
 
@@ -36,8 +43,8 @@ public final class NextGenFixtureEngine implements TestEngine {
     }
 
     private static final class FixtureTestDescriptor extends AbstractTestDescriptor {
-        private FixtureTestDescriptor(UniqueId uniqueId) {
-            super(uniqueId, "nativePassThrough");
+        private FixtureTestDescriptor(UniqueId uniqueId, ClassSource source) {
+            super(uniqueId, "nativePassThrough", source);
         }
 
         @Override
