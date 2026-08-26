@@ -92,6 +92,49 @@ class ProjectCompatibilityDetectorTest {
         assertTrue(decision.reason().contains("group filtering"), decision.reason());
     }
 
+    @Test
+    void cucumberCliTagFilterIsForwardedIntoDiscoveryAndWorkers() {
+        MavenProject project = project(
+                dependency("io.cucumber", "cucumber-junit"),
+                dependency("junit", "junit"));
+        MavenSession session = session("test");
+        session.getUserProperties().setProperty("cucumber.filter.tags", "@smoke and not @slow");
+
+        var decision = detector.evaluate(session, project);
+
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals("@smoke and not @slow", decision.executorSystemProperties().get("cucumber.filter.tags"));
+    }
+
+    @Test
+    void cucumberMavenJvmPropertyIsForwardedIncludingCustomPluginConfiguration() {
+        MavenProject project = project(
+                dependency("io.cucumber", "cucumber-junit"),
+                dependency("junit", "junit"));
+        MavenSession session = session("test");
+        session.getSystemProperties().setProperty("cucumber.plugin", "com.example.CustomReporter,pretty");
+        session.getSystemProperties().setProperty("cucumber.filter.name", "Checkout.*");
+
+        var decision = detector.evaluate(session, project);
+
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals("com.example.CustomReporter,pretty", decision.executorSystemProperties().get("cucumber.plugin"));
+        assertEquals("Checkout.*", decision.executorSystemProperties().get("cucumber.filter.name"));
+    }
+
+    @Test
+    void projectOnlyCucumberSelectionFailsClosedBecauseNativeForkExposureIsAmbiguous() {
+        MavenProject project = project(
+                dependency("io.cucumber", "cucumber-junit"),
+                dependency("junit", "junit"));
+        project.getProperties().setProperty("cucumber.filter.tags", "@smoke");
+
+        var decision = detector.evaluate(session("test"), project);
+
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("defined only as a Maven project property"), decision.reason());
+    }
+
     private MavenSession session(String... goals) {
         DefaultMavenExecutionRequest request = new DefaultMavenExecutionRequest();
         request.setGoals(List.of(goals));
