@@ -31,6 +31,18 @@ public final class DiscoveryMain {
                 properties,
                 new DiscoverySelection(parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes));
 
+        // Defense-in-depth for direct ScenarioMesh runs and any future lifecycle integration.
+        // The normal Maven extension already performs this probe before suppressing Surefire/Failsafe.
+        ExecutionBackendInventory.Inventory backendInventory = ExecutionBackendInventory.inspect(
+                classLoader,
+                parsed.testRoots,
+                parsed.includeClassNameRegexes,
+                parsed.excludeClassNameRegexes);
+        if (backendInventory.ownership() == ExecutionBackendInventory.Ownership.DETECTED_NOT_OWNABLE) {
+            throw new IllegalStateException("ScenarioMesh detected an executable JUnit Platform backend that it cannot safely own: "
+                    + backendInventory.summary() + ". Native Maven execution is safer.");
+        }
+
         // Dependency presence only tells us which adapters might work. Before trusting adapter
         // discovery, prove that the Maven-selected class set does not contain an executable
         // framework family for which ScenarioMesh has no owner.
