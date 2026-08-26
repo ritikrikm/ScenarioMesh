@@ -39,6 +39,10 @@ public final class PreflightMojo extends AbstractMojo {
     private String takeoverExecutor;
     @Parameter(defaultValue = "false")
     private boolean knownModelFramework;
+    @Parameter
+    private List<String> includeClassNameRegexes;
+    @Parameter
+    private List<String> excludeClassNameRegexes;
 
     @Override
     public void execute() {
@@ -51,15 +55,17 @@ public final class PreflightMojo extends AbstractMojo {
             List<Path> runtimeClasspath = new RuntimeClasspathResolver().resolve(project, pluginArtifacts);
             List<Path> testRoots = new TestRootResolver().resolve(project);
             Map<String, String> properties = effectiveProperties();
+            List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
+            List<String> excludes = excludeClassNameRegexes == null ? List.of() : List.copyOf(excludeClassNameRegexes);
 
             URL[] urls = runtimeClasspath.stream().map(this::toUrl).toArray(URL[]::new);
             try (URLClassLoader targetLoader = new URLClassLoader(urls, getClass().getClassLoader())) {
-                DiscoverySelection allSelected = new DiscoverySelection(List.of(), List.of());
-                AdapterContext context = new AdapterContext(targetLoader, testRoots, properties, allSelected);
+                DiscoverySelection selected = new DiscoverySelection(includes, excludes);
+                AdapterContext context = new AdapterContext(targetLoader, testRoots, properties, selected);
 
                 new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
                 ExecutionBackendInventory.Inventory inventory = ExecutionBackendInventory.inspect(
-                        targetLoader, testRoots, List.of(), List.of());
+                        targetLoader, testRoots, includes, excludes);
 
                 if (inventory.ownership() == ExecutionBackendInventory.Ownership.DETECTED_NOT_OWNABLE) {
                     passThrough("runtime backend is detected but not safely ownable: " + inventory.summary());
@@ -75,8 +81,8 @@ public final class PreflightMojo extends AbstractMojo {
                 // and TestNG, which are not required to expose a JUnit Platform TestEngine.
                 PreflightState.owned(project, inventory.summary());
                 suppressNativeExecutor();
-                getLog().info("ScenarioMesh preflight: ownership proven; native " + normalizedExecutor()
-                        + " execution will be suppressed. Backend inventory: " + inventory.summary());
+                getLog().info("ScenarioMesh preflight: ownership proven for Maven-selected tests; native "
+                        + normalizedExecutor() + " execution will be suppressed. Backend inventory: " + inventory.summary());
             }
         } catch (Exception | LinkageError exception) {
             passThrough("preflight could not prove complete runtime ownership: " + message(exception));
@@ -110,6 +116,7 @@ public final class PreflightMojo extends AbstractMojo {
 
     private Map<String, String> effectiveProperties() {
         Map<String, String> values = new LinkedHashMap<>();
+        project.getProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         session.getSystemProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         session.getUserProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         return values;
