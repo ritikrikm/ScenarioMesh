@@ -7,9 +7,10 @@ import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.SelectedTestClasses;
+import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestTag;
-import org.junit.platform.engine.discovery.ClassNameFilter;
 import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
@@ -29,6 +30,7 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
 
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqueId;
 
@@ -37,14 +39,10 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     private final DiscoveredExecutionMerger executionMerger = new DiscoveredExecutionMerger();
 
     @Override
-    public String id() {
-        return ID;
-    }
+    public String id() { return ID; }
 
     @Override
-    public String framework() {
-        return "junit-platform";
-    }
+    public String framework() { return "junit-platform"; }
 
     @Override
     public boolean isAvailable(ClassLoader classLoader) {
@@ -58,19 +56,20 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     @Override
     public List<ScenarioTask> discover(AdapterContext context) {
-        if (context.testRoots().isEmpty()) {
-            return List.of();
-        }
+        if (context.testRoots().isEmpty()) return List.of();
+
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectClasspathRoots(new HashSet<>(context.testRoots())))
                 .filters(EngineFilter.excludeEngines("junit-vintage"));
-        if (!context.discoverySelection().includeClassNameRegexes().isEmpty()) {
-            builder.filters(ClassNameFilter.includeClassNamePatterns(
-                    context.discoverySelection().includeClassNameRegexes().toArray(String[]::new)));
-        }
-        if (!context.discoverySelection().excludeClassNameRegexes().isEmpty()) {
-            builder.filters(ClassNameFilter.excludeClassNamePatterns(
-                    context.discoverySelection().excludeClassNameRegexes().toArray(String[]::new)));
+        if (context.discoverySelection().includeClassNameRegexes().isEmpty()
+                && context.discoverySelection().excludeClassNameRegexes().isEmpty()) {
+            builder.selectors(selectClasspathRoots(new HashSet<>(context.testRoots())));
+        } else {
+            List<String> selectedClasses = SelectedTestClasses.scan(context.testRoots(), context.discoverySelection());
+            if (selectedClasses.isEmpty()) return List.of();
+            List<DiscoverySelector> selectors = selectedClasses.stream()
+                    .map(className -> (DiscoverySelector) selectClass(className))
+                    .toList();
+            builder.selectors(selectors);
         }
 
         Launcher launcher = LauncherFactory.create();
@@ -78,9 +77,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         List<TestIdentifier> discoveredLeaves = new ArrayList<>();
         for (TestIdentifier root : plan.getRoots()) {
             for (TestIdentifier identifier : plan.getDescendants(root)) {
-                if (identifier.isTest() && plan.getChildren(identifier).isEmpty()) {
-                    discoveredLeaves.add(identifier);
-                }
+                if (identifier.isTest() && plan.getChildren(identifier).isEmpty()) discoveredLeaves.add(identifier);
             }
         }
 
@@ -88,9 +85,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         for (TestIdentifier identifier : executionMerger.merge(discoveredLeaves)) {
             String uniqueId = identifier.getUniqueId();
             Set<String> tags = new HashSet<>();
-            for (TestTag tag : identifier.getTags()) {
-                tags.add(tag.getName());
-            }
+            for (TestTag tag : identifier.getTags()) tags.add(tag.getName());
             String framework = uniqueId.contains("[engine:cucumber]")
                     ? "cucumber-junit-platform"
                     : "junit5";
@@ -142,31 +137,25 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                     "JUnit Platform did not execute the selected test: " + task.selector(),
                     "SelectionFailure");
         }
-
         if (found != 1) {
             return infrastructureFailure(task, context, started, finished,
                     "JUnit Platform selection for " + task.selector() + " resolved to " + found
                             + " tests; ScenarioMesh requires exactly one terminal test per task",
                     "SelectionMultiplicityFailure");
         }
-
         if (failed > 0) {
-            Throwable failure = summary.getFailures().isEmpty()
-                    ? null
-                    : summary.getFailures().get(0).getException();
+            Throwable failure = summary.getFailures().isEmpty() ? null : summary.getFailures().get(0).getException();
             return new ExecutionResult(
                     task.id(), task.displayName(), ResultStatus.TEST_FAILURE, duration,
                     context.workerId(), context.attempt(), started, finished,
                     failure == null ? "Test failed" : safeMessage(failure),
                     failure == null ? null : failure.getClass().getName());
         }
-
         if (succeeded == 1 && startedCount == 1 && skipped == 0 && aborted == 0) {
             return new ExecutionResult(
                     task.id(), task.displayName(), ResultStatus.PASSED, duration,
                     context.workerId(), context.attempt(), started, finished, null, null);
         }
-
         if (succeeded == 0 && failed == 0 && (skipped == 1 || aborted == 1)) {
             String reason = aborted == 1
                     ? "JUnit Platform aborted the selected test"
@@ -176,7 +165,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                     context.workerId(), context.attempt(), started, finished,
                     reason, aborted == 1 ? "JUnitAborted" : "JUnitSkipped");
         }
-
         return infrastructureFailure(
                 task, context, started, finished,
                 "JUnit Platform produced an ambiguous terminal summary for " + task.selector()
