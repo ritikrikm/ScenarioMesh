@@ -31,6 +31,11 @@ public final class DiscoveryMain {
                 properties,
                 new DiscoverySelection(parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes));
 
+        // Dependency presence only tells us which adapters might work. Before trusting adapter
+        // discovery, prove that the Maven-selected class set does not contain an executable
+        // framework family for which ScenarioMesh has no owner.
+        new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
+
         Map<String, List<ScenarioTask>> discoveredByAdapter = new LinkedHashMap<>();
         List<AdapterEvidence> evidence = new ArrayList<>();
         List<String> autoDiscoveryErrors = new ArrayList<>();
@@ -82,9 +87,7 @@ public final class DiscoveryMain {
             List<String> autoDiscoveryErrors) {
         Map<String, List<ScenarioTask>> candidates = new LinkedHashMap<>();
         discoveredByAdapter.forEach((id, tasks) -> {
-            if (!tasks.isEmpty()) {
-                candidates.put(id, tasks);
-            }
+            if (!tasks.isEmpty()) candidates.put(id, tasks);
         });
 
         if (ScenarioMeshConfig.AUTO_ADAPTER.equals(parsed.adapter)) {
@@ -138,9 +141,7 @@ public final class DiscoveryMain {
                     .append(" - ").append(item.adapterId())
                     .append(": available=").append(item.available())
                     .append(", discovered=").append(item.discoveredCount());
-            if (item.error() != null) {
-                builder.append(", error=").append(item.error());
-            }
+            if (item.error() != null) builder.append(", error=").append(item.error());
         }
         return builder.toString();
     }
@@ -156,18 +157,12 @@ public final class DiscoveryMain {
         return message == null || message.isBlank() ? throwable.getClass().getName() : message;
     }
 
-    public record AdapterEvidence(
-            String adapterId,
-            String framework,
-            boolean available,
-            int discoveredCount,
-            String error) {}
+    public record AdapterEvidence(String adapterId, String framework, boolean available, int discoveredCount, String error) {}
 
-    public record DiscoveryResult(
-            List<String> adapters,
-            List<AdapterEvidence> evidence,
-            List<String> warnings,
-            List<ScenarioTask> tasks) {
+    public record DiscoveryResult(List<String> adapters,
+                                  List<AdapterEvidence> evidence,
+                                  List<String> warnings,
+                                  List<ScenarioTask> tasks) {
         public DiscoveryResult {
             adapters = List.copyOf(adapters == null ? List.of() : adapters);
             evidence = List.copyOf(evidence == null ? List.of() : evidence);
@@ -218,24 +213,19 @@ public final class DiscoveryMain {
                     case "--output" -> output = Path.of(requireValue(args, ++i, "--output"));
                     case "--test-root" -> roots.add(Path.of(requireValue(args, ++i, "--test-root")));
                     case "--adapter" -> adapter = requireValue(args, ++i, "--adapter").trim().toLowerCase(java.util.Locale.ROOT);
-                    case "--adapter-mismatch-policy" -> mismatchPolicy = AdapterMismatchPolicy.parse(
-                            requireValue(args, ++i, "--adapter-mismatch-policy"));
+                    case "--adapter-mismatch-policy" -> mismatchPolicy = AdapterMismatchPolicy.parse(requireValue(args, ++i, "--adapter-mismatch-policy"));
                     case "--include-class-regex" -> includes.add(requireValue(args, ++i, "--include-class-regex"));
                     case "--exclude-class-regex" -> excludes.add(requireValue(args, ++i, "--exclude-class-regex"));
                     default -> throw new IllegalArgumentException("Unknown discovery argument: " + args[i]);
                 }
             }
-            if (output == null) {
-                throw new IllegalArgumentException("--output is required");
-            }
+            if (output == null) throw new IllegalArgumentException("--output is required");
             return new Arguments(output, List.copyOf(roots), adapter, mismatchPolicy,
                     List.copyOf(includes), List.copyOf(excludes));
         }
 
         private static String requireValue(String[] args, int index, String name) {
-            if (index >= args.length) {
-                throw new IllegalArgumentException(name + " requires a value");
-            }
+            if (index >= args.length) throw new IllegalArgumentException(name + " requires a value");
             return args[index];
         }
     }
