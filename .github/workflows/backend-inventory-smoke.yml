@@ -19,13 +19,20 @@ jobs:
       - name: Install realistic third-party TestEngine fixture
         working-directory: examples/unknown-junit-engine-artifact
         run: mvn -B clean install
-      - name: Unknown JUnit Platform engine remains native Maven
+      - name: Unknown JUnit Platform engine preserves native Maven semantics
         working-directory: examples/unknown-junit-engine-pass-through-example
         run: |
           set -o pipefail
+          mvn -B clean test -Dscenariomesh.enabled=false | tee native-baseline.log
+          native_result="$(grep -E 'Tests run: [0-9]+, Failures: [0-9]+, Errors: [0-9]+, Skipped: [0-9]+' native-baseline.log | tail -1)"
+          test -n "$native_result"
+
+          rm -rf target/scenariomesh
           mvn -B clean test | tee unknown-engine.log
-          grep -Fq 'nextgen-fixture' unknown-engine.log
+          pass_through_result="$(grep -E 'Tests run: [0-9]+, Failures: [0-9]+, Errors: [0-9]+, Skipped: [0-9]+' unknown-engine.log | tail -1)"
+
+          grep -Fq 'nextgen-fixture:leaves=1:DETECTED_NOT_OWNABLE' unknown-engine.log
           grep -Fq 'runtime backend is detected but not safely ownable' unknown-engine.log
-          grep -Eq 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0' unknown-engine.log
           grep -Fq 'runtime preflight selected native Maven pass-through' unknown-engine.log
+          test "$native_result" = "$pass_through_result"
           test ! -e target/scenariomesh/report.html
