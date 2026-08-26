@@ -2,6 +2,8 @@ package io.scenariomesh.maven.extension;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Conservative parser for the Maven Surefire/Failsafe class-selection syntax
@@ -53,12 +55,9 @@ final class MavenClassNamePatterns {
             throw unsupported(raw, "inline negation is not yet represented exactly");
         }
         String body = raw.trim();
-        if (body.startsWith("%regex[") || body.contains("%regex")) {
-            // Surefire evaluates %regex against class-file paths while JUnit Platform's
-            // ClassNameFilter evaluates dotted class names. Until ScenarioMesh carries a
-            // typed selection object all the way to each adapter, accepting this would make
-            // semantics adapter-dependent.
-            throw unsupported(raw, "%regex class-path semantics are not yet portable across all adapters");
+        if (body.startsWith("%regex[")) return compileMavenRegex(raw, body);
+        if (body.contains("%regex")) {
+            throw unsupported(raw, "malformed %regex selector");
         }
         if (body.contains("#")) throw unsupported(raw, "method selectors are not class-selection patterns");
         if (body.indexOf('[') >= 0 || body.indexOf(']') >= 0 || body.indexOf('{') >= 0 || body.indexOf('}') >= 0) {
@@ -75,6 +74,29 @@ final class MavenClassNamePatterns {
         // DiscoverySelection understands both representations, while JUnit Platform's
         // ClassNameFilter can consume the dotted alternative directly.
         return new CompiledPattern(raw, "(?:" + pathRegex + "|" + dottedRegex + ")");
+    }
+
+    /**
+     * Maven Surefire/Failsafe define %regex selectors against forward-slash
+     * class-file paths (for example com/acme/LoginIT.class), not source paths or
+     * dotted Java class names. DiscoverySelection also checks dotted names for
+     * ScenarioMesh-native patterns, so the positive look-ahead below deliberately
+     * makes this compiled selector impossible to match unless the candidate ends
+     * in .class. That preserves Maven's path-only regex contract without making
+     * every adapter understand Maven syntax directly.
+     */
+    private static CompiledPattern compileMavenRegex(String raw, String body) {
+        if (!body.endsWith("]") || body.length() <= 8) {
+            throw unsupported(raw, "malformed or empty %regex selector");
+        }
+        String expression = body.substring(7, body.length() - 1);
+        if (expression.isBlank()) throw unsupported(raw, "empty %regex selector");
+        try {
+            Pattern.compile(expression);
+        } catch (PatternSyntaxException exception) {
+            throw unsupported(raw, "invalid regular expression: " + exception.getDescription());
+        }
+        return new CompiledPattern(raw, "(?s)(?=.*\\.class$)(?:" + expression + ")");
     }
 
     private static String globToRegex(String value, char separator) {
