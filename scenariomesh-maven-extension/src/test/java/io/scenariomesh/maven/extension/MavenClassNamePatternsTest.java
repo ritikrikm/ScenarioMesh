@@ -1,5 +1,6 @@
 package io.scenariomesh.maven.extension;
 
+import org.apache.maven.surefire.api.testset.TestListResolver;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -44,6 +45,42 @@ class MavenClassNamePatternsTest {
         assertTrue(Pattern.matches(nested, "com/acme/api/LoginIT"));
         assertTrue(Pattern.matches(nested, "com.acme.api.LoginIT"));
         assertFalse(Pattern.matches(nested, "com/acme/api/LongLoginIT"));
+    }
+
+    @Test
+    void supportedSelectorMatrixMatchesNativeSurefireTestListResolver() {
+        List<String> selectors = List.of(
+                "**/Test*.java",
+                "**/*Test.java",
+                "**/*Tests.java",
+                "**/*TestCase.java",
+                "**/api/?oginIT.java",
+                "%regex[com/acme/.*IT.class]",
+                "%regex[.*(Cat|Dog).*Test.*]");
+        List<String> classFiles = List.of(
+                "TestSmoke.class",
+                "com/acme/TestPayment.class",
+                "com/acme/PaymentTest.class",
+                "com/acme/PaymentTests.class",
+                "com/acme/PaymentTestCase.class",
+                "com/acme/PaymentHelper.class",
+                "com/acme/api/LoginIT.class",
+                "com/acme/api/LongLoginIT.class",
+                "com/acme/CatFastTest.class",
+                "com/acme/DogSlowTest.class",
+                "other/pkg/LoginIT.class");
+
+        for (String selector : selectors) {
+            String meshRegex = MavenClassNamePatterns.toRegex(selector);
+            TestListResolver surefire = new TestListResolver(List.of(selector), List.of());
+            for (String classFile : classFiles) {
+                boolean expected = surefire.shouldRun(classFile, null);
+                boolean actual = Pattern.matches(meshRegex, classFile);
+                assertEquals(expected, actual,
+                        () -> "ScenarioMesh selector diverged from Surefire for selector=" + selector
+                                + ", classFile=" + classFile);
+            }
+        }
     }
 
     @Test
