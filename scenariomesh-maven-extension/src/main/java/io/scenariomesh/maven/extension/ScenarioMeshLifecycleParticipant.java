@@ -97,7 +97,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                     + " (executor=" + decision.executorKind().name().toLowerCase()
                     + ", phase=" + decision.takeoverPhase()
                     + ", executionPlans=" + decision.executorPlans().size()
-                    + ", signals=" + String.join(", ", decision.frameworks())
+                    + ", signals=" + (decision.frameworks().isEmpty() ? "none; runtime detection required" : String.join(", ", decision.frameworks()))
                     + ", adapterIntent=" + config.executionAdapter() + configText
                     + "); runtime ownership will be proven after test compilation.");
             if (reportAnalysis.present()) {
@@ -135,6 +135,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         preflight.addGoal("preflight");
         Xpp3Dom preflightConfig = new Xpp3Dom("configuration");
         addValue(preflightConfig, "takeoverExecutor", decision.executorKind().name().toLowerCase());
+        addValue(preflightConfig, "knownModelFramework", Boolean.toString(!decision.frameworks().isEmpty()));
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);
 
