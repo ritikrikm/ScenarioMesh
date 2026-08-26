@@ -36,8 +36,9 @@ final class ProjectCompatibilityDetector {
     private final FailsafeCompatibility failsafeCompatibility = new FailsafeCompatibility();
 
     CompatibilityDecision evaluate(MavenSession session, MavenProject project) {
+        EffectivePropertyResolver properties = new EffectivePropertyResolver(session, project);
         if (!requestsTestLifecycle(session)) return CompatibilityDecision.passThrough("requested Maven goals do not reach the test lifecycle");
-        if (projectSkipsTests(project)) return CompatibilityDecision.passThrough("project configuration explicitly skips tests");
+        if (projectSkipsTests(properties)) return CompatibilityDecision.passThrough("effective Maven configuration explicitly skips tests");
 
         FrameworkSignals frameworks = detectFrameworks(project);
         // No known model framework is not a final decision: a future/custom JUnit Platform
@@ -47,16 +48,16 @@ final class ProjectCompatibilityDetector {
             return CompatibilityDecision.passThrough(
                     "generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
         }
-        if (propertyPresent(session, project, "groups") || propertyPresent(session, project, "excludedGroups")) {
+        if (properties.present("groups") || properties.present("excludedGroups")) {
             return CompatibilityDecision.passThrough(
                     "Maven group filtering is present; ScenarioMesh will not take over until discovery can reproduce group inclusion/exclusion exactly");
         }
 
         if (frameworks.cucumberJUnit4() || frameworks.junitPlatform()) {
-            String projectOnlySelection = firstProjectOnlyProperty(session, project, CUCUMBER_SELECTION_PROPERTIES);
+            String projectOnlySelection = firstProjectOnlyProperty(properties, CUCUMBER_SELECTION_PROPERTIES);
             if (projectOnlySelection != null) {
                 return CompatibilityDecision.passThrough(
-                        "Cucumber selection property '" + projectOnlySelection + "' is defined only as a Maven project property; "
+                        "Cucumber selection property '" + projectOnlySelection + "' is defined only as an effective Maven project property; "
                                 + "ScenarioMesh cannot prove that native Surefire/Failsafe would expose it to the test JVM. "
                                 + "Pass it with -D or through the executor's systemPropertyVariables to enable safe takeover.");
             }
@@ -78,15 +79,15 @@ final class ProjectCompatibilityDetector {
             FailsafeCompatibility.Analysis analysis = failsafeCompatibility.analyze(
                     failsafe,
                     failsafeParticipation,
-                    propertyName -> resolveProperty(session, project, propertyName),
-                    propertyName -> resolveStableLateProperty(session, propertyName));
+                    properties::resolve,
+                    properties::resolveStableLate);
             if (!analysis.supported()) {
                 return CompatibilityDecision.passThrough(
                         "maven-failsafe-plugin participates in this invocation but ScenarioMesh cannot reproduce it safely: "
                                 + analysis.reason());
             }
             if (!analysis.explicitlySkipped()) {
-                String unsafe = firstPresentProperty(session, project, FAILSAFE_UNSAFE_SELECTION_PROPERTIES);
+                String unsafe = firstPresentProperty(properties, FAILSAFE_UNSAFE_SELECTION_PROPERTIES);
                 if (unsafe != null) {
                     return CompatibilityDecision.passThrough(
                             "Failsafe test-selection property '" + unsafe
@@ -95,14 +96,14 @@ final class ProjectCompatibilityDetector {
                 List<ExecutorPlan> plans = analysis.executionPlans().stream()
                         .filter(plan -> !plan.explicitlySkipped())
                         .map(plan -> {
-                            Map<String, String> properties = new LinkedHashMap<>(plan.systemProperties());
-                            properties.putAll(frameworkSystemProperties);
+                            Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
+                            planProperties.putAll(frameworkSystemProperties);
                             return new ExecutorPlan(
                                     plan.executionId(),
                                     plan.includeClassNameRegexes(),
                                     plan.excludeClassNameRegexes(),
                                     plan.jvmArgs(),
-                                    properties,
+                                    planProperties,
                                     plan.testFailureIgnore());
                         })
                         .toList();
@@ -117,11 +118,11 @@ final class ProjectCompatibilityDetector {
         Plugin surefire = plugin(project, SUREFIRE);
         SurefireCompatibility.Analysis surefireAnalysis = null;
         if (surefire != null) {
-            surefireAnalysis = surefireCompatibility.analyze(surefire);
+            surefireAnalysis = surefireCompatibility.analyze(surefire, properties::resolve);
             if (surefireAnalysis.explicitlySkipsTests()) return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             reasons.addAll(surefireAnalysis.reasons());
         }
-        String unsafe = firstPresentProperty(session, project, SUREFIRE_UNSAFE_SELECTION_PROPERTIES);
+        String unsafe = firstPresentProperty(properties, SUREFIRE_UNSAFE_SELECTION_PROPERTIES);
         if (unsafe != null) reasons.add("Maven test-selection property '" + unsafe + "' is present and is not yet reproduced by ScenarioMesh discovery");
         if (!reasons.isEmpty()) return CompatibilityDecision.passThrough(String.join("; ", reasons));
 
@@ -148,63 +149,9 @@ final class ProjectCompatibilityDetector {
         });
     }
 
-    private String firstProjectOnlyProperty(MavenSession session, MavenProject project, Set<String> keys) {
-        for (String key : keys) {
-            String projectValue = project.getProperties().getProperty(key);
-            if (projectValue == null || projectValue.isBlank()) continue;
-            String userValue = session.getUserProperties().getProperty(key);
-            String systemValue = session.getSystemProperties().getProperty(key);
-            if ((userValue == null || userValue.isBlank()) && (systemValue == null || systemValue.isBlank())) return key;
-        }
+    private String firstProjectOnlyProperty(EffectivePropertyResolver properties, Set<String> keys) {
+        for (String key : keys) if (properties.projectOnly(key)) return key;
         return null;
-    }
-
-    /** Resolve values using Maven's normal early interpolation sources plus stable process/environment values. */
-    private String resolveProperty(MavenSession session, MavenProject project, String key) {
-        String value = session.getUserProperties().getProperty(key);
-        if (value != null) return value;
-        value = session.getSystemProperties().getProperty(key);
-        if (value != null) return value;
-        value = project.getProperties().getProperty(key);
-        if (value != null) return value;
-
-        value = projectAlias(project, key);
-        if (value != null) return value;
-
-        if (key.startsWith("env.") && key.length() > 4) {
-            value = System.getenv(key.substring(4));
-            if (value != null) return value;
-        }
-        return System.getProperty(key);
-    }
-
-    /**
-     * Late @{...} replacement is safe only when the value is already fixed for this Maven process.
-     * Project properties are intentionally excluded because earlier lifecycle plugins can mutate them.
-     */
-    private String resolveStableLateProperty(MavenSession session, String key) {
-        String value = session.getUserProperties().getProperty(key);
-        if (value != null) return value;
-        value = session.getSystemProperties().getProperty(key);
-        if (value != null) return value;
-        if (key.startsWith("env.") && key.length() > 4) {
-            value = System.getenv(key.substring(4));
-            if (value != null) return value;
-        }
-        return System.getProperty(key);
-    }
-
-    private String projectAlias(MavenProject project, String key) {
-        return switch (key) {
-            case "project.basedir", "basedir" -> project.getBasedir() == null ? null : project.getBasedir().getAbsolutePath();
-            case "project.build.directory" -> project.getBuild() == null ? null : project.getBuild().getDirectory();
-            case "project.build.outputDirectory" -> project.getBuild() == null ? null : project.getBuild().getOutputDirectory();
-            case "project.build.testOutputDirectory" -> project.getBuild() == null ? null : project.getBuild().getTestOutputDirectory();
-            case "project.artifactId" -> project.getArtifactId();
-            case "project.groupId" -> project.getGroupId();
-            case "project.version" -> project.getVersion();
-            default -> null;
-        };
     }
 
     private boolean requestsTestLifecycle(MavenSession session) {
@@ -217,27 +164,18 @@ final class ProjectCompatibilityDetector {
         return false;
     }
 
-    private boolean projectSkipsTests(MavenProject project) {
-        return booleanProperty(project, "skipTests") || booleanProperty(project, "maven.test.skip");
+    private boolean projectSkipsTests(EffectivePropertyResolver properties) {
+        return booleanProperty(properties, "skipTests") || booleanProperty(properties, "maven.test.skip");
     }
 
-    private boolean booleanProperty(MavenProject project, String key) {
-        String value = project.getProperties().getProperty(key);
+    private boolean booleanProperty(EffectivePropertyResolver properties, String key) {
+        String value = properties.resolve(key);
         return value != null && Boolean.parseBoolean(value.trim());
     }
 
-    private String firstPresentProperty(MavenSession session, MavenProject project, Set<String> keys) {
-        for (String key : keys) if (propertyPresent(session, project, key)) return key;
+    private String firstPresentProperty(EffectivePropertyResolver properties, Set<String> keys) {
+        for (String key : keys) if (properties.present(key)) return key;
         return null;
-    }
-
-    private boolean propertyPresent(MavenSession session, MavenProject project, String key) {
-        String userValue = session.getUserProperties().getProperty(key);
-        if (userValue != null && !userValue.isBlank()) return true;
-        String systemValue = session.getSystemProperties().getProperty(key);
-        if (systemValue != null && !systemValue.isBlank()) return true;
-        String projectValue = project.getProperties().getProperty(key);
-        return projectValue != null && !projectValue.isBlank();
     }
 
     private FrameworkSignals detectFrameworks(MavenProject project) {
