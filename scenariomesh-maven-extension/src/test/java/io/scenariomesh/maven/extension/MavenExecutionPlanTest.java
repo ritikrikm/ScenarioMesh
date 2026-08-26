@@ -12,6 +12,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MavenExecutionPlanTest {
 
     @Test
+    void cleanVerifyRemainsAReproducibleLifecycleInvocation() {
+        MavenExecutionPlan plan = MavenExecutionPlan.fromGoals(List.of("clean", "verify")).orElseThrow();
+        assertEquals("verify", plan.terminalPhase());
+    }
+
+    @Test
+    void directPluginGoalIsNotCollapsedIntoALifecyclePhase() {
+        assertTrue(MavenExecutionPlan.fromGoals(List.of("failsafe:integration-test")).isEmpty());
+        assertTrue(MavenExecutionPlan.fromGoals(List.of(
+                "org.apache.maven.plugins:maven-failsafe-plugin:3.5.0:integration-test")).isEmpty());
+    }
+
+    @Test
+    void mixedDirectGoalAndVerifyIsConservative() {
+        assertTrue(MavenExecutionPlan.fromGoals(List.of("clean", "dependency:build-classpath", "verify")).isEmpty());
+    }
+
+    @Test
+    void unknownCustomPhaseIsConservative() {
+        assertTrue(MavenExecutionPlan.fromGoals(List.of("company-test-phase")).isEmpty());
+    }
+
+    @Test
     void failsafeBoundToIntegrationTestDoesNotBlockTestPhase() {
         MavenExecutionPlan plan = MavenExecutionPlan.through("test");
         MavenExecutionPlan.PluginParticipation participation = plan.failsafeParticipation(
