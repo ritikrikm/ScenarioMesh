@@ -20,13 +20,10 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 
-import java.io.File;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Mojo(name = "run", defaultPhase = LifecyclePhase.TEST, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
@@ -63,6 +60,22 @@ public final class RunMojo extends AbstractMojo {
             return;
         }
 
+        PreflightState.State preflight = PreflightState.read(project);
+        if (preflight == PreflightState.State.PASS_THROUGH) {
+            getLog().info("ScenarioMesh: runtime preflight selected native Maven pass-through; ScenarioMesh run is inactive. "
+                    + PreflightState.reason(project));
+            return;
+        }
+        if (preflight == PreflightState.State.OWNED) {
+            getLog().info("ScenarioMesh: takeover enabled after runtime ownership preflight. "
+                    + PreflightState.reason(project));
+        } else {
+            // The normal extension-driven lifecycle always injects preflight first. Missing state is
+            // retained only for an explicit scenariomesh:run invocation, where the user directly
+            // requested this goal and there is no native executor suppression to undo.
+            getLog().debug("ScenarioMesh preflight state is absent; proceeding as an explicit/direct ScenarioMesh run.");
+        }
+
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         try {
             Map<String, String> userProperties = stringProperties(session.getUserProperties());
@@ -87,7 +100,7 @@ public final class RunMojo extends AbstractMojo {
 
             RunRequest request = new RunRequest(
                     projectDirectory,
-                    runtimeClasspath(),
+                    new RuntimeClasspathResolver().resolve(project, pluginArtifacts),
                     new TestRootResolver().resolve(project),
                     userProperties,
                     config,
@@ -191,21 +204,5 @@ public final class RunMojo extends AbstractMojo {
             properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         }
         return values;
-    }
-
-    private List<Path> runtimeClasspath() throws Exception {
-        Set<Path> paths = new LinkedHashSet<>();
-        for (String element : project.getTestClasspathElements()) {
-            paths.add(Path.of(element).toAbsolutePath().normalize());
-        }
-        if (pluginArtifacts != null) {
-            for (Artifact artifact : pluginArtifacts) {
-                File file = artifact.getFile();
-                if (file != null && file.exists()) {
-                    paths.add(file.toPath().toAbsolutePath().normalize());
-                }
-            }
-        }
-        return List.copyOf(paths);
     }
 }
