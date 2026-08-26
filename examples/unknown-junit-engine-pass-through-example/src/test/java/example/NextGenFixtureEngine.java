@@ -8,6 +8,7 @@ import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.UniqueId;
 import org.junit.platform.engine.discovery.ClassSelector;
+import org.junit.platform.engine.discovery.ClasspathRootSelector;
 import org.junit.platform.engine.support.descriptor.AbstractTestDescriptor;
 import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.engine.support.descriptor.EngineDescriptor;
@@ -21,8 +22,12 @@ public final class NextGenFixtureEngine implements TestEngine {
     @Override
     public TestDescriptor discover(EngineDiscoveryRequest discoveryRequest, UniqueId uniqueId) {
         EngineDescriptor root = new EngineDescriptor(uniqueId, "NextGen fixture engine");
-        for (ClassSelector selector : discoveryRequest.getSelectorsByType(ClassSelector.class)) {
-            if (!TriggerTest.class.getName().equals(selector.getClassName())) continue;
+
+        boolean selectedByClass = discoveryRequest.getSelectorsByType(ClassSelector.class).stream()
+                .anyMatch(selector -> TriggerTest.class.getName().equals(selector.getClassName()));
+        boolean selectedByClasspathRoot = !discoveryRequest.getSelectorsByType(ClasspathRootSelector.class).isEmpty();
+
+        if (selectedByClass || selectedByClasspathRoot) {
             root.addChild(new FixtureTestDescriptor(
                     uniqueId.append("class", TriggerTest.class.getName()).append("test", "native-pass-through"),
                     ClassSource.from(TriggerTest.class)));
