@@ -9,11 +9,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
- * Framework-neutral view of the standard Maven lifecycle reached by the current invocation.
- * Plugin-specific compatibility code asks this class whether an execution can actually run;
- * plugin presence alone is never treated as participation.
+ * Framework-neutral view of the Maven invocation that can be reproduced by a
+ * transparent ScenarioMesh lifecycle takeover.
+ *
+ * <p>ScenarioMesh currently owns only standard default-lifecycle test phases.
+ * Clean lifecycle phases may precede that lifecycle (for example {@code mvn clean verify})
+ * because they do not alter which test execution is selected. Direct plugin goals,
+ * custom/unqualified goals, and invocations that never enter the default lifecycle are
+ * intentionally rejected here rather than being approximated as a lifecycle phase.</p>
  */
 final class MavenExecutionPlan {
     private static final List<String> STANDARD_LIFECYCLE = List.of(
@@ -23,6 +29,7 @@ final class MavenExecutionPlan {
             "process-test-resources", "test-compile", "process-test-classes", "test",
             "prepare-package", "package", "pre-integration-test", "integration-test",
             "post-integration-test", "verify", "install", "deploy");
+    private static final Set<String> CLEAN_LIFECYCLE = Set.of("pre-clean", "clean", "post-clean");
 
     private static final Map<String, String> FAILSAFE_DEFAULT_PHASES = Map.of(
             "integration-test", "integration-test",
@@ -37,18 +44,37 @@ final class MavenExecutionPlan {
     }
 
     static Optional<MavenExecutionPlan> from(MavenSession session) {
-        if (session == null || session.getGoals() == null) return Optional.empty();
+        return session == null ? Optional.empty() : fromGoals(session.getGoals());
+    }
+
+    /** Package-visible for deterministic invocation-shape tests. */
+    static Optional<MavenExecutionPlan> fromGoals(List<String> goals) {
+        if (goals == null || goals.isEmpty()) return Optional.empty();
         int highest = -1;
         String phase = null;
-        for (String raw : session.getGoals()) {
-            if (raw == null) continue;
+
+        for (String raw : goals) {
+            if (raw == null || raw.isBlank()) continue;
             String goal = normalize(raw);
+
             int index = STANDARD_LIFECYCLE.indexOf(goal);
-            if (index > highest) {
-                highest = index;
-                phase = goal;
+            if (index >= 0) {
+                if (index > highest) {
+                    highest = index;
+                    phase = goal;
+                }
+                continue;
             }
+
+            // "mvn clean verify" is still a reproducible lifecycle invocation.
+            if (CLEAN_LIFECYCLE.contains(goal)) continue;
+
+            // Everything else may be a direct plugin goal (plugin:goal,
+            // group:artifact:version:goal, goal@execution) or a custom lifecycle/phase.
+            // Transparent takeover must not reorder or collapse those semantics.
+            return Optional.empty();
         }
+
         return highest < 0 ? Optional.empty() : Optional.of(new MavenExecutionPlan(highest, phase));
     }
 
