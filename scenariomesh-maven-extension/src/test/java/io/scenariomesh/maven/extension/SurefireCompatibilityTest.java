@@ -17,9 +17,7 @@ class SurefireCompatibilityTest {
     @Test
     void acceptsMavenGeneratedDefaultTestExecution() {
         Plugin plugin = pluginWith(defaultTestExecution());
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertFalse(analysis.explicitlySkipsTests());
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
     }
@@ -27,7 +25,6 @@ class SurefireCompatibilityTest {
     @Test
     void defaultIncludesMirrorSurefireClassNamingBoundary() {
         SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(defaultTestExecution()));
-
         assertTrue(matchesAny(analysis, "example.TestPayment"));
         assertTrue(matchesAny(analysis, "example.PaymentTest"));
         assertTrue(matchesAny(analysis, "example.PaymentTests"));
@@ -37,12 +34,35 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void acceptsExplicitUseModulePathFalse() {
+    void nativeForkAndThreadParallelismIsReplacedByScenarioMesh() {
         Plugin plugin = pluginWith(defaultTestExecution());
-        plugin.setConfiguration(configuration("useModulePath", "false"));
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "forkCount", "4");
+        add(config, "reuseForks", "true");
+        add(config, "parallel", "classes");
+        add(config, "threadCount", "4");
+        plugin.setConfiguration(config);
 
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
 
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+    }
+
+    @Test
+    void knownButUnsupportedSemanticCapabilityIsNamedExplicitly() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("groups", "smoke"));
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("framework-group-selection")));
+    }
+
+    @Test
+    void acceptsExplicitUseModulePathFalse() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("useModulePath", "false"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
         assertFalse(analysis.explicitlySkipsTests());
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
     }
@@ -53,9 +73,7 @@ class SurefireCompatibilityTest {
         execution.setId("company-smoke-tests");
         execution.setPhase("test");
         execution.addGoal("test");
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(execution));
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("company-smoke-tests")));
     }
 
@@ -63,9 +81,7 @@ class SurefireCompatibilityTest {
     void rejectsChangedDefaultExecutionSemantics() {
         PluginExecution execution = defaultTestExecution();
         execution.setPhase("integration-test");
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(execution));
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("non-standard execution")));
     }
 
@@ -73,9 +89,7 @@ class SurefireCompatibilityTest {
     void rejectsUnsupportedExecutionConfiguration() {
         PluginExecution execution = defaultTestExecution();
         execution.setConfiguration(configuration("includes", "**/SmokeTest.java"));
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(execution));
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("<includes>")));
     }
 
@@ -83,9 +97,7 @@ class SurefireCompatibilityTest {
     void rejectsUnknownFutureSurefireConfigurationByDefault() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("someFutureSurefireOption", "enabled"));
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("someFutureSurefireOption")));
     }
 
@@ -93,9 +105,7 @@ class SurefireCompatibilityTest {
     void rejectsUseModulePathTrueUntilModulePathExecutionIsSupported() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("useModulePath", "true"));
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("useModulePath")));
     }
 
@@ -103,9 +113,7 @@ class SurefireCompatibilityTest {
     void reportsLiteralSkipAsPassThroughSignal() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("skipTests", "true"));
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.explicitlySkipsTests());
     }
 
@@ -113,9 +121,7 @@ class SurefireCompatibilityTest {
     void rejectsDynamicSkipValueBecauseEquivalenceCannotBeProved() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertFalse(analysis.explicitlySkipsTests());
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("non-literal <skipTests>")));
     }
@@ -128,15 +134,12 @@ class SurefireCompatibilityTest {
         provider.setArtifactId("custom-surefire-provider");
         provider.setVersion("1.0");
         plugin.addDependency(provider);
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("provider/plugin dependencies")));
     }
 
     private boolean matchesAny(SurefireCompatibility.Analysis analysis, String className) {
-        return analysis.includeClassNameRegexes().stream()
-                .anyMatch(regex -> Pattern.matches(regex, className));
+        return analysis.includeClassNameRegexes().stream().anyMatch(regex -> Pattern.matches(regex, className));
     }
 
     private Plugin pluginWith(PluginExecution execution) {
@@ -157,9 +160,13 @@ class SurefireCompatibilityTest {
 
     private Xpp3Dom configuration(String name, String value) {
         Xpp3Dom root = new Xpp3Dom("configuration");
+        add(root, name, value);
+        return root;
+    }
+
+    private void add(Xpp3Dom root, String name, String value) {
         Xpp3Dom child = new Xpp3Dom(name);
         child.setValue(value);
         root.addChild(child);
-        return root;
     }
 }
