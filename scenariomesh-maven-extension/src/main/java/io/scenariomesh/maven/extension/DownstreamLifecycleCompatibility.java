@@ -9,16 +9,17 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Protects transparent Failsafe takeover from changing the contract seen by
- * arbitrary post-integration-test/verify consumers.
+ * Protects transparent Failsafe takeover from changing the contract or ordering
+ * seen by arbitrary integration-test/post-integration-test/verify consumers.
  *
- * <p>ScenarioMesh only allows downstream executions whose contract it already
- * owns or explicitly adapts. Unknown consumers remain native Maven pass-through
- * material; guessing what files/properties they consume would create silent
- * compatibility failures.</p>
+ * <p>Pre-integration-test setup remains native Maven and is therefore allowed.
+ * Unknown executions in the integration-test phase itself are different: Maven
+ * executes same-phase goals in model order, so replacing Failsafe without knowing
+ * that execution's contract could change observable ordering or shared state.</p>
  */
 final class DownstreamLifecycleCompatibility {
-    private static final Set<String> DOWNSTREAM_PHASES = Set.of("post-integration-test", "verify");
+    private static final Set<String> REPLACEMENT_SENSITIVE_PHASES = Set.of(
+            "integration-test", "post-integration-test", "verify");
     private static final Set<String> KNOWN_COORDINATES = Set.of(
             "org.apache.maven.plugins:maven-failsafe-plugin",
             "io.scenariomesh:scenariomesh-maven-plugin",
@@ -29,7 +30,7 @@ final class DownstreamLifecycleCompatibility {
             return Analysis.supported("Surefire takeover does not replace the integration-test lifecycle");
         }
         if (project.getBuildPlugins() == null) {
-            return Analysis.supported("no downstream build plugins are configured");
+            return Analysis.supported("no integration lifecycle consumers are configured");
         }
 
         List<String> unknown = new ArrayList<>();
@@ -38,18 +39,19 @@ final class DownstreamLifecycleCompatibility {
             if (KNOWN_COORDINATES.contains(coordinate) || plugin.getExecutions() == null) continue;
             for (PluginExecution execution : plugin.getExecutions()) {
                 String phase = trim(execution.getPhase());
-                if (!DOWNSTREAM_PHASES.contains(phase)) continue;
+                if (!REPLACEMENT_SENSITIVE_PHASES.contains(phase)) continue;
                 unknown.add(coordinate + " execution '" + executionId(execution) + "' bound to " + phase);
             }
         }
 
         if (!unknown.isEmpty()) {
             return Analysis.unsupported(
-                    "unknown downstream Maven lifecycle consumer(s) are active after integration-test: "
+                    "unknown Maven lifecycle consumer(s) overlap or follow the Failsafe execution replaced by ScenarioMesh: "
                             + String.join(", ", unknown)
-                            + ". ScenarioMesh cannot prove their artifact/property contract, so native Maven execution is preserved.");
+                            + ". Maven same-phase ordering and downstream artifact/property contracts cannot be proven equivalent, "
+                            + "so native Maven execution is preserved.");
         }
-        return Analysis.supported("all downstream integration lifecycle consumers have known contracts");
+        return Analysis.supported("all integration lifecycle consumers affected by takeover have known contracts");
     }
 
     private String coordinate(Plugin plugin) {
