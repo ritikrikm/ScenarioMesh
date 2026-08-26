@@ -2,17 +2,12 @@ package io.scenariomesh.maven.extension;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * Conservative parser for the Maven Surefire/Failsafe class-selection syntax
- * that ScenarioMesh can reproduce exactly.
- *
- * <p>The goal is deliberately not to emulate every Surefire feature. Patterns
- * are first classified. Supported patterns are translated with class-file path
- * semantics; unsupported constructs are rejected so the caller can pass the
- * build through to native Maven rather than silently select a different set.</p>
+ * that ScenarioMesh can reproduce exactly across every shipped adapter.
+ * Unsupported constructs are rejected so callers can retain native Maven
+ * semantics rather than silently selecting a different test set.
  */
 final class MavenClassNamePatterns {
     private MavenClassNamePatterns() {}
@@ -39,15 +34,13 @@ final class MavenClassNamePatterns {
 
     static List<String> toRegexes(List<String> patterns) {
         SelectionAnalysis analysis = analyze(patterns);
-        if (!analysis.unsupportedReasons().isEmpty()) {
-            throw new IllegalArgumentException(String.join("; ", analysis.unsupportedReasons()));
-        }
+        if (!analysis.supported()) throw new IllegalArgumentException(String.join("; ", analysis.unsupportedReasons()));
         return analysis.patterns().stream().map(CompiledPattern::regex).toList();
     }
 
     static String toRegex(String pattern) {
         SelectionAnalysis analysis = analyze(List.of(pattern));
-        if (!analysis.unsupportedReasons().isEmpty() || analysis.patterns().size() != 1) {
+        if (!analysis.supported() || analysis.patterns().size() != 1) {
             throw new IllegalArgumentException(analysis.unsupportedReasons().isEmpty()
                     ? "Pattern did not resolve to exactly one Maven class selector: " + pattern
                     : String.join("; ", analysis.unsupportedReasons()));
@@ -57,63 +50,61 @@ final class MavenClassNamePatterns {
 
     private static CompiledPattern compile(String raw) {
         if (raw.startsWith("!")) {
-            // Surefire supports inline negation in several selection surfaces. ScenarioMesh
-            // currently carries include/exclude lists separately, so silently converting an
-            // inline negation would lose ordering/combination semantics.
-            throw unsupported(raw, "inline negation is not yet represented exactly; use native Maven pass-through");
+            throw unsupported(raw, "inline negation is not yet represented exactly");
         }
         String body = raw.trim();
-
-        if (body.startsWith("%regex[") && body.endsWith("]")) {
-            String expression = body.substring("%regex[".length(), body.length() - 1);
-            try {
-                Pattern.compile(expression);
-            } catch (PatternSyntaxException exception) {
-                throw unsupported(raw, "invalid %regex expression: " + exception.getDescription());
-            }
-            // Surefire/Failsafe regex selectors are evaluated against .class paths.
-            return new CompiledPattern(raw, PatternKind.REGEX_CLASS_PATH, expression);
+        if (body.startsWith("%regex[") || body.contains("%regex")) {
+            // Surefire evaluates %regex against class-file paths while JUnit Platform's
+            // ClassNameFilter evaluates dotted class names. Until ScenarioMesh carries a
+            // typed selection object all the way to each adapter, accepting this would make
+            // semantics adapter-dependent.
+            throw unsupported(raw, "%regex class-path semantics are not yet portable across all adapters");
         }
-
         if (body.contains("#")) throw unsupported(raw, "method selectors are not class-selection patterns");
-        if (body.contains("%regex[") || body.contains("%regex")) throw unsupported(raw, "malformed %regex selector");
         if (body.indexOf('[') >= 0 || body.indexOf(']') >= 0 || body.indexOf('{') >= 0 || body.indexOf('}') >= 0) {
             throw unsupported(raw, "character classes/braces are outside ScenarioMesh's proven Maven glob subset");
         }
 
         String normalized = body.replace('\\', '/');
         if (normalized.startsWith("./")) normalized = normalized.substring(2);
-        if (normalized.endsWith(".java")) normalized = normalized.substring(0, normalized.length() - 5) + ".class";
-        else if (!normalized.endsWith(".class")) normalized = normalized + ".class";
+        if (normalized.endsWith(".java")) normalized = normalized.substring(0, normalized.length() - 5);
+        if (normalized.endsWith(".class")) normalized = normalized.substring(0, normalized.length() - 6);
 
-        return new CompiledPattern(raw, PatternKind.GLOB_CLASS_PATH, globToRegex(normalized));
+        String pathRegex = globToRegex(normalized, '/');
+        String dottedRegex = globToRegex(normalized.replace('/', '.'), '.');
+        // DiscoverySelection understands both representations, while JUnit Platform's
+        // ClassNameFilter can consume the dotted alternative directly.
+        return new CompiledPattern(raw, "(?:" + pathRegex + "|" + dottedRegex + ")");
     }
 
-    private static String globToRegex(String normalized) {
-        StringBuilder regex = new StringBuilder("^");
-        for (int index = 0; index < normalized.length(); index++) {
-            char ch = normalized.charAt(index);
+    private static String globToRegex(String value, char separator) {
+        String sep = separator == '/' ? "/" : "\\.";
+        StringBuilder regex = new StringBuilder();
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
             if (ch == '*') {
-                if (index + 1 < normalized.length() && normalized.charAt(index + 1) == '*') {
+                if (index + 1 < value.length() && value.charAt(index + 1) == '*') {
                     index++;
-                    if (index + 1 < normalized.length() && normalized.charAt(index + 1) == '/') {
-                        regex.append("(?:.*/)?");
+                    char following = index + 1 < value.length() ? value.charAt(index + 1) : 0;
+                    if (following == separator) {
+                        regex.append("(?:.*").append(sep).append(")?");
                         index++;
                     } else {
                         regex.append(".*");
                     }
                 } else {
-                    regex.append("[^/]*");
+                    regex.append(separator == '/' ? "[^/]*" : "[^.]*");
                 }
             } else if (ch == '?') {
-                regex.append("[^/]");
+                regex.append(separator == '/' ? "[^/]" : "[^.]");
+            } else if (ch == separator) {
+                regex.append(sep);
             } else if (".[]{}()+-^$|\\".indexOf(ch) >= 0) {
                 regex.append('\\').append(ch);
             } else {
                 regex.append(ch);
             }
         }
-        regex.append('$');
         return regex.toString();
     }
 
@@ -128,9 +119,7 @@ final class MavenClassNamePatterns {
             if (ch == ',' && regexDepth == 0) {
                 values.add(current.toString());
                 current.setLength(0);
-            } else {
-                current.append(ch);
-            }
+            } else current.append(ch);
         }
         values.add(current.toString());
         return values;
@@ -140,9 +129,7 @@ final class MavenClassNamePatterns {
         return new UnsupportedPatternException("unsupported Maven class selector '" + pattern + "': " + reason);
     }
 
-    enum PatternKind { GLOB_CLASS_PATH, REGEX_CLASS_PATH }
-    record CompiledPattern(String source, PatternKind kind, String regex) {}
-
+    record CompiledPattern(String source, String regex) {}
     record SelectionAnalysis(List<CompiledPattern> patterns, List<String> unsupportedReasons) {
         SelectionAnalysis {
             patterns = List.copyOf(patterns == null ? List.of() : patterns);
@@ -150,7 +137,6 @@ final class MavenClassNamePatterns {
         }
         boolean supported() { return unsupportedReasons.isEmpty(); }
     }
-
     private static final class UnsupportedPatternException extends RuntimeException {
         private UnsupportedPatternException(String message) { super(message); }
     }
