@@ -4,15 +4,15 @@ on: [push, pull_request]
 jobs:
   controlled-target:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        java: ['17', '21']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: ${{ matrix.java }}
+          # The independent controlled-contract fixture compiles its tests with
+          # release 21. ScenarioMesh's Java 17/21 runtime compatibility remains
+          # covered independently by ci.yml.
+          java-version: '21'
           cache: maven
 
       - name: Build and install ScenarioMesh
