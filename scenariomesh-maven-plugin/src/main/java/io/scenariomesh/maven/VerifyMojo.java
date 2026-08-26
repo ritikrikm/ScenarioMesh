@@ -25,6 +25,12 @@ public final class VerifyMojo extends AbstractMojo {
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
+        if (PreflightState.read(project) == PreflightState.State.PASS_THROUGH) {
+            getLog().info("ScenarioMesh verify: runtime preflight selected native Maven pass-through; deferred verification is inactive. "
+                    + PreflightState.reason(project));
+            return;
+        }
+
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         try {
             DeferredVerificationState.State state = DeferredVerificationState.read(buildDirectory);
