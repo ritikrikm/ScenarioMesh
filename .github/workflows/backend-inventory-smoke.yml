@@ -1,0 +1,27 @@
+name: backend-inventory-smoke
+on: [push, pull_request]
+
+jobs:
+  unknown-engine-pass-through:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and install ScenarioMesh
+        run: mvn -B clean install
+      - name: Unknown JUnit Platform engine remains native Maven
+        working-directory: examples/unknown-junit-engine-pass-through-example
+        run: |
+          set -o pipefail
+          mvn -B clean test | tee unknown-engine.log
+          grep -Fq 'nextgen-fixture' unknown-engine.log
+          grep -Fq 'runtime backend is detected but not safely ownable' unknown-engine.log
+          grep -Eq 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0' unknown-engine.log
+          test ! -e target/scenariomesh/report.html
