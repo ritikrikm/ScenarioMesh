@@ -74,7 +74,10 @@ final class ProjectCompatibilityDetector {
         }
         if (failsafeParticipation.state() == MavenExecutionPlan.ParticipationState.ACTIVE) {
             FailsafeCompatibility.Analysis analysis = failsafeCompatibility.analyze(
-                    failsafe, failsafeParticipation, propertyName -> resolveProperty(session, project, propertyName));
+                    failsafe,
+                    failsafeParticipation,
+                    propertyName -> resolveProperty(session, project, propertyName),
+                    propertyName -> resolveStableLateProperty(session, propertyName));
             if (!analysis.supported()) {
                 return CompatibilityDecision.passThrough(
                         "maven-failsafe-plugin participates in this invocation but ScenarioMesh cannot reproduce it safely: "
@@ -154,6 +157,7 @@ final class ProjectCompatibilityDetector {
         return null;
     }
 
+    /** Resolve values using Maven's normal early interpolation sources plus stable process/environment values. */
     private String resolveProperty(MavenSession session, MavenProject project, String key) {
         String value = session.getUserProperties().getProperty(key);
         if (value != null) return value;
@@ -161,6 +165,34 @@ final class ProjectCompatibilityDetector {
         if (value != null) return value;
         value = project.getProperties().getProperty(key);
         if (value != null) return value;
+
+        value = projectAlias(project, key);
+        if (value != null) return value;
+
+        if (key.startsWith("env.") && key.length() > 4) {
+            value = System.getenv(key.substring(4));
+            if (value != null) return value;
+        }
+        return System.getProperty(key);
+    }
+
+    /**
+     * Late @{...} replacement is safe only when the value is already fixed for this Maven process.
+     * Project properties are intentionally excluded because earlier lifecycle plugins can mutate them.
+     */
+    private String resolveStableLateProperty(MavenSession session, String key) {
+        String value = session.getUserProperties().getProperty(key);
+        if (value != null) return value;
+        value = session.getSystemProperties().getProperty(key);
+        if (value != null) return value;
+        if (key.startsWith("env.") && key.length() > 4) {
+            value = System.getenv(key.substring(4));
+            if (value != null) return value;
+        }
+        return System.getProperty(key);
+    }
+
+    private String projectAlias(MavenProject project, String key) {
         return switch (key) {
             case "project.basedir", "basedir" -> project.getBasedir() == null ? null : project.getBasedir().getAbsolutePath();
             case "project.build.directory" -> project.getBuild() == null ? null : project.getBuild().getDirectory();
