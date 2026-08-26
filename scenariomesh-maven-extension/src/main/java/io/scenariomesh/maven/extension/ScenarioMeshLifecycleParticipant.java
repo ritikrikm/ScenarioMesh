@@ -126,9 +126,10 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         plugin.getExecutions().removeIf(execution -> isManagedExecutionId(execution.getId()));
 
         // One project-wide preflight deliberately evaluates every selected runtime family before
-        // setting Maven's global skipTests/skipITs flag. This is conservative for multi-execution
-        // projects: one unknown executable backend keeps the whole project on native Maven rather
-        // than letting one plan suppress tests needed by another plan.
+        // setting Maven's global skipTests/skipITs flag. For the common single-plan case we pass
+        // the exact same class-selection boundary into preflight and execution. Multi-execution
+        // projects remain deliberately conservative: preflight sees the full compiled test universe
+        // until each Maven execution can be probed independently without globally suppressing another.
         PluginExecution preflight = new PluginExecution();
         preflight.setId(PREFLIGHT_EXECUTION_ID);
         preflight.setPhase("process-test-classes");
@@ -136,6 +137,11 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         Xpp3Dom preflightConfig = new Xpp3Dom("configuration");
         addValue(preflightConfig, "takeoverExecutor", decision.executorKind().name().toLowerCase());
         addValue(preflightConfig, "knownModelFramework", Boolean.toString(!decision.frameworks().isEmpty()));
+        if (decision.executorPlans().size() == 1) {
+            ProjectCompatibilityDetector.ExecutorPlan plan = decision.executorPlans().get(0);
+            addList(preflightConfig, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
+            addList(preflightConfig, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
+        }
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);
 
