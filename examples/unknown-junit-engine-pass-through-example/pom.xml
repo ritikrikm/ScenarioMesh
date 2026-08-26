@@ -6,9 +6,9 @@
   <properties><maven.compiler.release>17</maven.compiler.release></properties>
   <dependencies>
     <dependency>
-      <groupId>org.junit.platform</groupId>
-      <artifactId>junit-platform-engine</artifactId>
-      <version>1.10.5</version>
+      <groupId>example</groupId>
+      <artifactId>nextgen-fixture-engine</artifactId>
+      <version>1.0-SNAPSHOT</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
