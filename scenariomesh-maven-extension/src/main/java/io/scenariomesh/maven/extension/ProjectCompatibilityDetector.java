@@ -40,7 +40,9 @@ final class ProjectCompatibilityDetector {
         if (projectSkipsTests(project)) return CompatibilityDecision.passThrough("project configuration explicitly skips tests");
 
         FrameworkSignals frameworks = detectFrameworks(project);
-        if (!frameworks.supported()) return CompatibilityDecision.passThrough("no supported ScenarioMesh test framework was detected in the project model");
+        // No known model framework is not a final decision: a future/custom JUnit Platform
+        // TestEngine can live behind an arbitrary dependency. Maven semantics are validated here;
+        // actual engine ownership is proven after test compilation by runtime preflight.
         if (frameworks.directJUnit4() && !frameworks.cucumberJUnit4()) {
             return CompatibilityDecision.passThrough(
                     "generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
@@ -295,7 +297,7 @@ final class ProjectCompatibilityDetector {
         static CompatibilityDecision takeOver(Set<String> frameworks, ExecutorKind executorKind, String phase,
                                               boolean deferFailure, List<ExecutorPlan> plans) {
             return new CompatibilityDecision(true, frameworks,
-                    "supported framework/model configuration detected; executable adapter ownership will be proven by runtime discovery",
+                    "Maven executor semantics are compatible; executable framework ownership will be proven by runtime preflight",
                     executorKind, phase, deferFailure, plans);
         }
 
