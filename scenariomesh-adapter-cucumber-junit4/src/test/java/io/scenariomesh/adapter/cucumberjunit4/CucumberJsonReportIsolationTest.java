@@ -29,15 +29,44 @@ class CucumberJsonReportIsolationTest {
     }
 
     @Test
+    void arbitraryCustomEventAndReportingPluginsArePreservedExactlyOnce() {
+        Path output = Path.of("target", "cucumber-report", "isolated.json");
+        String customListener = "com.acme.testing.CustomTestEventListener";
+        String externalReporter = "com.vendor.reporting.ScenarioReporter";
+
+        String value = CucumberJsonReportIsolation.modernPluginValue(
+                List.of(customListener, "pretty", "json:target/native.json"),
+                externalReporter + "," + customListener,
+                output);
+
+        assertEquals(1, occurrences(value, customListener));
+        assertEquals(1, occurrences(value, externalReporter));
+        assertTrue(value.contains("pretty"));
+        assertTrue(value.contains("json:" + output.toAbsolutePath().normalize()));
+        assertFalse(value.contains("target/native.json"));
+    }
+
+    @Test
     void legacyOptionsAppendAnIsolatedJsonPluginWithoutDroppingExistingOptions() {
         Path output = Path.of("target", "cucumber-report", "isolated.json");
 
         String value = CucumberJsonReportIsolation.legacyOptionsValue(
-                "--tags @smoke --monochrome",
+                "--tags @smoke --plugin com.acme.CustomListener --monochrome",
                 output);
 
-        assertEquals(
-                "--tags @smoke --monochrome --plugin json:" + output.toAbsolutePath().normalize(),
-                value);
+        assertTrue(value.contains("--tags @smoke"));
+        assertTrue(value.contains("--plugin com.acme.CustomListener"));
+        assertTrue(value.contains("--monochrome"));
+        assertTrue(value.endsWith("--plugin json:" + output.toAbsolutePath().normalize()));
+    }
+
+    private int occurrences(String value, String token) {
+        int count = 0;
+        int offset = 0;
+        while ((offset = value.indexOf(token, offset)) >= 0) {
+            count++;
+            offset += token.length();
+        }
+        return count;
     }
 }
