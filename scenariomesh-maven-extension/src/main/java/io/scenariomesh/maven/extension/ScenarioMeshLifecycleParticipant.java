@@ -30,6 +30,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
     private final DownstreamReportCompatibility downstreamReportCompatibility = new DownstreamReportCompatibility();
+    private final DownstreamLifecycleCompatibility downstreamLifecycleCompatibility = new DownstreamLifecycleCompatibility();
     private final ConfigResolver configResolver = new ConfigResolver();
     @Requirement private Logger logger;
 
@@ -62,6 +63,13 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             ProjectCompatibilityDetector.CompatibilityDecision decision = compatibilityDetector.evaluate(session, project);
             if (!decision.compatible()) {
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + decision.reason());
+                continue;
+            }
+
+            DownstreamLifecycleCompatibility.Analysis lifecycleAnalysis =
+                    downstreamLifecycleCompatibility.analyze(project, decision.executorKind());
+            if (!lifecycleAnalysis.supported()) {
+                info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + lifecycleAnalysis.reason());
                 continue;
             }
 
