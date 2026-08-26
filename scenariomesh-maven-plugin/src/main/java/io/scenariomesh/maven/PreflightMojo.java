@@ -37,6 +37,8 @@ public final class PreflightMojo extends AbstractMojo {
     private List<Artifact> pluginArtifacts;
     @Parameter(defaultValue = "surefire")
     private String takeoverExecutor;
+    @Parameter(defaultValue = "false")
+    private boolean knownModelFramework;
 
     @Override
     public void execute() {
@@ -63,10 +65,14 @@ public final class PreflightMojo extends AbstractMojo {
                     passThrough("runtime backend is detected but not safely ownable: " + inventory.summary());
                     return;
                 }
+                if (inventory.ownership() == ExecutionBackendInventory.Ownership.NOT_DETECTED && !knownModelFramework) {
+                    passThrough("no executable runtime backend was detected and no known legacy framework signal exists: "
+                            + inventory.summary());
+                    return;
+                }
 
-                // NOT_DETECTED is valid here: legacy Cucumber JUnit4 and TestNG are not required
-                // to expose JUnit Platform engines. ProjectCompatibilityDetector already proved
-                // a supported Maven/framework signal before this preflight was injected.
+                // NOT_DETECTED remains valid only for known legacy paths such as Cucumber JUnit4
+                // and TestNG, which are not required to expose a JUnit Platform TestEngine.
                 PreflightState.owned(project, inventory.summary());
                 suppressNativeExecutor();
                 getLog().info("ScenarioMesh preflight: ownership proven; native " + normalizedExecutor()
