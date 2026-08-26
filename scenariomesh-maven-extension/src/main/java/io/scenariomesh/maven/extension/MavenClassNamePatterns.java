@@ -56,9 +56,7 @@ final class MavenClassNamePatterns {
         }
         String body = raw.trim();
         if (body.startsWith("%regex[")) return compileMavenRegex(raw, body);
-        if (body.contains("%regex")) {
-            throw unsupported(raw, "malformed %regex selector");
-        }
+        if (body.contains("%regex")) throw unsupported(raw, "malformed %regex selector");
         if (body.contains("#")) throw unsupported(raw, "method selectors are not class-selection patterns");
         if (body.indexOf('[') >= 0 || body.indexOf(']') >= 0 || body.indexOf('{') >= 0 || body.indexOf('}') >= 0) {
             throw unsupported(raw, "character classes/braces are outside ScenarioMesh's proven Maven glob subset");
@@ -69,21 +67,20 @@ final class MavenClassNamePatterns {
         if (normalized.endsWith(".java")) normalized = normalized.substring(0, normalized.length() - 5);
         if (normalized.endsWith(".class")) normalized = normalized.substring(0, normalized.length() - 6);
 
-        String pathRegex = globToRegex(normalized, '/');
+        String pathBaseRegex = globToRegex(normalized, '/');
         String dottedRegex = globToRegex(normalized.replace('/', '.'), '.');
-        // DiscoverySelection understands both representations, while JUnit Platform's
-        // ClassNameFilter can consume the dotted alternative directly.
-        return new CompiledPattern(raw, "(?:" + pathRegex + "|" + dottedRegex + ")");
+        // Surefire/Failsafe scan compiled class-file paths. Framework discovery APIs commonly
+        // expose dotted Java class names, so we represent both explicitly rather than relying
+        // on wildcards to accidentally consume the .class suffix.
+        String classFileRegex = pathBaseRegex + "\\.class";
+        return new CompiledPattern(raw, "(?:" + classFileRegex + "|" + dottedRegex + ")");
     }
 
     /**
      * Maven Surefire/Failsafe define %regex selectors against forward-slash
      * class-file paths (for example com/acme/LoginIT.class), not source paths or
-     * dotted Java class names. DiscoverySelection also checks dotted names for
-     * ScenarioMesh-native patterns, so the positive look-ahead below deliberately
-     * makes this compiled selector impossible to match unless the candidate ends
-     * in .class. That preserves Maven's path-only regex contract without making
-     * every adapter understand Maven syntax directly.
+     * dotted Java class names. The positive look-ahead prevents the regex from
+     * gaining dotted-name semantics when DiscoverySelection evaluates both forms.
      */
     private static CompiledPattern compileMavenRegex(String raw, String body) {
         if (!body.endsWith("]") || body.length() <= 8) {
