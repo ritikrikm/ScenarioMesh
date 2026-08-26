@@ -26,10 +26,18 @@ final class FailsafeCompatibility {
             "**/*IT.java",
             "**/*ITCase.java");
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
+    private static final Pattern LATE_PROPERTY_REFERENCE = Pattern.compile("@\\{([^}]+)}");
 
     Analysis analyze(Plugin plugin,
                      MavenExecutionPlan.PluginParticipation participation,
                      Function<String, String> propertyResolver) {
+        return analyze(plugin, participation, propertyResolver, propertyResolver);
+    }
+
+    Analysis analyze(Plugin plugin,
+                     MavenExecutionPlan.PluginParticipation participation,
+                     Function<String, String> propertyResolver,
+                     Function<String, String> stableLatePropertyResolver) {
         List<PluginExecution> testExecutions = participation.activeExecutions().stream()
                 .filter(this::containsIntegrationTestGoal)
                 .toList();
@@ -49,13 +57,15 @@ final class FailsafeCompatibility {
                     "maven-failsafe-plugin configuration",
                     settings,
                     reasons,
-                    propertyResolver);
+                    propertyResolver,
+                    stableLatePropertyResolver);
             inspectConfiguration(
                     execution.getConfiguration(),
                     "maven-failsafe-plugin execution '" + executionId(execution) + "'",
                     settings,
                     reasons,
-                    propertyResolver);
+                    propertyResolver,
+                    stableLatePropertyResolver);
 
             if (settings.rerunFailingTestsCount > 0) {
                 reasons.add("rerunFailingTestsCount resolves to " + settings.rerunFailingTestsCount
@@ -84,12 +94,8 @@ final class FailsafeCompatibility {
                     settings.testFailureIgnore));
         }
 
-        if (!allReasons.isEmpty()) {
-            return Analysis.unsupported(String.join("; ", allReasons));
-        }
-        if (plans.isEmpty()) {
-            return Analysis.unsupported("Failsafe execution analysis produced no reproducible execution plans");
-        }
+        if (!allReasons.isEmpty()) return Analysis.unsupported(String.join("; ", allReasons));
+        if (plans.isEmpty()) return Analysis.unsupported("Failsafe execution analysis produced no reproducible execution plans");
 
         boolean allSkipped = plans.stream().allMatch(ExecutionPlan::explicitlySkipped);
         long activeCount = plans.stream().filter(plan -> !plan.explicitlySkipped()).count();
@@ -110,7 +116,8 @@ final class FailsafeCompatibility {
                                       String location,
                                       EffectiveSettings settings,
                                       List<String> reasons,
-                                      Function<String, String> propertyResolver) {
+                                      Function<String, String> propertyResolver,
+                                      Function<String, String> stableLatePropertyResolver) {
         if (!(raw instanceof Xpp3Dom configuration)) return;
         for (Xpp3Dom child : configuration.getChildren()) {
             if (!meaningful(child)) continue;
@@ -123,11 +130,9 @@ final class FailsafeCompatibility {
                 }
                 case "useModulePath" -> {
                     Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                    if (value != null && !Boolean.FALSE.equals(value)) {
-                        reasons.add(location + " uses <useModulePath> with unsupported semantics");
-                    }
+                    if (value != null && !Boolean.FALSE.equals(value)) reasons.add(location + " uses <useModulePath> with unsupported semantics");
                 }
-                case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver);
+                case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver, stableLatePropertyResolver);
                 case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
                 case "testFailureIgnore" -> {
                     Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
@@ -151,7 +156,8 @@ final class FailsafeCompatibility {
                              String location,
                              EffectiveSettings settings,
                              List<String> reasons,
-                             Function<String, String> propertyResolver) {
+                             Function<String, String> propertyResolver,
+                             Function<String, String> stableLatePropertyResolver) {
         if (node.getChildCount() > 0) {
             reasons.add(location + " contains a structured <argLine> that cannot be reproduced safely");
             return;
@@ -161,11 +167,10 @@ final class FailsafeCompatibility {
             settings.jvmArgs.clear();
             return;
         }
-        if (resolved.contains("@{")) {
-            reasons.add(location + " uses late Failsafe property replacement in <argLine>; "
-                    + "ScenarioMesh cannot prove the resolved JVM command line");
-            return;
-        }
+
+        resolved = resolveLate(resolved, location + " <argLine>", reasons, stableLatePropertyResolver);
+        if (resolved == null) return;
+
         try {
             String[] translated = CommandLineUtils.translateCommandline(resolved);
             settings.jvmArgs.clear();
@@ -173,6 +178,27 @@ final class FailsafeCompatibility {
         } catch (Exception exception) {
             reasons.add(location + " contains an <argLine> that cannot be tokenized safely: " + exception.getMessage());
         }
+    }
+
+    private String resolveLate(String value,
+                               String location,
+                               List<String> reasons,
+                               Function<String, String> stableLatePropertyResolver) {
+        Matcher matcher = LATE_PROPERTY_REFERENCE.matcher(value);
+        StringBuffer resolved = new StringBuffer();
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            String replacement = stableLatePropertyResolver.apply(key);
+            if (replacement == null) {
+                reasons.add(location + " uses late property replacement @{" + key + "}; "
+                        + "its value is not fixed by Maven user/system properties, the process environment, or Java system properties. "
+                        + "ScenarioMesh will pass through because an earlier lifecycle plugin may mutate it.");
+                return null;
+            }
+            matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(resolved);
+        return resolved.toString();
     }
 
     private void readSystemProperties(Xpp3Dom parent,
@@ -198,16 +224,12 @@ final class FailsafeCompatibility {
                                  Function<String, String> propertyResolver) {
         for (Xpp3Dom item : parent.getChildren()) {
             if (!"include".equals(item.getName()) && !"exclude".equals(item.getName())) {
-                reasons.add(location + " contains unsupported <" + item.getName() + "> inside <"
-                        + parent.getName() + ">");
+                reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">");
                 continue;
             }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
-            if (value == null || value.isBlank()) {
-                reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
-            } else {
-                destination.add(value);
-            }
+            if (value == null || value.isBlank()) reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
+            else destination.add(value);
         }
     }
 
@@ -270,9 +292,7 @@ final class FailsafeCompatibility {
         return resolved.toString();
     }
 
-    static String mavenClassPatternToRegex(String pattern) {
-        return MavenClassNamePatterns.toRegex(pattern);
-    }
+    static String mavenClassPatternToRegex(String pattern) { return MavenClassNamePatterns.toRegex(pattern); }
 
     private boolean meaningful(Xpp3Dom node) {
         return trim(node.getValue()) != null || node.getChildCount() > 0
@@ -317,9 +337,7 @@ final class FailsafeCompatibility {
             executionPlans = List.copyOf(executionPlans == null ? List.of() : executionPlans);
         }
 
-        static Analysis unsupported(String reason) {
-            return new Analysis(false, false, List.of(), reason);
-        }
+        static Analysis unsupported(String reason) { return new Analysis(false, false, List.of(), reason); }
     }
 
     private static final class EffectiveSettings {
