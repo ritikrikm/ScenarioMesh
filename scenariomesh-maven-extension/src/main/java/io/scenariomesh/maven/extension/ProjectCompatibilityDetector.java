@@ -41,9 +41,6 @@ final class ProjectCompatibilityDetector {
         if (projectSkipsTests(properties)) return CompatibilityDecision.passThrough("effective Maven configuration explicitly skips tests");
 
         FrameworkSignals frameworks = detectFrameworks(project);
-        // No known model framework is not a final decision: a future/custom JUnit Platform
-        // TestEngine can live behind an arbitrary dependency. Maven semantics are validated here;
-        // actual engine ownership is proven after test compilation by runtime preflight.
         if (frameworks.directJUnit4() && !frameworks.cucumberJUnit4()) {
             return CompatibilityDecision.passThrough(
                     "generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
@@ -129,9 +126,12 @@ final class ProjectCompatibilityDetector {
         List<String> includes = surefireAnalysis == null
                 ? SurefireCompatibility.defaultIncludeClassNameRegexes()
                 : surefireAnalysis.includeClassNameRegexes();
+        List<String> excludes = surefireAnalysis == null
+                ? SurefireCompatibility.defaultExcludeClassNameRegexes()
+                : surefireAnalysis.excludeClassNameRegexes();
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(new ExecutorPlan("default-test", includes, List.of(), List.of(), frameworkSystemProperties, false)));
+                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), frameworkSystemProperties, false)));
     }
 
     private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
