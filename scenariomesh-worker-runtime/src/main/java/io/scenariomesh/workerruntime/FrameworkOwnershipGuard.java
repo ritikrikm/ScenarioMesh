@@ -15,15 +15,16 @@ import java.util.List;
  * class set but have no ScenarioMesh adapter capable of owning them.
  *
  * <p>This is intentionally a gap detector, not another test engine. A detected
- * gap aborts takeover discovery rather than allowing a green build that silently
- * omits native Maven tests.</p>
+ * gap rejects takeover rather than allowing a green build that silently omits
+ * native Maven tests. It is public so Maven preflight can prove ownership before
+ * native Surefire/Failsafe is suppressed.</p>
  */
-final class FrameworkOwnershipGuard {
+public final class FrameworkOwnershipGuard {
     private static final String JUNIT4_TEST = "org.junit.Test";
     private static final String JUNIT4_RUN_WITH = "org.junit.runner.RunWith";
     private static final String CUCUMBER_RUNNER = "cucumber";
 
-    void verifyNoUnsupportedExecutableFamilies(AdapterContext context) {
+    public void verifyNoUnsupportedExecutableFamilies(AdapterContext context) {
         if (!classPresent(JUNIT4_TEST, context.classLoader())) return;
 
         List<String> unsupportedJUnit4 = new ArrayList<>();
