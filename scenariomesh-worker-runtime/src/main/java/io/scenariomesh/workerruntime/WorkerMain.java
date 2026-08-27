@@ -6,6 +6,7 @@ import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Domain.WorkerId;
 import io.scenariomesh.core.Ports.ExecutionContext;
+import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.Ports.WorkerTaskCleanup;
 import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
@@ -38,9 +39,7 @@ public final class WorkerMain {
         AdapterRegistry adapters = new AdapterRegistry();
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         List<WorkerTaskCleanup> cleanupHooks = ServiceLoader.load(WorkerTaskCleanup.class, classLoader)
-                .stream()
-                .map(ServiceLoader.Provider::get)
-                .toList();
+                .stream().map(ServiceLoader.Provider::get).toList();
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
 
@@ -55,136 +54,94 @@ public final class WorkerMain {
                     write(mapper, writer, Envelope.ack(parsed.workerId));
                     return;
                 }
-                if (envelope.type() != Protocol.Type.RUN
-                        || envelope.tasks().isEmpty()
-                        || envelope.attempt() == null
-                        || envelope.attempt() < 1) {
+                if (envelope.type() != Protocol.Type.RUN || envelope.tasks().isEmpty()
+                        || envelope.attempt() == null || envelope.attempt() < 1) {
                     write(mapper, writer, Envelope.error(parsed.workerId,
                             "Expected RUN command with at least one task and a positive attempt"));
                     continue;
                 }
 
-                List<ScenarioTask> tasks = envelope.tasks();
-                ExecutionContext context = new ExecutionContext(
-                        classLoader,
-                        new WorkerId(parsed.workerId),
-                        envelope.attempt(),
-                        properties);
-                List<ExecutionResult> results = executeBatch(adapters, tasks, context);
-                results = runCleanupHooks(cleanupHooks, tasks, context, results);
-                write(mapper, writer, Envelope.resultBatch(parsed.workerId, results, telemetry()));
+                List<ScenarioTask> dispatched = envelope.tasks();
+                ExecutionContext context = new ExecutionContext(classLoader, new WorkerId(parsed.workerId),
+                        envelope.attempt(), properties);
+                WorkUnitExecution execution = executeWorkUnit(adapters, dispatched, context);
+                List<ExecutionResult> cleaned = runCleanupHooks(
+                        cleanupHooks, execution.tasks(), context, execution.results());
+                write(mapper, writer, Envelope.resultBatch(parsed.workerId,
+                        execution.tasks(), cleaned, telemetry()));
             }
         }
     }
 
-    private static List<ExecutionResult> executeBatch(
-            AdapterRegistry adapters,
-            List<ScenarioTask> tasks,
-            ExecutionContext context) {
+    private static WorkUnitExecution executeWorkUnit(
+            AdapterRegistry adapters, List<ScenarioTask> tasks, ExecutionContext context) {
         String adapterId = tasks.get(0).adapterId();
         for (ScenarioTask task : tasks) {
             if (!adapterId.equals(task.adapterId())) {
-                return failures(tasks, context,
-                        "Worker received a work unit containing multiple adapters",
-                        "MixedAdapterWorkUnit");
+                return new WorkUnitExecution(tasks, failures(tasks, context,
+                        "Worker received a work unit containing multiple adapters", "MixedAdapterWorkUnit"));
             }
         }
         try {
-            List<ExecutionResult> results = Objects.requireNonNull(
-                    adapters.required(adapterId).executeBatch(tasks, context),
-                    "Adapter returned null batch result");
-            if (results.isEmpty()) {
-                return failures(tasks, context, "Adapter returned an empty batch result", "EmptyBatchResult");
-            }
-            return List.copyOf(results);
+            WorkUnitExecution execution = Objects.requireNonNull(
+                    adapters.required(adapterId).executeWorkUnit(tasks, context),
+                    "Adapter returned null work-unit execution");
+            return execution;
         } catch (Exception exception) {
-            return failures(tasks, context, safeMessage(exception), exception.getClass().getName());
+            return new WorkUnitExecution(tasks, failures(tasks, context,
+                    safeMessage(exception), exception.getClass().getName()));
         }
     }
 
     private static List<ExecutionResult> runCleanupHooks(
-            List<WorkerTaskCleanup> hooks,
-            List<ScenarioTask> tasks,
-            ExecutionContext context,
-            List<ExecutionResult> results) {
+            List<WorkerTaskCleanup> hooks, List<ScenarioTask> tasks,
+            ExecutionContext context, List<ExecutionResult> results) {
         Map<String, ExecutionResult> byId = new HashMap<>();
-        for (ExecutionResult result : results) {
-            byId.put(result.scenarioId().value(), result);
-        }
+        for (ExecutionResult result : results) byId.put(result.scenarioId().value(), result);
         List<ExecutionResult> cleaned = new ArrayList<>(tasks.size());
         for (ScenarioTask task : tasks) {
             ExecutionResult result = byId.get(task.id().value());
-            if (result == null) {
-                result = failure(task, context, "Adapter did not return a result for this task", "MissingBatchResult");
-            }
+            if (result == null) result = failure(task, context,
+                    "Adapter did not return a result for this materialized task", "MissingBatchResult");
             cleaned.add(runCleanupHooks(hooks, task, context, result));
         }
         return List.copyOf(cleaned);
     }
 
-    static ExecutionResult runCleanupHooks(
-            List<WorkerTaskCleanup> hooks,
-            ScenarioTask task,
-            ExecutionContext context,
-            ExecutionResult result) {
+    static ExecutionResult runCleanupHooks(List<WorkerTaskCleanup> hooks,
+                                           ScenarioTask task,
+                                           ExecutionContext context,
+                                           ExecutionResult result) {
         for (WorkerTaskCleanup hook : hooks) {
             try {
                 hook.afterTask(task, context, result);
             } catch (Exception exception) {
                 Instant finished = Instant.now();
-                return new ExecutionResult(
-                        task.id(),
-                        task.displayName(),
-                        ResultStatus.INFRASTRUCTURE_FAILURE,
-                        Duration.between(result.startedAt(), finished),
-                        context.workerId(),
-                        context.attempt(),
-                        result.startedAt(),
-                        finished,
-                        cleanupFailureMessage(hook, exception, result),
+                return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                        Duration.between(result.startedAt(), finished), context.workerId(), context.attempt(),
+                        result.startedAt(), finished, cleanupFailureMessage(hook, exception, result),
                         "CleanupFailure:" + exception.getClass().getName());
             }
         }
         return result;
     }
 
-    private static List<ExecutionResult> failures(
-            List<ScenarioTask> tasks,
-            ExecutionContext context,
-            String message,
-            String type) {
+    private static List<ExecutionResult> failures(List<ScenarioTask> tasks, ExecutionContext context,
+                                                  String message, String type) {
         return tasks.stream().map(task -> failure(task, context, message, type)).toList();
     }
 
-    private static ExecutionResult failure(
-            ScenarioTask task,
-            ExecutionContext context,
-            String message,
-            String type) {
+    private static ExecutionResult failure(ScenarioTask task, ExecutionContext context,
+                                           String message, String type) {
         Instant now = Instant.now();
-        return new ExecutionResult(
-                task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                 Duration.ZERO, context.workerId(), context.attempt(), now, now, message, type);
     }
 
-    private static String cleanupFailureMessage(
-            WorkerTaskCleanup hook,
-            Exception cleanupFailure,
-            ExecutionResult originalResult) {
-        StringBuilder message = new StringBuilder()
-                .append("Worker cleanup hook ")
-                .append(hook.getClass().getName())
-                .append(" failed: ")
-                .append(safeMessage(cleanupFailure))
-                .append(". Original task outcome: status=")
-                .append(originalResult.status());
-        if (originalResult.failureType() != null && !originalResult.failureType().isBlank()) {
-            message.append(", failureType=").append(originalResult.failureType());
-        }
-        if (originalResult.failureMessage() != null && !originalResult.failureMessage().isBlank()) {
-            message.append(", failureMessage=").append(originalResult.failureMessage());
-        }
-        return message.toString();
+    private static String cleanupFailureMessage(WorkerTaskCleanup hook, Exception cleanupFailure,
+                                                ExecutionResult originalResult) {
+        return "Worker cleanup hook " + hook.getClass().getName() + " failed: "
+                + safeMessage(cleanupFailure) + ". Original task outcome: status=" + originalResult.status();
     }
 
     private static WorkerTelemetry telemetry() {
@@ -211,9 +168,7 @@ public final class WorkerMain {
 
     private record Arguments(String host, int port, String token, String workerId) {
         private static Arguments parse(String[] args) {
-            String host = null;
-            String token = null;
-            String workerId = null;
+            String host = null, token = null, workerId = null;
             Integer port = null;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
