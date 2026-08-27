@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.ServiceLoader;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public final class WorkerMain {
     private WorkerMain() {}
@@ -49,7 +51,8 @@ public final class WorkerMain {
         try (Socket socket = new Socket(InetAddress.getByName(parsed.host), parsed.port);
              BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
-            write(mapper, writer, Envelope.hello(parsed.workerId, parsed.token, capabilities(parsed.workerId)));
+            write(mapper, writer, Envelope.hello(parsed.workerId, parsed.token,
+                    capabilities(adapters, classLoader)));
             for (String line; (line = reader.readLine()) != null;) {
                 Envelope envelope = mapper.readValue(line, Envelope.class);
                 validate(envelope);
@@ -76,13 +79,16 @@ public final class WorkerMain {
         }
     }
 
-    private static WorkerCapabilities capabilities(String workerId) throws Exception {
+    private static WorkerCapabilities capabilities(AdapterRegistry adapters, ClassLoader classLoader) throws Exception {
         String configuredAgent = System.getenv("JENKINS_NODE_NAME");
         String agentId = configuredAgent == null || configuredAgent.isBlank()
                 ? InetAddress.getLocalHost().getHostName() : configuredAgent.trim();
         String os = System.getProperty("os.name", "unknown");
         String architecture = System.getProperty("os.arch", "unknown");
         int javaFeature = Runtime.version().feature();
+        Set<String> adapterIds = adapters.available(classLoader).stream()
+                .map(adapter -> adapter.id())
+                .collect(Collectors.toUnmodifiableSet());
         String fingerprintInput = String.join("\n",
                 Integer.toString(Protocol.VERSION),
                 Integer.toString(javaFeature),
@@ -94,7 +100,7 @@ public final class WorkerMain {
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
-                HexFormat.of().formatHex(digest));
+                HexFormat.of().formatHex(digest), adapterIds, Set.of());
     }
 
     private static WorkUnitExecution executeWorkUnit(
