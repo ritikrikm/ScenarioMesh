@@ -18,7 +18,7 @@ jobs:
         run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest,*DistributedWorkAuthorityTest,*WorkerRegistrationValidatorTest,*LeasedResponseReaderTest,*LeaseHeartbeatEmitterTest,*WorkerCapabilitiesTest' -Dsurefire.failIfNoSpecifiedTests=false
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
-      - name: Transparent remote takeover fails closed to native Maven
+      - name: Transparent remote takeover fails closed when readiness is unproven
         working-directory: examples/testng-example
         run: |
           token="p3-pass-through-${{ github.run_id }}-${{ matrix.java }}"
@@ -31,16 +31,67 @@ jobs:
             -Dscenariomesh.distributed.bindHost=127.0.0.1 \
             -Dscenariomesh.distributed.bindPort="$port" \
             -Dscenariomesh.distributed.token="$token" \
+            -Dscenariomesh.distributed.registrationTimeout=PT2S \
             > pass-through.log 2>&1
           cat pass-through.log
-          grep -Fq 'ScenarioMesh preflight: native Maven pass-through - remote distributed execution is configured' pass-through.log
-          if grep -Fq 'Remote worker coordinator listening on' pass-through.log; then
-            echo 'Transparent remote takeover started a coordinator before remote ownership was proven'
+          grep -Fq 'ScenarioMesh preflight: native Maven pass-through - preflight could not prove complete runtime ownership: Only 0 of 2 remote workers registered' pass-through.log
+          if grep -Fq 'Using 2 authenticated remote worker process(es) proven during Maven preflight' pass-through.log; then
+            echo 'Transparent remote takeover ran without proven worker readiness'
             exit 1
           fi
           test -d target/surefire-reports
           if test -f target/scenariomesh/summary.json; then
             echo 'ScenarioMesh unexpectedly produced a remote run summary during native pass-through'
+            exit 1
+          fi
+      - name: Transparent mvn test uses exact preflight-authenticated workers
+        working-directory: examples/testng-example
+        run: |
+          token="p3-transparent-${{ github.run_id }}-${{ matrix.java }}"
+          port=$((42000 + ${{ matrix.java }}))
+          rm -rf target/scenariomesh target/surefire-reports
+          set +e
+          mvn -B clean test \
+            -Dscenariomesh.workers.mode=remote \
+            -Dscenariomesh.workers.count=2 \
+            -Dscenariomesh.workers.minimumReady=2 \
+            -Dscenariomesh.distributed.bindHost=127.0.0.1 \
+            -Dscenariomesh.distributed.bindPort="$port" \
+            -Dscenariomesh.distributed.token="$token" \
+            -Dscenariomesh.distributed.registrationTimeout=PT45S \
+            > transparent.log 2>&1 &
+          coordinator_pid=$!
+          set -e
+          for i in $(seq 1 90); do
+            if grep -Fq 'ScenarioMesh remote preflight listening on' transparent.log 2>/dev/null; then break; fi
+            if ! kill -0 "$coordinator_pid" 2>/dev/null; then cat transparent.log; exit 1; fi
+            sleep 1
+          done
+          grep -Fq 'ScenarioMesh remote preflight listening on' transparent.log
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+            -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
+            -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=transparent-a \
+            > transparent-worker-a.log 2>&1 &
+          worker_a=$!
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+            -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
+            -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=transparent-b \
+            > transparent-worker-b.log 2>&1 &
+          worker_b=$!
+          wait "$coordinator_pid"
+          wait "$worker_a"
+          wait "$worker_b"
+          cat transparent.log
+          cat transparent-worker-a.log
+          cat transparent-worker-b.log
+          grep -Fq 'ScenarioMesh remote preflight proved 2 authenticated worker(s)' transparent.log
+          grep -Fq 'ScenarioMesh preflight: ownership proven' transparent.log
+          grep -Fq 'Using 2 authenticated remote worker process(es) proven during Maven preflight; no reconnect is required.' transparent.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"passed" : 6' target/scenariomesh/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh/summary.json
+          if grep -Fq "$token" transparent.log; then
+            echo 'Remote authentication token leaked into transparent coordinator logs'
             exit 1
           fi
       - name: Compile target for explicit remote run
@@ -49,8 +100,8 @@ jobs:
       - name: Two remote workers execute an explicit real target run
         working-directory: examples/testng-example
         run: |
-          token="p3-${{ github.run_id }}-${{ matrix.java }}"
-          port=$((42000 + ${{ matrix.java }}))
+          token="p3-explicit-${{ github.run_id }}-${{ matrix.java }}"
+          port=$((43000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
           mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
