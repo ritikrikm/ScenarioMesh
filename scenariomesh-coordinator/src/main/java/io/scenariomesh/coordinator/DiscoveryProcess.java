@@ -38,6 +38,7 @@ final class DiscoveryProcess {
         }
 
         List<String> command = JavaProcessSupport.command(
+                request.javaExecutable(),
                 request.runtimeClasspath(),
                 request.effectiveJvmArgs(),
                 request.effectiveSystemProperties(),
