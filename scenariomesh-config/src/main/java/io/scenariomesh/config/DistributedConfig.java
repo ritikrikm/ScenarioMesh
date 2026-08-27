@@ -10,7 +10,14 @@ public record DistributedConfig(
         String bindHost,
         int bindPort,
         String token,
-        Duration registrationTimeout) {
+        Duration registrationTimeout,
+        TlsConfig tls) {
+
+    /** Backward-compatible constructor for callers compiled before TLS configuration existed. */
+    public DistributedConfig(WorkerMode mode, String bindHost, int bindPort, String token,
+                             Duration registrationTimeout) {
+        this(mode, bindHost, bindPort, token, registrationTimeout, TlsConfig.disabled());
+    }
 
     public DistributedConfig {
         mode = Objects.requireNonNull(mode, "mode");
@@ -23,6 +30,7 @@ public record DistributedConfig(
             throw new IllegalArgumentException("Invalid configuration: distributed.registrationTimeout must be greater than 0");
         }
         token = token == null ? "" : token.trim();
+        tls = tls == null ? TlsConfig.disabled() : tls;
         if (mode == WorkerMode.REMOTE) {
             if (bindPort == 0) {
                 throw new IllegalArgumentException("Invalid configuration: distributed.bindPort must be explicit in remote mode");
@@ -30,15 +38,24 @@ public record DistributedConfig(
             if (token.isBlank()) {
                 throw new IllegalArgumentException("Invalid configuration: distributed.token is required in remote mode");
             }
+            if (!isLoopbackHost(bindHost) && !tls.enabled()) {
+                throw new IllegalArgumentException("Invalid configuration: non-loopback distributed.bindHost requires distributed.tls.enabled=true");
+            }
         }
     }
 
     public static DistributedConfig defaults() {
-        return new DistributedConfig(WorkerMode.LOCAL, "127.0.0.1", 0, "", Duration.ofSeconds(30));
+        return new DistributedConfig(WorkerMode.LOCAL, "127.0.0.1", 0, "", Duration.ofSeconds(30), TlsConfig.disabled());
     }
 
     public boolean remote() {
         return mode == WorkerMode.REMOTE;
+    }
+
+    private static boolean isLoopbackHost(String host) {
+        String normalized = host.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("127.0.0.1") || normalized.equals("localhost") || normalized.equals("::1")
+                || normalized.equals("0:0:0:0:0:0:0:1");
     }
 
     public enum WorkerMode {
