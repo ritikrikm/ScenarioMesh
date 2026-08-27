@@ -11,14 +11,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Persistent, bounded-cost duration history keyed by stable ScenarioMesh task identity. */
+/** Persistent duration history keyed by stable task and lifecycle-scope identity. */
 final class ExecutionHistoryStore {
     static final String ESTIMATED_DURATION_MILLIS = "estimatedDurationMillis";
+    private static final String EXECUTION_SCOPE_ID = "executionScopeId";
     private static final String FILE_NAME = "execution-history.json";
+    private static final String SCOPE_PREFIX = "scope:";
     private final ObjectMapper mapper = JsonCodec.create();
 
     List<ScenarioTask> enrich(Path reportingDirectory, List<ScenarioTask> tasks) {
@@ -26,7 +29,11 @@ final class ExecutionHistoryStore {
         if (history.isEmpty()) return tasks;
         List<ScenarioTask> enriched = new ArrayList<>(tasks.size());
         for (ScenarioTask task : tasks) {
-            Long estimate = history.get(task.id().value());
+            String scope = task.metadata().get(EXECUTION_SCOPE_ID);
+            Long estimate = scope == null || scope.isBlank()
+                    ? history.get(task.id().value())
+                    : history.get(SCOPE_PREFIX + scope);
+            if (estimate == null || estimate <= 0) estimate = history.get(task.id().value());
             if (estimate == null || estimate <= 0) {
                 enriched.add(task);
                 continue;
@@ -39,17 +46,26 @@ final class ExecutionHistoryStore {
         return List.copyOf(enriched);
     }
 
-    void update(Path reportingDirectory, List<ExecutionResult> results) {
+    void update(Path reportingDirectory, List<ScenarioTask> tasks, List<ExecutionResult> results) {
         try {
             Files.createDirectories(reportingDirectory);
             Map<String, Long> history = new LinkedHashMap<>(load(reportingDirectory));
+            Map<String, ScenarioTask> taskById = new HashMap<>();
+            for (ScenarioTask task : tasks) taskById.put(task.id().value(), task);
+            Map<String, Long> observedScopeMillis = new LinkedHashMap<>();
+
             for (ExecutionResult result : results) {
                 if (!isExecutionSignal(result.status())) continue;
                 long observed = Math.max(1L, result.duration().toMillis());
-                Long previous = history.get(result.scenarioId().value());
-                long estimate = previous == null ? observed : Math.max(1L, Math.round(previous * 0.75d + observed * 0.25d));
-                history.put(result.scenarioId().value(), estimate);
+                mergeEstimate(history, result.scenarioId().value(), observed);
+                ScenarioTask task = taskById.get(result.scenarioId().value());
+                if (task != null) {
+                    String scope = task.metadata().get(EXECUTION_SCOPE_ID);
+                    if (scope != null && !scope.isBlank()) observedScopeMillis.merge(scope, observed, Long::sum);
+                }
             }
+            observedScopeMillis.forEach((scope, observed) -> mergeEstimate(history, SCOPE_PREFIX + scope, observed));
+
             Path target = reportingDirectory.resolve(FILE_NAME);
             Path temporary = reportingDirectory.resolve(FILE_NAME + ".tmp");
             mapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), history);
@@ -61,6 +77,13 @@ final class ExecutionHistoryStore {
         } catch (Exception ignored) {
             // Scheduling history is an optimization only and must never change test outcomes.
         }
+    }
+
+    private void mergeEstimate(Map<String, Long> history, String key, long observed) {
+        Long previous = history.get(key);
+        long estimate = previous == null ? observed
+                : Math.max(1L, Math.round(previous * 0.75d + observed * 0.25d));
+        history.put(key, estimate);
     }
 
     private Map<String, Long> load(Path reportingDirectory) {
