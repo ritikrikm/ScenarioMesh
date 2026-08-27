@@ -15,9 +15,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 public final class ScenarioMeshRunner {
+    private static final String META_RUNTIME_MATERIALIZER = "runtimeMaterializer";
     private final DiscoveryInvariantValidator discoveryValidator = new DiscoveryInvariantValidator();
 
     public RunOutcome run(RunRequest request) throws Exception {
@@ -38,16 +38,13 @@ public final class ScenarioMeshRunner {
             results = workers.execute(discovery.tasks());
         }
 
-        Set<String> discoveredIds = discovery.tasks().stream()
-                .map(task -> task.id().value())
-                .collect(Collectors.toUnmodifiableSet());
+        // Every worker result has already passed ExecutionResultValidator, including
+        // strict parent/selector/id validation for runtime-materialized JUnit children.
+        // At this layer we only enforce global uniqueness and fill genuinely missing
+        // non-materializer placeholders.
         Set<String> completed = new HashSet<>();
         for (ExecutionResult result : results) {
             String resultId = result.scenarioId().value();
-            if (!discoveredIds.contains(resultId)) {
-                throw new IllegalStateException(
-                        "Worker execution produced a terminal result for undiscovered task '" + resultId + "'");
-            }
             if (!completed.add(resultId)) {
                 throw new IllegalStateException(
                         "Worker execution produced more than one terminal result for task '" + resultId + "'");
@@ -56,25 +53,20 @@ public final class ScenarioMeshRunner {
 
         List<ExecutionResult> complete = new ArrayList<>(results);
         for (ScenarioTask task : discovery.tasks()) {
-            if (!completed.contains(task.id().value())) {
+            boolean materializer = Boolean.parseBoolean(
+                    task.metadata().getOrDefault(META_RUNTIME_MATERIALIZER, "false"));
+            if (!materializer && !completed.contains(task.id().value())) {
                 Instant now = Instant.now();
                 complete.add(new ExecutionResult(
-                        task.id(),
-                        task.displayName(),
-                        ResultStatus.INFRASTRUCTURE_FAILURE,
-                        Duration.ZERO,
-                        new WorkerId("coordinator"),
-                        1,
-                        now,
-                        now,
-                        "No worker produced a terminal result for this task",
-                        "MissingResult"));
+                        task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                        Duration.ZERO, new WorkerId("coordinator"), 1, now, now,
+                        "No worker produced a terminal result for this task", "MissingResult"));
             }
         }
 
         Duration duration = Duration.between(started, Instant.now());
-        logger.progress("Execution finished: " + complete.size() + "/" + discovery.tasks().size()
-                + " terminal result(s), duration=" + duration + ".");
+        logger.progress("Execution finished: " + complete.size() + " terminal result(s) from "
+                + discovery.tasks().size() + " discovery task(s), duration=" + duration + ".");
         return new RunOutcome(runId, discovery.adapters(), discovery.tasks(), complete, duration, directory);
     }
 }
