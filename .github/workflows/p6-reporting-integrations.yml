@@ -48,12 +48,21 @@ jobs:
           test "$(grep -o '"scenarioId"' target/scenariomesh-yaml/summary.json | wc -l)" -eq 8
           python3 - <<'PY'
           import json
+          import os
           from pathlib import Path
-          old=json.loads(Path(__import__('os').environ['RUNNER_TEMP']+'/summary-first.json').read_text())
-          new=json.loads(Path('target/scenariomesh-yaml/summary.json').read_text())
+
+          old = json.loads(Path(os.environ['RUNNER_TEMP'], 'summary-first.json').read_text())
+          new = json.loads(Path('target/scenariomesh-yaml/summary.json').read_text())
+
+          def stable_id(value):
+              return json.dumps(value, sort_keys=True, separators=(',', ':'))
+
           def identities(doc):
-              rows=doc.get('results', [])
-              return sorted((r.get('scenarioId'), r.get('status')) for r in rows)
-          assert identities(old)==identities(new)
-          assert len(identities(new))==len(set(x[0] for x in identities(new)))
+              rows = doc.get('results', [])
+              return sorted((stable_id(r.get('scenarioId')), r.get('status')) for r in rows)
+
+          old_identities = identities(old)
+          new_identities = identities(new)
+          assert old_identities == new_identities
+          assert len(new_identities) == len({scenario_id for scenario_id, _ in new_identities})
           PY
