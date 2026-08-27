@@ -55,34 +55,49 @@ public final class WorkerMain {
              BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
             write(mapper, writer, Envelope.hello(parsed.workerId, token, capabilities(adapters, classLoader)));
-            for (String line; (line = reader.readLine()) != null;) {
-                Envelope envelope = mapper.readValue(line, Envelope.class);
-                validate(envelope);
-                if (envelope.type() == Protocol.Type.STOP) {
-                    write(mapper, writer, Envelope.ack(parsed.workerId));
-                    return;
-                }
-                if (envelope.type() != Protocol.Type.RUN || envelope.tasks().isEmpty()
-                        || envelope.attempt() == null || envelope.attempt() < 1) {
-                    write(mapper, writer, Envelope.error(parsed.workerId,
-                            "Expected RUN command with at least one task and a positive attempt"));
-                    continue;
-                }
+            try (PresenceHeartbeatEmitter presence = PresenceHeartbeatEmitter.start(
+                    parsed.workerId, WorkerMain::telemetry,
+                    heartbeat -> write(mapper, writer, heartbeat))) {
+                boolean draining = false;
+                for (String line; (line = reader.readLine()) != null;) {
+                    Envelope envelope = mapper.readValue(line, Envelope.class);
+                    validate(envelope);
+                    if (envelope.type() == Protocol.Type.DRAIN) {
+                        draining = true;
+                        write(mapper, writer, Envelope.ack(parsed.workerId));
+                        continue;
+                    }
+                    if (envelope.type() == Protocol.Type.STOP) {
+                        write(mapper, writer, Envelope.ack(parsed.workerId));
+                        return;
+                    }
+                    if (draining && envelope.type() == Protocol.Type.RUN) {
+                        write(mapper, writer, Envelope.error(parsed.workerId,
+                                "Worker is draining and will not accept new work"));
+                        continue;
+                    }
+                    if (envelope.type() != Protocol.Type.RUN || envelope.tasks().isEmpty()
+                            || envelope.attempt() == null || envelope.attempt() < 1) {
+                        write(mapper, writer, Envelope.error(parsed.workerId,
+                                "Expected RUN command with at least one task and a positive attempt"));
+                        continue;
+                    }
 
-                List<ScenarioTask> dispatched = envelope.tasks();
-                ExecutionContext context = new ExecutionContext(classLoader, new WorkerId(parsed.workerId),
-                        envelope.attempt(), properties);
-                WorkUnitExecution execution;
-                List<ExecutionResult> cleaned;
-                try (LeaseHeartbeatEmitter heartbeat = LeaseHeartbeatEmitter.start(
-                        parsed.workerId, envelope, WorkerMain::telemetry,
-                        heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope))) {
-                    execution = executeWorkUnit(adapters, dispatched, context);
-                    cleaned = runCleanupHooks(cleanupHooks, execution.tasks(), context, execution.results());
-                    heartbeat.throwIfFailed();
+                    List<ScenarioTask> dispatched = envelope.tasks();
+                    ExecutionContext context = new ExecutionContext(classLoader, new WorkerId(parsed.workerId),
+                            envelope.attempt(), properties);
+                    WorkUnitExecution execution;
+                    List<ExecutionResult> cleaned;
+                    try (LeaseHeartbeatEmitter heartbeat = LeaseHeartbeatEmitter.start(
+                            parsed.workerId, envelope, WorkerMain::telemetry,
+                            heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope))) {
+                        execution = executeWorkUnit(adapters, dispatched, context);
+                        cleaned = runCleanupHooks(cleanupHooks, execution.tasks(), context, execution.results());
+                        heartbeat.throwIfFailed();
+                    }
+                    write(mapper, writer, Envelope.resultBatch(parsed.workerId,
+                            envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()));
                 }
-                write(mapper, writer, Envelope.resultBatch(parsed.workerId,
-                        envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()));
             }
         }
     }
