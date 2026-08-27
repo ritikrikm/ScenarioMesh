@@ -78,7 +78,7 @@ public final class RemoteWorkerServer implements AutoCloseable {
 
     public void disconnected(RemoteWorkerSession session) {
         if (session == null) return;
-        directory.disconnect(session.registration().workerId());
+        directory.remove(session.registration().workerId());
         try {
             session.close();
         } catch (Exception ignored) {
