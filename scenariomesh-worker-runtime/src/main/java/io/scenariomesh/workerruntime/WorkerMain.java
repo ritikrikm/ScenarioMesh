@@ -12,6 +12,7 @@ import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
+import org.junit.platform.engine.TestEngine;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -85,7 +86,7 @@ public final class WorkerMain {
         }
     }
 
-    private static WorkerCapabilities capabilities(AdapterRegistry adapters, ClassLoader classLoader) throws Exception {
+    static WorkerCapabilities capabilities(AdapterRegistry adapters, ClassLoader classLoader) throws Exception {
         String configuredAgent = System.getenv("JENKINS_NODE_NAME");
         String agentId = configuredAgent == null || configuredAgent.isBlank()
                 ? InetAddress.getLocalHost().getHostName() : configuredAgent.trim();
@@ -94,6 +95,11 @@ public final class WorkerMain {
         int javaFeature = Runtime.version().feature();
         Set<String> adapterIds = adapters.available(classLoader).stream()
                 .map(adapter -> adapter.id())
+                .collect(Collectors.toUnmodifiableSet());
+        Set<String> engineIds = ServiceLoader.load(TestEngine.class, classLoader).stream()
+                .map(ServiceLoader.Provider::get)
+                .map(TestEngine::getId)
+                .filter(id -> id != null && !id.isBlank())
                 .collect(Collectors.toUnmodifiableSet());
         String fingerprintInput = String.join("\n",
                 Integer.toString(Protocol.VERSION),
@@ -106,7 +112,7 @@ public final class WorkerMain {
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
-                HexFormat.of().formatHex(digest), adapterIds, Set.of());
+                HexFormat.of().formatHex(digest), adapterIds, engineIds);
     }
 
     private static WorkUnitExecution executeWorkUnit(
