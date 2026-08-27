@@ -41,6 +41,19 @@ jobs:
           test -f examples/junit5-example/target/scenariomesh-yaml/summary.json
           grep -Fq '"passed" : 6' examples/junit5-example/target/scenariomesh-yaml/summary.json
           grep -Fq '"skipped" : 2' examples/junit5-example/target/scenariomesh-yaml/summary.json
+      - name: Diagnostics packages only generated ScenarioMesh evidence
+        run: |
+          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
+          java -jar "$cli" diagnostics --root examples/junit5-example
+          archive="examples/junit5-example/target/scenariomesh-diagnostics.zip"
+          test -f "$archive"
+          unzip -l "$archive" | grep -Fq 'diagnostics/manifest.json'
+          unzip -l "$archive" | grep -Fq 'reports/summary.json'
+          unzip -l "$archive" | grep -Fq 'run/events.jsonl'
+          if unzip -l "$archive" | grep -Fq '/logs/'; then
+            echo 'Diagnostics unexpectedly included raw worker logs'
+            exit 1
+          fi
       - name: Init remains idempotent and dry-run safe
         run: |
           cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
