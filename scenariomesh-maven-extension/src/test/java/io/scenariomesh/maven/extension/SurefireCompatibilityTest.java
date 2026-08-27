@@ -35,6 +35,15 @@ class SurefireCompatibilityTest {
     }
 
     @Test
+    void defaultExcludesMatchSurefireInnerClassBoundary() {
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(defaultTestExecution()));
+        assertTrue(analysis.excludeClassNameRegexes().stream()
+                .anyMatch(regex -> Pattern.matches(regex, "example/PaymentTest$Nested.class")));
+        assertTrue(analysis.excludeClassNameRegexes().stream()
+                .noneMatch(regex -> Pattern.matches(regex, "example/PaymentTest.class")));
+    }
+
+    @Test
     void nativeForkAndThreadParallelismIsReplacedByScenarioMesh() {
         Plugin plugin = pluginWith(defaultTestExecution());
         Xpp3Dom config = new Xpp3Dom("configuration");
@@ -45,7 +54,6 @@ class SurefireCompatibilityTest {
         plugin.setConfiguration(config);
 
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
     }
 
@@ -53,9 +61,7 @@ class SurefireCompatibilityTest {
     void knownButUnsupportedSemanticCapabilityIsNamedExplicitly() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("groups", "smoke"));
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("framework-group-selection")));
     }
 
@@ -122,10 +128,8 @@ class SurefireCompatibilityTest {
     void resolvesDynamicSkipFromEffectiveMavenProperties() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
-
         Map<String, String> values = Map.of("company.skip.tests", "false");
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, values::get);
-
         assertFalse(analysis.explicitlySkipsTests());
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
     }
@@ -134,10 +138,8 @@ class SurefireCompatibilityTest {
     void resolvedDynamicSkipTrueRemainsPassThroughSignal() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
-
         Map<String, String> values = Map.of("company.skip.tests", "true");
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, values::get);
-
         assertTrue(analysis.explicitlySkipsTests());
     }
 
@@ -146,7 +148,6 @@ class SurefireCompatibilityTest {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("skipTests", "${company.skip.tests}"));
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, ignored -> null);
-
         assertFalse(analysis.explicitlySkipsTests());
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("unresolved Maven property")));
     }
