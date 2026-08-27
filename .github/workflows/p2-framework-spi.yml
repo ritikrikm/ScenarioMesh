@@ -20,7 +20,4 @@ jobs:
           -Dtest='*AdapterRegistrySpiTest'
           -Dsurefire.failIfNoSpecifiedTests=false
       - name: Unknown and mixed backends remain fail-closed
-        run: >-
-          mvn -B -pl scenariomesh-maven-extension -am test
-          -Dtest='*ProjectCompatibilityDetectorTest,*SurefireCompatibilityTest,*FailsafeCompatibilityTest'
-          -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B -pl scenariomesh-maven-extension -am test
