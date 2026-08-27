@@ -15,4 +15,4 @@ jobs:
           java-version: ${{ matrix.java }}
           cache: maven
       - name: Distributed correctness contracts
-        run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest,*DistributedWorkAuthorityTest,*WorkerRegistrationValidatorTest,*LeasedResponseReaderTest' -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest,*DistributedWorkAuthorityTest,*WorkerRegistrationValidatorTest,*LeasedResponseReaderTest,*LeaseHeartbeatEmitterTest' -Dsurefire.failIfNoSpecifiedTests=false
