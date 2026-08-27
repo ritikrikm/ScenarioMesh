@@ -1,6 +1,7 @@
 package io.scenariomesh.config;
 
 import io.scenariomesh.config.ConfigFileLoader.LoadedConfig;
+import io.scenariomesh.config.DistributedConfig.WorkerMode;
 import io.scenariomesh.config.ScenarioMeshConfig.AdapterMismatchPolicy;
 
 import java.nio.file.Path;
@@ -51,6 +52,20 @@ public final class ConfigResolver {
                 ? workerCount
                 : intValue(minimumReadyRaw, workerCount, ConfigKey.WORKER_MINIMUM_READY);
 
+        DistributedConfig distributedDefaults = defaults.distributed();
+        WorkerMode workerMode = workerMode(
+                value(ConfigKey.WORKER_MODE, properties, environment, yaml), distributedDefaults.mode());
+        DistributedConfig distributed = new DistributedConfig(
+                workerMode,
+                stringValue(value(ConfigKey.DISTRIBUTED_BIND_HOST, properties, environment, yaml),
+                        distributedDefaults.bindHost()),
+                intValue(value(ConfigKey.DISTRIBUTED_BIND_PORT, properties, environment, yaml),
+                        distributedDefaults.bindPort(), ConfigKey.DISTRIBUTED_BIND_PORT),
+                stringValue(value(ConfigKey.DISTRIBUTED_TOKEN, properties, environment, yaml),
+                        distributedDefaults.token()),
+                durationValue(value(ConfigKey.DISTRIBUTED_REGISTRATION_TIMEOUT, properties, environment, yaml),
+                        distributedDefaults.registrationTimeout(), ConfigKey.DISTRIBUTED_REGISTRATION_TIMEOUT));
+
         ScenarioMeshConfig resolved = new ScenarioMeshConfig(
                 booleanValue(value(ConfigKey.ENABLED, properties, environment, yaml), defaults.enabled(), ConfigKey.ENABLED),
                 stringValue(value(ConfigKey.EXECUTION_ADAPTER, properties, environment, yaml), defaults.executionAdapter()),
@@ -69,7 +84,8 @@ public final class ConfigResolver {
                 booleanValue(value(ConfigKey.LOGGING_LIVE_CONSOLE, properties, environment, yaml), defaults.liveConsoleLogs(), ConfigKey.LOGGING_LIVE_CONSOLE),
                 booleanValue(value(ConfigKey.LOGGING_WORKER_FILES, properties, environment, yaml), defaults.workerLogFiles(), ConfigKey.LOGGING_WORKER_FILES),
                 booleanValue(value(ConfigKey.LOGGING_SHOW_CONFIGURATION, properties, environment, yaml), defaults.showConfiguration(), ConfigKey.LOGGING_SHOW_CONFIGURATION),
-                booleanValue(value(ConfigKey.LOGGING_SHOW_PROGRESS, properties, environment, yaml), defaults.showProgress(), ConfigKey.LOGGING_SHOW_PROGRESS));
+                booleanValue(value(ConfigKey.LOGGING_SHOW_PROGRESS, properties, environment, yaml), defaults.showProgress(), ConfigKey.LOGGING_SHOW_PROGRESS),
+                distributed);
 
         return new ConfigResolution(resolved, loaded.source());
     }
@@ -156,6 +172,10 @@ public final class ConfigResolver {
 
     private AdapterMismatchPolicy mismatchPolicy(Object raw, AdapterMismatchPolicy defaultValue) {
         return raw == null ? defaultValue : AdapterMismatchPolicy.parse(String.valueOf(raw).trim());
+    }
+
+    private WorkerMode workerMode(Object raw, WorkerMode defaultValue) {
+        return raw == null ? defaultValue : WorkerMode.parse(String.valueOf(raw).trim());
     }
 
     private Path pathValue(Object raw, Path projectDirectory, Path defaultValue) {
