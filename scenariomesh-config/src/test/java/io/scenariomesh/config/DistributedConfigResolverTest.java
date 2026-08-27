@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class DistributedConfigResolverTest {
@@ -15,19 +16,20 @@ class DistributedConfigResolverTest {
     Path project;
 
     @Test
-    void remoteModeResolvesFromCanonicalProperties() {
+    void remoteModeResolvesFromCanonicalPropertiesOnLoopbackWithoutTls() {
         ScenarioMeshConfig config = new ConfigResolver().resolve(project, project.resolve("target"), Map.of(
                 "scenariomesh.workers.mode", "remote",
-                "scenariomesh.distributed.bindHost", "0.0.0.0",
+                "scenariomesh.distributed.bindHost", "127.0.0.1",
                 "scenariomesh.distributed.bindPort", "42117",
                 "scenariomesh.distributed.token", "secret-value",
                 "scenariomesh.distributed.registrationTimeout", "PT45S"), Map.of());
 
         assertEquals(DistributedConfig.WorkerMode.REMOTE, config.distributed().mode());
-        assertEquals("0.0.0.0", config.distributed().bindHost());
+        assertEquals("127.0.0.1", config.distributed().bindHost());
         assertEquals(42117, config.distributed().bindPort());
         assertEquals("secret-value", config.distributed().token());
         assertEquals(45, config.distributed().registrationTimeout().toSeconds());
+        assertFalse(config.distributed().tls().enabled());
     }
 
     @Test
