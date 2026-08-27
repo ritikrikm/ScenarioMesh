@@ -18,6 +18,8 @@ public record RunRequest(Path projectDirectory,
                          List<String> executorJvmArgs,
                          Map<String,String> executorSystemProperties,
                          Path javaExecutable) {
+    static final String INTERNAL_JAVA_EXECUTABLE_PROPERTY = "scenariomesh.internal.javaExecutable";
+
     public RunRequest {
         runtimeClasspath=List.copyOf(runtimeClasspath);
         testRoots=List.copyOf(testRoots);
@@ -50,6 +52,10 @@ public record RunRequest(Path projectDirectory,
     Map<String,String> effectiveSystemProperties(){
         Map<String,String> result=new LinkedHashMap<>(userProperties);
         result.putAll(executorSystemProperties);
+        // The existing WorkerPool launcher still calls JavaProcessSupport's compatibility overload.
+        // Carry the selected test JVM as an internal launch hint; JavaProcessSupport consumes and
+        // filters this key instead of forwarding it to target tests.
+        result.put(INTERNAL_JAVA_EXECUTABLE_PROPERTY, javaExecutable.toString());
         return Map.copyOf(result);
     }
 
