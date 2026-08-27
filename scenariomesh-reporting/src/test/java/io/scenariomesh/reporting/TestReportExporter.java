@@ -11,6 +11,8 @@ public final class TestReportExporter implements ReportExporter {
     @Override
     public void export(ReportExportContext context) throws Exception {
         Files.writeString(context.reportingDirectory().resolve("test-exporter.marker"),
-                context.outcome().runId().value() + "\n" + context.builtInReports().latestJunitXml());
+                context.outcome().runId().value() + "\n"
+                        + context.builtInReports().latestJunitXml() + "\n"
+                        + "artifacts=" + context.artifacts().size());
     }
 }
