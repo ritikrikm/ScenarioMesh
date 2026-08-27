@@ -25,10 +25,38 @@ public record ScenarioMeshConfig(
         boolean liveConsoleLogs,
         boolean workerLogFiles,
         boolean showConfiguration,
-        boolean showProgress) {
+        boolean showProgress,
+        DistributedConfig distributed) {
 
     public static final String AUTO_ADAPTER = "auto";
     private static final long MAX_SOCKET_TIMEOUT_MILLIS = Integer.MAX_VALUE;
+
+    /** Backward-compatible constructor for integrations compiled before distributed mode existed. */
+    public ScenarioMeshConfig(
+            boolean enabled,
+            String executionAdapter,
+            AdapterMismatchPolicy adapterMismatchPolicy,
+            int infrastructureRetries,
+            int workerCount,
+            int minimumReadyWorkers,
+            int maxTasksPerWorker,
+            int maxHeapUsagePercent,
+            Duration discoveryTimeout,
+            Duration workerStartupTimeout,
+            Duration workerTaskTimeout,
+            Duration workerShutdownTimeout,
+            Path reportingDirectory,
+            List<String> workerJvmArgs,
+            boolean liveConsoleLogs,
+            boolean workerLogFiles,
+            boolean showConfiguration,
+            boolean showProgress) {
+        this(enabled, executionAdapter, adapterMismatchPolicy, infrastructureRetries,
+                workerCount, minimumReadyWorkers, maxTasksPerWorker, maxHeapUsagePercent,
+                discoveryTimeout, workerStartupTimeout, workerTaskTimeout, workerShutdownTimeout,
+                reportingDirectory, workerJvmArgs, liveConsoleLogs, workerLogFiles,
+                showConfiguration, showProgress, DistributedConfig.defaults());
+    }
 
     public ScenarioMeshConfig {
         executionAdapter = normalizeAdapter(executionAdapter);
@@ -52,6 +80,7 @@ public record ScenarioMeshConfig(
             throw new IllegalArgumentException("Invalid configuration: reporting.directory is required");
         }
         workerJvmArgs = List.copyOf(workerJvmArgs == null ? List.of() : workerJvmArgs);
+        distributed = distributed == null ? DistributedConfig.defaults() : distributed;
     }
 
     public boolean automaticAdapterSelection() {
@@ -85,7 +114,8 @@ public record ScenarioMeshConfig(
                 true,
                 true,
                 true,
-                true);
+                true,
+                DistributedConfig.defaults());
     }
 
     private static String normalizeAdapter(String adapter) {
