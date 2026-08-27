@@ -24,6 +24,14 @@ jobs:
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' target/scenariomesh/summary.json
           grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" target-run.log
+      - name: Surefire jdkToolchain selection is preserved
+        working-directory: examples/junit5-toolchain-example
+        run: |
+          mvn -B clean test -Dtoolchain.version=${{ matrix.java }} | tee toolchain-run.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" toolchain-run.log
       - name: Maven reactor order and module-local ownership
         working-directory: examples/multi-module-example
         run: |
