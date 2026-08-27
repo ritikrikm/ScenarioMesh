@@ -31,9 +31,17 @@ public final class RemoteWorkerServer implements AutoCloseable {
     public RemoteWorkerServer(InetAddress bindAddress, int port,
                               WorkerRegistrationValidator validator,
                               RemoteWorkerDirectory directory) throws Exception {
+        this(bindAddress, port, UUID.randomUUID().toString(), validator, directory);
+    }
+
+    /** Creates a registration endpoint with an externally supplied secret for CI/agent launch. */
+    public RemoteWorkerServer(InetAddress bindAddress, int port, String token,
+                              WorkerRegistrationValidator validator,
+                              RemoteWorkerDirectory directory) throws Exception {
         this.validator = Objects.requireNonNull(validator, "validator");
         this.directory = Objects.requireNonNull(directory, "directory");
-        this.token = UUID.randomUUID().toString();
+        if (token == null || token.isBlank()) throw new IllegalArgumentException("remote worker token must not be blank");
+        this.token = token.trim();
         this.server = new ServerSocket();
         server.bind(new InetSocketAddress(Objects.requireNonNull(bindAddress, "bindAddress"), port));
     }
@@ -47,7 +55,7 @@ public final class RemoteWorkerServer implements AutoCloseable {
     }
 
     /**
-     * Waits for the next valid registration. Invalid or duplicate registrations are rejected and
+     * Waits for the next valid registration. Invalid registrations are rejected and
      * the server continues until the supplied startup timeout expires.
      */
     public RemoteWorkerSession accept(Duration startupTimeout) throws Exception {
