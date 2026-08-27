@@ -45,11 +45,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String META_SCOPE_SELECTOR = "executionScopeSelector";
     public static final String META_SCOPE_KIND = "executionScopeKind";
 
-    /**
-     * One adapter instance lives for the lifetime of a worker JVM. A lifecycle
-     * scope is executed at most once in that worker; leaf results are then served
-     * from this cache as the coordinator asks for the individual discovered tasks.
-     */
     private final Map<String, Map<String, CachedOutcome>> scopedResults = new HashMap<>();
 
     @Override
@@ -80,11 +75,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         } else {
             List<String> selectedClasses = SelectedTestClasses.scan(context.testRoots(), context.discoverySelection());
             if (selectedClasses.isEmpty()) {
-                // JUnit Platform engines are not necessarily class-driven. Cucumber,
-                // for example, can discover feature resources directly from classpath
-                // roots even when Maven's class-name selection resolves to no class.
-                // Unknown engines are still rejected by runtime backend ownership
-                // preflight, so root discovery here does not grant takeover by itself.
                 builder.selectors(selectClasspathRoots(new HashSet<>(context.testRoots())));
             } else {
                 List<DiscoverySelector> selectors = selectedClasses.stream()
@@ -103,9 +93,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             }
         }
 
-        // Preserve the native TestPlan exactly. Do not collapse a direct engine
-        // leaf with a suite-owned leaf: JUnit documents that overlapping suite
-        // selectors can intentionally execute a test more than once.
         List<ScenarioTask> tasks = new ArrayList<>();
         for (TestIdentifier identifier : discoveredLeaves) {
             String uniqueId = identifier.getUniqueId();
@@ -136,21 +123,50 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     @Override
     public ExecutionResult execute(ScenarioTask task, ExecutionContext context) {
-        String scopeId = task.metadata().getOrDefault(META_SCOPE_ID, task.selector());
-        String scopeSelector = task.metadata().getOrDefault(META_SCOPE_SELECTOR, task.selector());
+        return executeBatch(List.of(task), context).get(0);
+    }
+
+    @Override
+    public List<ExecutionResult> executeBatch(List<ScenarioTask> tasks, ExecutionContext context) {
+        if (tasks == null || tasks.isEmpty()) {
+            throw new IllegalArgumentException("JUnitPlatformAdapter requires at least one task");
+        }
+        String scopeId = scopeId(tasks.get(0));
+        String scopeSelector = scopeSelector(tasks.get(0));
+        for (ScenarioTask task : tasks) {
+            if (!scopeId.equals(scopeId(task)) || !scopeSelector.equals(scopeSelector(task))) {
+                throw new IllegalArgumentException(
+                        "JUnit Platform batch mixes lifecycle scopes; expected scope=" + scopeId
+                                + " but received task " + task.id().value() + " scope=" + scopeId(task));
+            }
+        }
+
         Map<String, CachedOutcome> outcomes = scopedResults.computeIfAbsent(
                 scopeId, ignored -> executeScope(scopeSelector));
-        CachedOutcome outcome = outcomes.get(task.selector());
-        if (outcome == null) {
-            Instant now = Instant.now();
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
-                    Duration.ZERO, context.workerId(), context.attempt(), now, now,
-                    "JUnit Platform lifecycle scope '" + scopeSelector
-                            + "' did not produce the discovered leaf " + task.selector(),
-                    "ScopedSelectionFailure");
+        List<ExecutionResult> results = new ArrayList<>(tasks.size());
+        for (ScenarioTask task : tasks) {
+            CachedOutcome outcome = outcomes.get(task.selector());
+            if (outcome == null) {
+                Instant now = Instant.now();
+                results.add(new ExecutionResult(
+                        task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                        Duration.ZERO, context.workerId(), context.attempt(), now, now,
+                        "JUnit Platform lifecycle scope '" + scopeSelector
+                                + "' did not produce the discovered leaf " + task.selector(),
+                        "ScopedSelectionFailure"));
+            } else {
+                results.add(outcome.toResult(task, context));
+            }
         }
-        return outcome.toResult(task, context);
+        return List.copyOf(results);
+    }
+
+    private String scopeId(ScenarioTask task) {
+        return task.metadata().getOrDefault(META_SCOPE_ID, task.selector());
+    }
+
+    private String scopeSelector(ScenarioTask task) {
+        return task.metadata().getOrDefault(META_SCOPE_SELECTOR, task.selector());
     }
 
     private Map<String, CachedOutcome> executeScope(String scopeSelector) {
@@ -175,9 +191,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                 return new ExecutionScope(current.getUniqueId(), current.getUniqueId(), "class-or-suite");
             }
         }
-
-        // Resource-driven engines such as Cucumber normally have no ClassSource.
-        // Their global lifecycle belongs to the engine/run scope.
         TestIdentifier root = rootOf(plan, leaf);
         return new ExecutionScope(root.getUniqueId(), root.getUniqueId(), "engine-run");
     }
