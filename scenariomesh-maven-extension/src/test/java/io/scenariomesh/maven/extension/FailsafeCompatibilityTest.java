@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,6 +16,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FailsafeCompatibilityTest {
 
     private final FailsafeCompatibility compatibility = new FailsafeCompatibility();
+
+    @Test
+    void defaultSelectionExcludesInnerClassesLikeNativeFailsafe() {
+        Plugin plugin = pluginWithExecution();
+        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
+        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
+
+        assertTrue(analysis.supported(), analysis.reason());
+        var plan = analysis.executionPlans().get(0);
+        assertTrue(plan.excludeClassNameRegexes().stream()
+                .anyMatch(regex -> Pattern.matches(regex, "example/LoginIT$Nested.class")));
+        assertTrue(plan.excludeClassNameRegexes().stream()
+                .noneMatch(regex -> Pattern.matches(regex, "example/LoginIT.class")));
+    }
 
     @Test
     void translatesJvmPropertiesAndFailureIgnoreWhenRetriesAreZero() {
