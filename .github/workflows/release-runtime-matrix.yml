@@ -1,0 +1,78 @@
+name: release-runtime-matrix
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  current-lts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Java 25 LTS repository contract
+        run: mvn -B clean install
+      - name: Java 25 target smoke
+        working-directory: examples/junit5-example
+        run: |
+          mvn -B clean test
+          test -f target/scenariomesh-yaml/summary.json
+          grep -Fq '"passed" : 6' target/scenariomesh-yaml/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
+
+  maven-3-ga:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21', '25']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Install Apache Maven 3.9.16 GA
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/maven.tgz" \
+            https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.tar.gz
+          tar -xzf "$RUNNER_TEMP/maven.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
+      - name: Verify exact Maven line
+        run: mvn -version | grep -Fq 'Apache Maven 3.9.16'
+      - name: Build ScenarioMesh on GA Maven
+        run: mvn -B clean install
+      - name: Native-vs-ScenarioMesh target smoke
+        working-directory: examples/junit5-example
+        run: |
+          mvn -B clean test
+          test -f target/scenariomesh-yaml/summary.json
+          grep -Fq '"passed" : 6' target/scenariomesh-yaml/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
+
+  maven-4-preview:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21', '25']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Install Apache Maven 4.0.0-rc-6 preview
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/maven4.tgz" \
+            https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/4.0.0-rc-6/apache-maven-4.0.0-rc-6-bin.tar.gz
+          tar -xzf "$RUNNER_TEMP/maven4.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-4.0.0-rc-6/bin" >> "$GITHUB_PATH"
+      - name: Verify preview version
+        run: mvn -version | grep -Fq 'Apache Maven 4.0.0-rc-6'
+      - name: Maven 4 preview compatibility probe
+        run: mvn -B clean install
