@@ -4,17 +4,21 @@ import io.scenariomesh.coordinator.RunOutcome;
 
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.Set;
 
-/** Loads explicitly installed report exporters through Java's standard SPI. */
+/** Loads explicitly installed report artifact providers and exporters through Java's standard SPI. */
 public final class ReportExporters {
     private ReportExporters() {}
 
     public static void export(RunOutcome outcome, Path reportingDirectory,
                               ReportWriter.ReportPaths builtInReports) throws Exception {
-        ReportExportContext context = new ReportExportContext(outcome, reportingDirectory, builtInReports);
+        ReportExportContext baseContext = new ReportExportContext(outcome, reportingDirectory, builtInReports);
+        List<ReportArtifact> artifacts = ReportArtifacts.collect(baseContext);
+        ReportArtifacts.writeManifest(reportingDirectory, artifacts);
+        ReportExportContext context = new ReportExportContext(outcome, reportingDirectory, builtInReports, artifacts);
         Set<String> ids = new LinkedHashSet<>();
         try {
             for (ReportExporter exporter : ServiceLoader.load(
