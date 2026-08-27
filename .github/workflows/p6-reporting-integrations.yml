@@ -1,6 +1,10 @@
 name: p6-reporting-integrations
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   reporting-integrations:
     runs-on: ubuntu-latest
@@ -21,12 +25,35 @@ jobs:
           -Dsurefire.failIfNoSpecifiedTests=false
       - name: Full report compatibility
         run: mvn -B clean install -DskipTests
-      - name: Verify standard JSON, JUnit XML and HTML output
+      - name: Verify deterministic standard JSON, JUnit XML and HTML output
         working-directory: examples/junit5-example
         run: |
+          rm -rf target/scenariomesh-yaml
           mvn -B test
           test -f target/scenariomesh-yaml/summary.json
           test -f target/scenariomesh-yaml/junit.xml
           test -f target/scenariomesh-yaml/report.html
           grep -Fq '<testsuite name="ScenarioMesh"' target/scenariomesh-yaml/junit.xml
+          grep -Fq ' tests="8"' target/scenariomesh-yaml/junit.xml
+          grep -Fq ' skipped="2"' target/scenariomesh-yaml/junit.xml
           grep -Fq '"passed" : 6' target/scenariomesh-yaml/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
+          test "$(grep -c '<testcase ' target/scenariomesh-yaml/junit.xml)" -eq 8
+          test "$(grep -o '"scenarioId"' target/scenariomesh-yaml/summary.json | wc -l)" -eq 8
+          cp target/scenariomesh-yaml/junit.xml "$RUNNER_TEMP/junit-first.xml"
+          cp target/scenariomesh-yaml/summary.json "$RUNNER_TEMP/summary-first.json"
+          mvn -B test
+          # Compare semantic identities/counts; timestamps and measured durations are intentionally not byte-for-byte contracts.
+          test "$(grep -c '<testcase ' target/scenariomesh-yaml/junit.xml)" -eq 8
+          test "$(grep -o '"scenarioId"' target/scenariomesh-yaml/summary.json | wc -l)" -eq 8
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          old=json.loads(Path(__import__('os').environ['RUNNER_TEMP']+'/summary-first.json').read_text())
+          new=json.loads(Path('target/scenariomesh-yaml/summary.json').read_text())
+          def identities(doc):
+              rows=doc.get('results', [])
+              return sorted((r.get('scenarioId'), r.get('status')) for r in rows)
+          assert identities(old)==identities(new)
+          assert len(identities(new))==len(set(x[0] for x in identities(new)))
+          PY
