@@ -12,7 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Objects;
 
-/** One authenticated remote worker TCP session owned by the coordinator. */
+/** One authenticated remote worker session owned by exactly one coordinator reader lane. */
 public final class RemoteWorkerSession implements AutoCloseable {
     private final ObjectMapper mapper;
     private final Socket socket;
@@ -28,9 +28,7 @@ public final class RemoteWorkerSession implements AutoCloseable {
         this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
     }
 
-    public RemoteWorkerRegistration registration() {
-        return registration;
-    }
+    public RemoteWorkerRegistration registration() { return registration; }
 
     public synchronized void write(Envelope envelope) throws Exception {
         writer.write(mapper.writeValueAsString(Objects.requireNonNull(envelope, "envelope")));
@@ -40,29 +38,25 @@ public final class RemoteWorkerSession implements AutoCloseable {
 
     public Envelope read(Duration timeout) throws Exception {
         Objects.requireNonNull(timeout, "timeout");
-        if (timeout.isZero() || timeout.isNegative()) {
-            throw new IllegalArgumentException("timeout must be greater than zero");
-        }
+        if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be greater than zero");
         int originalTimeout = socket.getSoTimeout();
         try {
-            socket.setSoTimeout(Math.toIntExact(timeout.toMillis()));
+            socket.setSoTimeout(Math.toIntExact(Math.max(1L, timeout.toMillis())));
             String line = reader.readLine();
             return line == null ? null : mapper.readValue(line, Envelope.class);
         } finally {
-            try {
-                socket.setSoTimeout(originalTimeout);
-            } catch (Exception ignored) {
-                // Socket may have disconnected while waiting.
-            }
+            try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
         }
     }
 
-    public boolean connected() {
-        return socket.isConnected() && !socket.isClosed();
+    /** Non-blocking read used only by the owning scheduler lane to consume queued idle presence. */
+    public Envelope readAvailable() throws Exception {
+        if (!reader.ready()) return null;
+        String line = reader.readLine();
+        return line == null ? null : mapper.readValue(line, Envelope.class);
     }
 
-    @Override
-    public void close() throws Exception {
-        socket.close();
-    }
+    public boolean connected() { return socket.isConnected() && !socket.isClosed(); }
+
+    @Override public void close() throws Exception { socket.close(); }
 }
