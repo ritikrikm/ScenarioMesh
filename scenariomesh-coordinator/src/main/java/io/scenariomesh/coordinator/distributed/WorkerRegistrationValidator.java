@@ -49,14 +49,18 @@ public final class WorkerRegistrationValidator {
             throw new IllegalArgumentException("work requires adapterId");
         }
         if (!registration.adapterIds().contains(adapterId)) {
-            throw new IllegalStateException("worker " + registration.workerId()
+            throw new CapabilityMismatchException("worker " + registration.workerId()
                     + " does not advertise adapter " + adapterId);
         }
         if (engineId != null && !engineId.isBlank()
                 && !registration.engineIds().isEmpty()
                 && !registration.engineIds().contains(engineId)) {
-            throw new IllegalStateException("worker " + registration.workerId()
+            throw new CapabilityMismatchException("worker " + registration.workerId()
                     + " does not advertise engine " + engineId);
         }
+    }
+
+    public static final class CapabilityMismatchException extends IllegalStateException {
+        public CapabilityMismatchException(String message) { super(message); }
     }
 }
