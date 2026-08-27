@@ -71,7 +71,7 @@ jobs:
       - name: Failsafe verify lifecycle takeover
         working-directory: examples/failsafe-junit5-example
         run: mvn -B clean compile verify
-      - name: Worker crash replacement preserves queued execution
+      - name: Worker crash fails only its uncertain scope and replacement continues independent scope
         working-directory: examples/worker-crash-recovery-example
         run: |
           set +e
@@ -85,21 +85,28 @@ jobs:
           grep -Fq 'worker-2 REPLACED worker-1' crash-recovery.log
           grep -Fq 'worker-2 PASSED b_runsAfterReplacement()' crash-recovery.log
           grep -Fq 'worker-2 PASSED c_alsoRunsAfterReplacement()' crash-recovery.log
-          grep -Fq 'WORKER_FAILURE' target/scenariomesh/summary.json
+          test "$(grep -Fc 'WORKER_FAILURE' target/scenariomesh/summary.json)" -eq 1
           grep -Fq 'worker-2' target/scenariomesh/summary.json
-      - name: Infrastructure failure retries on a fresh worker
+      - name: Scoped infrastructure failure is not silently retried
         working-directory: examples/worker-crash-recovery-example
         run: |
+          set +e
           mvn -B clean test -Dscenariomesh.execution.infrastructureRetries=1 > crash-retry.log 2>&1
+          exit_code=$?
+          set -e
           cat crash-retry.log
+          test "$exit_code" -ne 0
           test -f target/scenariomesh/summary.json
-          grep -Fq 'RETRY a_crashWorker() after WORKER_FAILURE' crash-retry.log
-          grep -Fq 'worker-2 REPLACED worker-1 after retryable WORKER_FAILURE' crash-retry.log
-          grep -Fq 'worker-2 RUN a_crashWorker() attempt=2' crash-retry.log
-          grep -Fq 'worker-2 PASSED a_crashWorker()' crash-retry.log
-          grep -Fq 'at-least-once under uncertain worker/transport failure' crash-retry.log
-          if grep -Fq 'WORKER_FAILURE' target/scenariomesh/summary.json; then
-            echo 'Recovered infrastructure attempt leaked into terminal results'
+          grep -Fq 'WORKER_FAILURE' target/scenariomesh/summary.json
+          grep -Fq 'worker-2 REPLACED worker-1' crash-retry.log
+          grep -Fq 'worker-2 PASSED b_runsAfterReplacement()' crash-retry.log
+          grep -Fq 'worker-2 PASSED c_alsoRunsAfterReplacement()' crash-retry.log
+          if grep -Fq 'RETRY a_crashWorker()' crash-retry.log; then
+            echo 'Lifecycle-scoped crash was retried even though retry safety is unproven'
+            exit 1
+          fi
+          if grep -Fq 'RUN junit5 scope 1 leaf/leaves attempt=2' crash-retry.log; then
+            echo 'Uncertain lifecycle scope executed a second time'
             exit 1
           fi
       - name: Normal test failure keeps worker alive
