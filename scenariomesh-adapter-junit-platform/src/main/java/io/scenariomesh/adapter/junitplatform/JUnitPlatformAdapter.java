@@ -9,24 +9,29 @@ import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
 import io.scenariomesh.core.SelectedTestClasses;
 import org.junit.platform.engine.DiscoverySelector;
+import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.TestSource;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestTag;
+import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.TestPlan;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
 import org.junit.platform.launcher.core.LauncherFactory;
-import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
-import org.junit.platform.launcher.listeners.TestExecutionSummary;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
 
@@ -36,7 +41,16 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqu
 
 public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String ID = "junit-platform";
-    private final DiscoveredExecutionMerger executionMerger = new DiscoveredExecutionMerger();
+    public static final String META_SCOPE_ID = "executionScopeId";
+    public static final String META_SCOPE_SELECTOR = "executionScopeSelector";
+    public static final String META_SCOPE_KIND = "executionScopeKind";
+
+    /**
+     * One adapter instance lives for the lifetime of a worker JVM. A lifecycle
+     * scope is executed at most once in that worker; leaf results are then served
+     * from this cache as the coordinator asks for the individual discovered tasks.
+     */
+    private final Map<String, Map<String, CachedOutcome>> scopedResults = new HashMap<>();
 
     @Override
     public String id() { return ID; }
@@ -81,14 +95,23 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             }
         }
 
+        // Preserve the native TestPlan exactly. Do not collapse a direct engine
+        // leaf with a suite-owned leaf: JUnit documents that overlapping suite
+        // selectors can intentionally execute a test more than once.
         List<ScenarioTask> tasks = new ArrayList<>();
-        for (TestIdentifier identifier : executionMerger.merge(discoveredLeaves)) {
+        for (TestIdentifier identifier : discoveredLeaves) {
             String uniqueId = identifier.getUniqueId();
             Set<String> tags = new HashSet<>();
             for (TestTag tag : identifier.getTags()) tags.add(tag.getName());
             String framework = uniqueId.contains("[engine:cucumber]")
                     ? "cucumber-junit-platform"
                     : "junit5";
+            ExecutionScope scope = executionScope(plan, identifier);
+            Map<String, String> metadata = new LinkedHashMap<>();
+            metadata.put("uniqueId", uniqueId);
+            metadata.put(META_SCOPE_ID, scope.id());
+            metadata.put(META_SCOPE_SELECTOR, scope.selector());
+            metadata.put(META_SCOPE_KIND, scope.kind());
             tasks.add(new ScenarioTask(
                     ScenarioIds.from(ID, uniqueId),
                     identifier.getDisplayName(),
@@ -98,99 +121,144 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                     null,
                     uniqueId,
                     tags,
-                    Map.of("uniqueId", uniqueId)));
+                    metadata));
         }
         return List.copyOf(tasks);
     }
 
     @Override
     public ExecutionResult execute(ScenarioTask task, ExecutionContext context) {
-        Instant started = Instant.now();
-        SummaryGeneratingListener listener = new SummaryGeneratingListener();
+        String scopeId = task.metadata().getOrDefault(META_SCOPE_ID, task.selector());
+        String scopeSelector = task.metadata().getOrDefault(META_SCOPE_SELECTOR, task.selector());
+        Map<String, CachedOutcome> outcomes = scopedResults.computeIfAbsent(
+                scopeId, ignored -> executeScope(scopeSelector));
+        CachedOutcome outcome = outcomes.get(task.selector());
+        if (outcome == null) {
+            Instant now = Instant.now();
+            return new ExecutionResult(
+                    task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                    Duration.ZERO, context.workerId(), context.attempt(), now, now,
+                    "JUnit Platform lifecycle scope '" + scopeSelector
+                            + "' did not produce the discovered leaf " + task.selector(),
+                    "ScopedSelectionFailure");
+        }
+        return outcome.toResult(task, context);
+    }
+
+    private Map<String, CachedOutcome> executeScope(String scopeSelector) {
+        ScopedResultListener listener = new ScopedResultListener();
         LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectUniqueId(task.selector()))
+                .selectors(selectUniqueId(scopeSelector))
                 .filters(EngineFilter.excludeEngines("junit-vintage"))
                 .build();
         Launcher launcher = LauncherFactory.create();
         launcher.registerTestExecutionListeners(listener);
         launcher.execute(request);
-        Instant finished = Instant.now();
-        return classify(task, context, started, finished, listener.getSummary());
+        return listener.outcomes();
     }
 
-    private ExecutionResult classify(
-            ScenarioTask task,
-            ExecutionContext context,
+    private ExecutionScope executionScope(TestPlan plan, TestIdentifier leaf) {
+        // A class/suite ClassSource is the smallest generally safe Jupiter/Suite
+        // lifecycle boundary: @BeforeAll/@AfterAll, PER_CLASS state, extensions,
+        // and method ordering all stay inside one Launcher execution.
+        TestIdentifier current = leaf;
+        while (true) {
+            Optional<TestIdentifier> parent = plan.getParent(current);
+            if (parent.isEmpty()) break;
+            current = parent.get();
+            if (hasClassSource(current)) {
+                return new ExecutionScope(current.getUniqueId(), current.getUniqueId(), "class-or-suite");
+            }
+        }
+
+        // Cucumber feature/scenario nodes normally have no ClassSource. Its global
+        // hooks are run-scoped, so use the TestPlan root for direct Cucumber runs.
+        TestIdentifier root = rootOf(plan, leaf);
+        return new ExecutionScope(root.getUniqueId(), root.getUniqueId(), "engine-run");
+    }
+
+    private boolean hasClassSource(TestIdentifier identifier) {
+        Optional<TestSource> source = identifier.getSource();
+        return source.isPresent() && source.get() instanceof ClassSource;
+    }
+
+    private TestIdentifier rootOf(TestPlan plan, TestIdentifier identifier) {
+        TestIdentifier current = identifier;
+        for (;;) {
+            Optional<TestIdentifier> parent = plan.getParent(current);
+            if (parent.isEmpty()) return current;
+            current = parent.get();
+        }
+    }
+
+    private static final class ScopedResultListener implements TestExecutionListener {
+        private final Map<String, Instant> starts = new HashMap<>();
+        private final Map<String, CachedOutcome> outcomes = new LinkedHashMap<>();
+
+        @Override
+        public void executionStarted(TestIdentifier testIdentifier) {
+            if (testIdentifier.isTest()) starts.put(testIdentifier.getUniqueId(), Instant.now());
+        }
+
+        @Override
+        public void executionSkipped(TestIdentifier testIdentifier, String reason) {
+            if (!testIdentifier.isTest()) return;
+            Instant now = Instant.now();
+            outcomes.put(testIdentifier.getUniqueId(), new CachedOutcome(
+                    ResultStatus.SKIPPED, now, now,
+                    reason == null || reason.isBlank() ? "JUnit Platform skipped the selected test" : reason,
+                    "JUnitSkipped"));
+        }
+
+        @Override
+        public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
+            if (!testIdentifier.isTest()) return;
+            Instant finished = Instant.now();
+            Instant started = starts.remove(testIdentifier.getUniqueId());
+            if (started == null) started = finished;
+            ResultStatus status;
+            String message = null;
+            String type = null;
+            switch (testExecutionResult.getStatus()) {
+                case SUCCESSFUL -> status = ResultStatus.PASSED;
+                case ABORTED -> {
+                    status = ResultStatus.SKIPPED;
+                    message = testExecutionResult.getThrowable()
+                            .map(JUnitPlatformAdapter::safeThrowableMessage)
+                            .orElse("JUnit Platform aborted the selected test");
+                    type = "JUnitAborted";
+                }
+                case FAILED -> {
+                    status = ResultStatus.TEST_FAILURE;
+                    Throwable failure = testExecutionResult.getThrowable().orElse(null);
+                    message = failure == null ? "Test failed" : safeThrowableMessage(failure);
+                    type = failure == null ? null : failure.getClass().getName();
+                }
+                default -> throw new IllegalStateException("Unknown JUnit Platform execution status: " + testExecutionResult.getStatus());
+            }
+            outcomes.put(testIdentifier.getUniqueId(), new CachedOutcome(status, started, finished, message, type));
+        }
+
+        Map<String, CachedOutcome> outcomes() { return Map.copyOf(outcomes); }
+    }
+
+    private record ExecutionScope(String id, String selector, String kind) {}
+
+    private record CachedOutcome(
+            ResultStatus status,
             Instant started,
             Instant finished,
-            TestExecutionSummary summary) {
-        Duration duration = Duration.between(started, finished);
-        long found = summary.getTestsFoundCount();
-        long startedCount = summary.getTestsStartedCount();
-        long succeeded = summary.getTestsSucceededCount();
-        long failed = summary.getTestsFailedCount();
-        long skipped = summary.getTestsSkippedCount();
-        long aborted = summary.getTestsAbortedCount();
-
-        if (found == 0) {
-            return infrastructureFailure(task, context, started, finished,
-                    "JUnit Platform did not execute the selected test: " + task.selector(),
-                    "SelectionFailure");
-        }
-        if (found != 1) {
-            return infrastructureFailure(task, context, started, finished,
-                    "JUnit Platform selection for " + task.selector() + " resolved to " + found
-                            + " tests; ScenarioMesh requires exactly one terminal test per task",
-                    "SelectionMultiplicityFailure");
-        }
-        if (failed > 0) {
-            Throwable failure = summary.getFailures().isEmpty() ? null : summary.getFailures().get(0).getException();
+            String failureMessage,
+            String failureType) {
+        ExecutionResult toResult(ScenarioTask task, ExecutionContext context) {
             return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.TEST_FAILURE, duration,
-                    context.workerId(), context.attempt(), started, finished,
-                    failure == null ? "Test failed" : safeMessage(failure),
-                    failure == null ? null : failure.getClass().getName());
+                    task.id(), task.displayName(), status,
+                    Duration.between(started, finished), context.workerId(), context.attempt(),
+                    started, finished, failureMessage, failureType);
         }
-        if (succeeded == 1 && startedCount == 1 && skipped == 0 && aborted == 0) {
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.PASSED, duration,
-                    context.workerId(), context.attempt(), started, finished, null, null);
-        }
-        if (succeeded == 0 && failed == 0 && (skipped == 1 || aborted == 1)) {
-            String reason = aborted == 1
-                    ? "JUnit Platform aborted the selected test"
-                    : "JUnit Platform skipped the selected test";
-            return new ExecutionResult(
-                    task.id(), task.displayName(), ResultStatus.SKIPPED, duration,
-                    context.workerId(), context.attempt(), started, finished,
-                    reason, aborted == 1 ? "JUnitAborted" : "JUnitSkipped");
-        }
-        return infrastructureFailure(
-                task, context, started, finished,
-                "JUnit Platform produced an ambiguous terminal summary for " + task.selector()
-                        + " (found=" + found
-                        + ", started=" + startedCount
-                        + ", succeeded=" + succeeded
-                        + ", failed=" + failed
-                        + ", skipped=" + skipped
-                        + ", aborted=" + aborted + ")",
-                "ExecutionSummaryFailure");
     }
 
-    private ExecutionResult infrastructureFailure(
-            ScenarioTask task,
-            ExecutionContext context,
-            Instant started,
-            Instant finished,
-            String message,
-            String type) {
-        return new ExecutionResult(
-                task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
-                Duration.between(started, finished), context.workerId(), context.attempt(),
-                started, finished, message, type);
-    }
-
-    private String safeMessage(Throwable throwable) {
+    private static String safeThrowableMessage(Throwable throwable) {
         String message = throwable.getMessage();
         return message == null || message.isBlank() ? throwable.getClass().getName() : message;
     }
