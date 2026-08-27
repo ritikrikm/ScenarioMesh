@@ -1,0 +1,34 @@
+name: p1-maven-compatibility
+on: [push, pull_request]
+
+jobs:
+  reactor-and-jvm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and install ScenarioMesh
+        run: mvn -B clean install -DskipTests
+      - name: Maven reactor order and module-local ownership
+        working-directory: examples/multi-module-example
+        run: |
+          mvn -B clean test
+          test -f module-a/target/scenariomesh/summary.json
+          test -f module-b/target/scenariomesh/summary.json
+          grep -Fq '"total" : 2' module-a/target/scenariomesh/summary.json
+          grep -Fq '"passed" : 2' module-a/target/scenariomesh/summary.json
+          grep -Fq '"total" : 2' module-b/target/scenariomesh/summary.json
+          grep -Fq '"passed" : 2' module-b/target/scenariomesh/summary.json
+      - name: Reactor project selection remains Maven-owned
+        working-directory: examples/multi-module-example
+        run: |
+          mvn -B clean test -pl module-b -am
+          test -f module-a/target/scenariomesh/summary.json
+          test -f module-b/target/scenariomesh/summary.json
