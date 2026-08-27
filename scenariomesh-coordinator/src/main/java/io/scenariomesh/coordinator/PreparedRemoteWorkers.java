@@ -68,9 +68,9 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + config.workerCount()
                         + " remote workers registered; minimum required is " + config.minimumReadyWorkers());
             }
-            verifyEveryWorkerCoverage(sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
-            log.accept("ScenarioMesh remote preflight proved " + sessions.size() + " authenticated worker(s); each can execute adapters="
-                    + adapters + ", engines=" + engines + ".");
+            verifyWorkerSetCoverage(sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
+            log.accept("ScenarioMesh remote preflight proved " + sessions.size()
+                    + " authenticated worker(s); the worker set covers adapters=" + adapters + ", engines=" + engines + ".");
             return new PreparedRemoteWorkers(server, directory, sessions);
         } catch (Exception exception) {
             for (RemoteWorkerSession session : sessions) server.disconnected(session);
@@ -79,19 +79,29 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         }
     }
 
-    static void verifyEveryWorkerCoverage(List<RemoteWorkerRegistration> registrations,
-                                          Set<String> requiredAdapterIds,
-                                          Set<String> requiredEngineIds) {
+    /**
+     * Preflight proves aggregate capability coverage. Task-level requirements are later matched to
+     * individual workers by the scheduler; no worker is assumed to support an unadvertised engine.
+     */
+    static void verifyWorkerSetCoverage(List<RemoteWorkerRegistration> registrations,
+                                        Set<String> requiredAdapterIds,
+                                        Set<String> requiredEngineIds) {
+        if (registrations == null || registrations.isEmpty()) {
+            throw new IllegalStateException("Remote worker set is empty");
+        }
+        Set<String> availableAdapters = new HashSet<>();
+        Set<String> availableEngines = new HashSet<>();
         for (RemoteWorkerRegistration registration : registrations) {
-            Set<String> missingAdapters = new HashSet<>(requiredAdapterIds);
-            missingAdapters.removeAll(registration.adapterIds());
-            Set<String> missingEngines = new HashSet<>(requiredEngineIds);
-            missingEngines.removeAll(registration.engineIds());
-            if (!missingAdapters.isEmpty() || !missingEngines.isEmpty()) {
-                throw new IllegalStateException("Remote worker " + registration.workerId()
-                        + " cannot prove the complete selected runtime while capability-aware heterogeneous scheduling is disabled; missing adapters="
-                        + missingAdapters + ", missing JUnit Platform engines=" + missingEngines);
-            }
+            availableAdapters.addAll(registration.adapterIds());
+            availableEngines.addAll(registration.engineIds());
+        }
+        Set<String> missingAdapters = new HashSet<>(requiredAdapterIds);
+        missingAdapters.removeAll(availableAdapters);
+        Set<String> missingEngines = new HashSet<>(requiredEngineIds);
+        missingEngines.removeAll(availableEngines);
+        if (!missingAdapters.isEmpty() || !missingEngines.isEmpty()) {
+            throw new IllegalStateException("Remote worker set cannot prove selected runtime coverage; missing adapters="
+                    + missingAdapters + ", missing JUnit Platform engines=" + missingEngines);
         }
     }
 
