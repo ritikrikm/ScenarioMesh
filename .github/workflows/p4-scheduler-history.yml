@@ -18,8 +18,8 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: maven
-      - name: LPT ordering, FIFO fallback, lifecycle affinity, versioned history and 5000-task scale
+      - name: Configurable scheduling, LPT ordering, FIFO fallback, lifecycle affinity, versioned history and 5000-task scale
         run: >-
-          mvn -B -pl scenariomesh-coordinator,scenariomesh-scheduler -am test
-          -Dtest='*FifoSchedulingStrategyTest,*HistoryAwareFifoTest,*ExecutionHistoryStoreTest,*ExecutionHistoryHardeningTest,*SchedulerScaleTest'
+          mvn -B -pl scenariomesh-config,scenariomesh-coordinator,scenariomesh-scheduler -am test
+          -Dtest='*SchedulingConfigTest,*SchedulingModeTest,*FifoSchedulingStrategyTest,*HistoryAwareFifoTest,*ExecutionHistoryStoreTest,*ExecutionHistoryHardeningTest,*SchedulerScaleTest'
           -Dsurefire.failIfNoSpecifiedTests=false
