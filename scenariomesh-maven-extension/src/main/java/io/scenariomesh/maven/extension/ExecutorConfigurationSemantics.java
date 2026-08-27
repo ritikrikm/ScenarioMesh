@@ -3,22 +3,11 @@ package io.scenariomesh.maven.extension;
 import java.util.Map;
 import java.util.Set;
 
-/**
- * Shared semantic classification for Surefire/Failsafe configuration.
- *
- * <p>This class deliberately separates settings ScenarioMesh replaces from settings
- * that must be reproduced exactly. A newly introduced Maven option therefore does not
- * become accidentally accepted just because it looks harmless.</p>
- */
+/** Shared semantic classification for Surefire/Failsafe configuration. */
 final class ExecutorConfigurationSemantics {
     private ExecutorConfigurationSemantics() {}
 
-    enum Kind {
-        REPLACED_BY_SCENARIOMESH,
-        PRESERVED,
-        REQUIRES_CAPABILITY,
-        UNKNOWN
-    }
+    enum Kind { REPLACED_BY_SCENARIOMESH, PRESERVED, REQUIRES_CAPABILITY, UNKNOWN }
 
     record Classification(Kind kind, String capability) {
         static Classification replaced() { return new Classification(Kind.REPLACED_BY_SCENARIOMESH, null); }
@@ -33,7 +22,7 @@ final class ExecutorConfigurationSemantics {
             "useUnlimitedThreads", "parallelOptimized");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
-            "skip", "skipTests", "useModulePath");
+            "skip", "skipTests", "useModulePath", "jvm", "jdkToolchain");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "argLine", "systemPropertyVariables",
@@ -51,8 +40,6 @@ final class ExecutorConfigurationSemantics {
             Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"),
             Map.entry("environmentVariables", "fork-environment-reproduction"),
             Map.entry("workingDirectory", "fork-working-directory"),
-            Map.entry("jvm", "alternate-jvm-selection"),
-            Map.entry("jdkToolchain", "maven-toolchain-selection"),
             Map.entry("includesFile", "external-selection-file"),
             Map.entry("excludesFile", "external-selection-file"));
 
