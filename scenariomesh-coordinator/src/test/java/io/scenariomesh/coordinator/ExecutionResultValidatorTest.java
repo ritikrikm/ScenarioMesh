@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -40,7 +41,7 @@ class ExecutionResultValidatorTest {
         ExecutionResult validated = validator.validateOrFailure(
                 task, "worker-1", 1, dispatched, Envelope.result("worker-1", wrong, null));
 
-        assertProtocolFailure(validated, "scenario id");
+        assertProtocolFailure(validated, "missing result ids");
     }
 
     @Test
@@ -48,8 +49,8 @@ class ExecutionResultValidatorTest {
         Instant dispatched = Instant.now();
         ExecutionResult result = result(task, "worker-1", 1, dispatched, dispatched.plusMillis(10));
         Envelope wrongEnvelope = new Envelope(
-                Protocol.VERSION, Protocol.Type.RESULT, "worker-2", null, null,
-                9, result, null, null);
+                Protocol.VERSION, Protocol.Type.RESULT, "worker-2", null, List.of(),
+                9, List.of(result), null, null);
 
         ExecutionResult validated = validator.validateOrFailure(
                 task, "worker-1", 1, dispatched, wrongEnvelope);
@@ -63,8 +64,8 @@ class ExecutionResultValidatorTest {
         Instant dispatched = Instant.now();
         ExecutionResult result = result(task, "worker-1", 1, dispatched, dispatched.plusMillis(10));
         Envelope wrongVersion = new Envelope(
-                Protocol.VERSION + 1, Protocol.Type.RESULT, "worker-1", null, null,
-                1, result, null, null);
+                Protocol.VERSION + 1, Protocol.Type.RESULT, "worker-1", null, List.of(),
+                1, List.of(result), null, null);
 
         ExecutionResult validated = validator.validateOrFailure(
                 task, "worker-1", 1, dispatched, wrongVersion);
@@ -86,6 +87,23 @@ class ExecutionResultValidatorTest {
 
         assertProtocolFailure(validated, "duration must not be negative");
         assertTrue(validated.failureMessage().contains("finishedAt precedes startedAt"));
+    }
+
+    @Test
+    void batchMustReturnEveryDispatchedLeafExactlyOnceAndNothingElse() {
+        Instant dispatched = Instant.now();
+        ScenarioTask second = task("task-2", "selector-2");
+        ScenarioTask unexpected = task("task-3", "selector-3");
+        ExecutionResult firstResult = result(task, "worker-1", 1, dispatched, dispatched.plusMillis(5));
+        ExecutionResult unexpectedResult = result(unexpected, "worker-1", 1, dispatched, dispatched.plusMillis(6));
+        Envelope envelope = Envelope.resultBatch("worker-1", List.of(firstResult, unexpectedResult), null);
+
+        List<ExecutionResult> validated = validator.validateBatchOrFailures(
+                List.of(task, second), "worker-1", 1, dispatched, envelope);
+
+        assertEquals(2, validated.size());
+        validated.forEach(result -> assertProtocolFailure(result, "missing result ids"));
+        assertTrue(validated.get(0).failureMessage().contains("unexpected result ids"));
     }
 
     private void assertProtocolFailure(ExecutionResult result, String expectedDetail) {
