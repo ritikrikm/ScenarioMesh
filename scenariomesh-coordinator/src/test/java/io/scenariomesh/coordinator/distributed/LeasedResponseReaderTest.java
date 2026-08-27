@@ -48,6 +48,30 @@ class LeasedResponseReaderTest {
     }
 
     @Test
+    void authoritativeLeaseHeartbeatKeepsWorkerDirectoryLiveDuringLongWork() throws Exception {
+        LeaseRegistry leases = new LeaseRegistry(Duration.ofMinutes(1));
+        DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
+        RemoteWorkerDirectory directory = new RemoteWorkerDirectory(Duration.ofSeconds(20));
+        directory.register(new RemoteWorkerRegistration(
+                "worker-1", "fp", 1, 21, "Linux", "amd64",
+                Set.of("junit-platform"), Set.of("junit-jupiter"), Map.of()), start);
+        ScenarioTask task = task();
+        Envelope run = authority.issueRun("unit-1", "worker-1", 1, List.of(task), start);
+        Envelope heartbeat = Envelope.heartbeat("worker-1", "unit-1", run.leaseId(), null);
+        Envelope terminal = Envelope.resultBatch(
+                "worker-1", "unit-1", run.leaseId(), List.of(), List.of(result(task)), null);
+        ArrayDeque<Envelope> responses = new ArrayDeque<>(List.of(heartbeat, terminal));
+
+        LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(25));
+        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2),
+                ignored -> responses.poll(), heartbeatAt -> directory.heartbeat("worker-1", heartbeatAt));
+
+        assertSame(terminal, returned);
+        assertEquals(1, directory.eligible(
+                "fp", "junit-platform", "junit-jupiter", start.plusSeconds(26)).size());
+    }
+
+    @Test
     void rejectsHeartbeatFromWrongWorkerBeforeNotifyingLivenessObserver() {
         LeaseRegistry leases = new LeaseRegistry(Duration.ofSeconds(30));
         DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
