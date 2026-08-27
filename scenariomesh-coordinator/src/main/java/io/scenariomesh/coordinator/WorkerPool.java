@@ -1,6 +1,8 @@
 package io.scenariomesh.coordinator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.coordinator.distributed.DistributedWorkAuthority;
+import io.scenariomesh.coordinator.distributed.LeaseRegistry;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.ScenarioId;
@@ -59,11 +61,14 @@ final class WorkerPool implements AutoCloseable {
     private final AtomicInteger workerSequence = new AtomicInteger();
     private final Object replacementLock = new Object();
     private final RunLogger logger;
+    private final DistributedWorkAuthority workAuthority;
 
     WorkerPool(RunRequest request, Path dir, RunLogger logger) throws Exception {
         this.request = request;
         this.dir = dir;
         this.logger = logger;
+        this.workAuthority = new DistributedWorkAuthority(
+                new LeaseRegistry(request.config().workerTaskTimeout().multipliedBy(2)));
         this.server = new ServerSocket();
         server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
         server.setSoTimeout(Math.toIntExact(request.config().workerStartupTimeout().toMillis()));
@@ -120,18 +125,25 @@ final class WorkerPool implements AutoCloseable {
             List<ExecutionResult> unitResults;
             WorkerTelemetry telemetry = null;
             try {
-                connection.write(Envelope.runBatch(connection.workerId, unit.tasks(), attempt));
+                Envelope run = workAuthority.issueRun(
+                        representative.id().value(), connection.workerId, attempt, unit.tasks(), started);
+                connection.write(run);
                 Envelope response = connection.read(request.config().workerTaskTimeout());
                 if (response == null) {
                     unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
                             "Worker disconnected before returning a work-unit result");
                 } else {
+                    // Authority must be proven before any structurally-valid payload can count.
+                    workAuthority.acceptResult(connection.workerId, response, Instant.now());
                     unitResults = resultValidator.validateBatchOrFailures(
                             unit.tasks(), connection.workerId, attempt, started, response);
                     if (unitResults.stream().noneMatch(this::isProtocolValidationFailure)) {
                         telemetry = response.telemetry();
                     }
                 }
+            } catch (LeaseRegistry.StaleLeaseException exception) {
+                unitResults = protocolFailures(unit.tasks(), connection.workerId, attempt, started,
+                        "Rejected stale or non-authoritative worker result: " + safeMessage(exception));
             } catch (SocketTimeoutException exception) {
                 unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
                         "Worker exceeded work-unit timeout " + request.config().workerTaskTimeout());
@@ -236,6 +248,15 @@ final class WorkerPool implements AutoCloseable {
                 task.id(), task.displayName(), ResultStatus.WORKER_FAILURE,
                 Duration.between(started, finished), new WorkerId(id), attempt,
                 started, finished, message, "WorkerFailure")).toList();
+    }
+
+    private List<ExecutionResult> protocolFailures(
+            List<ScenarioTask> tasks, String id, int attempt, Instant started, String message) {
+        Instant finished = Instant.now();
+        return tasks.stream().map(task -> new ExecutionResult(
+                task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                Duration.between(started, finished), new WorkerId(id), attempt,
+                started, finished, message, ExecutionResultValidator.FAILURE_TYPE)).toList();
     }
 
     private String safeMessage(Exception exception) {
