@@ -29,15 +29,23 @@ public final class ExecutionBackendInventory {
 
     private ExecutionBackendInventory() {}
 
-    public static Inventory inspect(
-            ClassLoader targetClassLoader,
-            List<Path> testRoots,
-            List<String> includeClassNameRegexes,
-            List<String> excludeClassNameRegexes) {
+    public static Inventory inspect(ClassLoader targetClassLoader, List<Path> testRoots,
+                                    List<String> includeClassNameRegexes, List<String> excludeClassNameRegexes) {
+        return inspect(targetClassLoader, testRoots, includeClassNameRegexes, excludeClassNameRegexes, Set.of());
+    }
+
+    /**
+     * Additional engine ids may only come from loaded ScenarioAdapter capability declarations.
+     * Declaring an engine makes it lifecycle-scoped ownable; it never grants leaf-isolation implicitly.
+     */
+    public static Inventory inspect(ClassLoader targetClassLoader, List<Path> testRoots,
+                                    List<String> includeClassNameRegexes, List<String> excludeClassNameRegexes,
+                                    Set<String> adapterOwnedEngineIds) {
         if (testRoots == null || testRoots.isEmpty()) {
             return new Inventory(Ownership.NOT_DETECTED, List.of(), "no compiled test roots are available");
         }
 
+        Set<String> additional = Set.copyOf(adapterOwnedEngineIds == null ? Set.of() : adapterOwnedEngineIds);
         List<TestEngine> engines = loadEngines(targetClassLoader);
         if (engines.isEmpty()) {
             return new Inventory(Ownership.NOT_DETECTED, List.of(), "no JUnit Platform TestEngine was loaded from the target classpath");
@@ -72,13 +80,12 @@ public final class ExecutionBackendInventory {
                         .count();
 
                 boolean leafOwnable = PROVEN_LEAF_OWNABLE_ENGINES.contains(engineId);
-                boolean scopedOwnable = PROVEN_SCOPED_OWNABLE_ENGINES.contains(engineId);
+                boolean scopedOwnable = PROVEN_SCOPED_OWNABLE_ENGINES.contains(engineId) || additional.contains(engineId);
                 boolean ownable = leafOwnable || scopedOwnable;
                 ExecutionGranularity granularity = leafOwnable
                         ? ExecutionGranularity.LEAF
                         : scopedOwnable ? ExecutionGranularity.CONTAINER_OR_RUN : ExecutionGranularity.UNKNOWN;
-                BackendOwnership backendOwnership = ownable
-                        ? BackendOwnership.OWNABLE : BackendOwnership.DETECTED_NOT_OWNABLE;
+                BackendOwnership backendOwnership = ownable ? BackendOwnership.OWNABLE : BackendOwnership.DETECTED_NOT_OWNABLE;
                 Set<Capability> capabilities = leafOwnable
                         ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
                                 Capability.ISOLATED_LEAF_EXECUTION, Capability.FILTER_EQUIVALENCE)
@@ -128,11 +135,8 @@ public final class ExecutionBackendInventory {
     }
 
     private static String engineId(TestIdentifier root) {
-        try {
-            return UniqueId.parse(root.getUniqueId()).getEngineId().orElse("unknown");
-        } catch (RuntimeException exception) {
-            return "unknown";
-        }
+        try { return UniqueId.parse(root.getUniqueId()).getEngineId().orElse("unknown"); }
+        catch (RuntimeException exception) { return "unknown"; }
     }
 
     private static String message(Throwable throwable) {
@@ -145,28 +149,18 @@ public final class ExecutionBackendInventory {
     public enum ExecutionGranularity { LEAF, CLASS, CONTAINER_OR_RUN, UNKNOWN }
 
     public enum Capability {
-        DISCOVERY,
-        STABLE_LEAF_IDENTITY,
-        ISOLATED_LEAF_EXECUTION,
-        LIFECYCLE_SCOPED_EXECUTION,
-        FILTER_EQUIVALENCE,
-        REPORT_EQUIVALENCE,
-        RETRY_SAFE
+        DISCOVERY, STABLE_LEAF_IDENTITY, ISOLATED_LEAF_EXECUTION,
+        LIFECYCLE_SCOPED_EXECUTION, FILTER_EQUIVALENCE, REPORT_EQUIVALENCE, RETRY_SAFE
     }
 
     public record Backend(String id, String provider, long executableLeaves,
                           BackendOwnership ownership, ExecutionGranularity granularity,
                           Set<Capability> capabilities) {
-        public Backend {
-            capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);
-        }
+        public Backend { capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities); }
     }
 
     public record Inventory(Ownership ownership, List<Backend> backends, String reason) {
-        public Inventory {
-            backends = List.copyOf(backends == null ? List.of() : backends);
-        }
-
+        public Inventory { backends = List.copyOf(backends == null ? List.of() : backends); }
         public String summary() {
             if (backends.isEmpty()) return ownership + " (" + reason + ")";
             StringBuilder value = new StringBuilder(ownership.name()).append(" [");
