@@ -5,6 +5,7 @@ import io.scenariomesh.coordinator.distributed.DistributedWorkAuthority;
 import io.scenariomesh.coordinator.distributed.LeaseRegistry;
 import io.scenariomesh.coordinator.distributed.LeasedResponseReader;
 import io.scenariomesh.coordinator.distributed.RemoteWorkerDirectory;
+import io.scenariomesh.coordinator.distributed.RemoteWorkerRegistration;
 import io.scenariomesh.coordinator.distributed.RemoteWorkerServer;
 import io.scenariomesh.coordinator.distributed.RemoteWorkerSession;
 import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator;
@@ -39,6 +40,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Remote-worker execution pool. CI owns machines/executors; ScenarioMesh owns authenticated test scheduling. */
 final class RemoteWorkerPool implements AutoCloseable {
     private static final String EXECUTION_SCOPE_ID = "executionScopeId";
+    private static final String REQUIRED_ENGINE_ID = "requiredEngineId";
     private static final Duration REMOTE_LIVENESS_TIMEOUT = Duration.ofSeconds(20);
 
     private final RunRequest request;
@@ -88,6 +90,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     }
 
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
+        verifyTaskCoverage(tasks);
         WorkPlan workPlan = WorkPlan.from(tasks);
         SchedulingStrategy scheduler = new FifoSchedulingStrategy();
         scheduler.load(workPlan.representatives());
@@ -102,6 +105,31 @@ final class RemoteWorkerPool implements AutoCloseable {
         return List.copyOf(results);
     }
 
+    private void verifyTaskCoverage(List<ScenarioTask> tasks) {
+        for (ScenarioTask task : tasks) {
+            boolean covered = sessions.stream().anyMatch(session -> canRun(session.registration(), task));
+            if (!covered) {
+                throw new IllegalStateException("No registered remote worker can execute task " + task.id().value()
+                        + " using adapter=" + task.adapterId() + ", engine=" + requiredEngineId(task));
+            }
+        }
+    }
+
+    static boolean canRun(WorkerRegistrationValidator validator,
+                          RemoteWorkerRegistration registration,
+                          ScenarioTask task) {
+        return validator.canRun(registration, task.adapterId(), requiredEngineId(task));
+    }
+
+    private boolean canRun(RemoteWorkerRegistration registration, ScenarioTask task) {
+        return canRun(registrationValidator, registration, task);
+    }
+
+    static String requiredEngineId(ScenarioTask task) {
+        String engineId = task.metadata().get(REQUIRED_ENGINE_ID);
+        return engineId == null || engineId.isBlank() ? null : engineId;
+    }
+
     private void loop(RemoteWorkerSession initialSession, SchedulingStrategy scheduler, WorkPlan workPlan,
                       ConcurrentLinkedQueue<ExecutionResult> results, RunProgress progress) {
         RemoteWorkerSession session = initialSession;
@@ -112,7 +140,8 @@ final class RemoteWorkerPool implements AutoCloseable {
                 retire(session, "idle liveness failure: " + safeMessage(stale));
                 return;
             }
-            ScenarioTask representative = scheduler.nextEligible(candidate -> true);
+            RemoteWorkerSession currentSession = session;
+            ScenarioTask representative = scheduler.nextEligible(candidate -> canRun(currentSession.registration(), candidate));
             if (representative == null) { gracefulStop(session); return; }
             WorkUnit unit = workPlan.required(representative.id());
             String workerId = session.registration().workerId();
@@ -126,7 +155,7 @@ final class RemoteWorkerPool implements AutoCloseable {
             List<ExecutionResult> unitResults;
             WorkerTelemetry telemetry = null;
             try {
-                registrationValidator.requireCanRun(session.registration(), representative.adapterId(), null);
+                registrationValidator.requireCanRun(session.registration(), representative.adapterId(), requiredEngineId(representative));
                 directory.claimSlot(workerId, started);
                 Envelope run = workAuthority.issueRun(representative.id().value(), workerId, attempt, unit.tasks(), started);
                 logger.schedulerDecision(workerId, representative, run, scheduler.queued(), "lifecycle-safe compatible work selected");
@@ -359,7 +388,10 @@ final class RemoteWorkerPool implements AutoCloseable {
             for (ScenarioTask task : tasks) {
                 String scope = task.metadata().get(EXECUTION_SCOPE_ID);
                 boolean scoped = scope != null && !scope.isBlank();
-                String key = scoped ? "scope:" + task.adapterId() + ":" + scope : "leaf:" + task.id().value();
+                String engine = requiredEngineId(task);
+                String key = scoped
+                        ? "scope:" + task.adapterId() + ":" + (engine == null ? "" : engine) + ":" + scope
+                        : "leaf:" + task.id().value();
                 grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(task);
                 scopedByKey.putIfAbsent(key, scoped);
             }
