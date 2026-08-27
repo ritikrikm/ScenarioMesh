@@ -32,15 +32,9 @@ public final class WorkerRegistrationValidator {
             throw new IllegalArgumentException("worker registration must advertise at least one executable adapter");
         }
         return new RemoteWorkerRegistration(
-                hello.workerId(),
-                capabilities.runtimeFingerprint(),
-                capabilities.slots(),
-                capabilities.javaFeature(),
-                capabilities.osName(),
-                capabilities.architecture(),
-                capabilities.adapterIds(),
-                capabilities.engineIds(),
-                Map.of("agentId", capabilities.agentId()));
+                hello.workerId(), capabilities.runtimeFingerprint(), capabilities.slots(),
+                capabilities.javaFeature(), capabilities.osName(), capabilities.architecture(),
+                capabilities.adapterIds(), capabilities.engineIds(), Map.of("agentId", capabilities.agentId()));
     }
 
     public void requireCanRun(RemoteWorkerRegistration registration, String adapterId, String engineId) {
@@ -52,11 +46,18 @@ public final class WorkerRegistrationValidator {
             throw new CapabilityMismatchException("worker " + registration.workerId()
                     + " does not advertise adapter " + adapterId);
         }
-        if (engineId != null && !engineId.isBlank()
-                && !registration.engineIds().isEmpty()
-                && !registration.engineIds().contains(engineId)) {
+        if (engineId != null && !engineId.isBlank() && !registration.engineIds().contains(engineId)) {
             throw new CapabilityMismatchException("worker " + registration.workerId()
                     + " does not advertise engine " + engineId);
+        }
+    }
+
+    public boolean canRun(RemoteWorkerRegistration registration, String adapterId, String engineId) {
+        try {
+            requireCanRun(registration, adapterId, engineId);
+            return true;
+        } catch (CapabilityMismatchException | IllegalArgumentException exception) {
+            return false;
         }
     }
 
