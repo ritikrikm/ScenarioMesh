@@ -8,13 +8,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.ServiceConfigurationError;
+import java.util.ServiceLoader;
 
-/** Centralizes human and machine-readable runtime logging. */
+/** Centralizes human, machine-readable and optional external runtime logging. */
 final class RunLogger {
     private final ScenarioMeshConfig config;
     private final String runId;
     private final Path eventsFile;
+    private final List<RunEventSink> sinks;
 
     RunLogger(ScenarioMeshConfig config) {
         this(config, null, null);
@@ -24,6 +29,7 @@ final class RunLogger {
         this.config = Objects.requireNonNull(config, "config");
         this.runId = runId;
         this.eventsFile = runDirectory == null ? null : runDirectory.resolve("events.jsonl");
+        this.sinks = loadSinks();
     }
 
     synchronized void info(String message) {
@@ -55,24 +61,55 @@ final class RunLogger {
     }
 
     private void event(String type, String workerId, String taskId, String message) {
-        if (eventsFile == null) return;
-        String json = "{"
-                + "\"timestamp\":\"" + escape(Instant.now().toString()) + "\","
-                + "\"runId\":" + nullable(runId) + ","
-                + "\"type\":\"" + escape(type) + "\","
-                + "\"workerId\":" + nullable(workerId) + ","
-                + "\"taskId\":" + nullable(taskId) + ","
-                + "\"message\":\"" + escape(message) + "\"}"
-                + System.lineSeparator();
-        try {
-            Files.writeString(eventsFile, json, StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (Exception exception) {
-            // Observability must never alter test outcomes. Console remains available.
-            if (config.showProgress()) {
-                System.err.println("[ScenarioMesh] Failed to append structured event log: " + exception.getMessage());
+        Instant timestamp = Instant.now();
+        RunEvent event = new RunEvent(timestamp, runId, type, workerId, taskId, message);
+        if (eventsFile != null) {
+            String json = "{"
+                    + "\"timestamp\":\"" + escape(timestamp.toString()) + "\","
+                    + "\"runId\":" + nullable(runId) + ","
+                    + "\"type\":\"" + escape(type) + "\","
+                    + "\"workerId\":" + nullable(workerId) + ","
+                    + "\"taskId\":" + nullable(taskId) + ","
+                    + "\"message\":\"" + escape(message) + "\"}"
+                    + System.lineSeparator();
+            try {
+                Files.writeString(eventsFile, json, StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            } catch (Exception exception) {
+                diagnostic("Failed to append structured event log: " + exception.getMessage());
             }
         }
+        for (RunEventSink sink : sinks) {
+            try {
+                sink.publish(event);
+            } catch (Exception exception) {
+                diagnostic("Observability sink '" + safeId(sink) + "' failed: " + exception.getMessage());
+            }
+        }
+    }
+
+    private List<RunEventSink> loadSinks() {
+        List<RunEventSink> loaded = new ArrayList<>();
+        try {
+            ServiceLoader.load(RunEventSink.class, Thread.currentThread().getContextClassLoader())
+                    .forEach(loaded::add);
+        } catch (ServiceConfigurationError error) {
+            diagnostic("Observability sink SPI could not load a provider: " + error.getMessage());
+        }
+        return List.copyOf(loaded);
+    }
+
+    private String safeId(RunEventSink sink) {
+        try {
+            String id = sink.id();
+            return id == null || id.isBlank() ? sink.getClass().getName() : id;
+        } catch (Exception ignored) {
+            return sink.getClass().getName();
+        }
+    }
+
+    private void diagnostic(String message) {
+        if (config.showProgress()) System.err.println("[ScenarioMesh] " + message);
     }
 
     private String nullable(String value) {
