@@ -18,14 +18,42 @@ jobs:
         run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest,*DistributedWorkAuthorityTest,*WorkerRegistrationValidatorTest,*LeasedResponseReaderTest,*LeaseHeartbeatEmitterTest' -Dsurefire.failIfNoSpecifiedTests=false
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
-      - name: Two remote workers execute a real target run
+      - name: Transparent remote takeover fails closed to native Maven
+        working-directory: examples/testng-example
+        run: |
+          token="p3-pass-through-${{ github.run_id }}-${{ matrix.java }}"
+          port=$((41000 + ${{ matrix.java }}))
+          rm -rf target/scenariomesh target/surefire-reports
+          mvn -B clean test \
+            -Dscenariomesh.workers.mode=remote \
+            -Dscenariomesh.workers.count=2 \
+            -Dscenariomesh.workers.minimumReady=2 \
+            -Dscenariomesh.distributed.bindHost=127.0.0.1 \
+            -Dscenariomesh.distributed.bindPort="$port" \
+            -Dscenariomesh.distributed.token="$token" \
+            > pass-through.log 2>&1
+          cat pass-through.log
+          grep -Fq 'ScenarioMesh preflight: native Maven pass-through - remote distributed execution is configured' pass-through.log
+          if grep -Fq 'Remote worker coordinator listening on' pass-through.log; then
+            echo 'Transparent remote takeover started a coordinator before remote ownership was proven'
+            exit 1
+          fi
+          test -d target/surefire-reports
+          if test -f target/scenariomesh/summary.json; then
+            echo 'ScenarioMesh unexpectedly produced a remote run summary during native pass-through'
+            exit 1
+          fi
+      - name: Compile target for explicit remote run
+        working-directory: examples/testng-example
+        run: mvn -B clean test-compile
+      - name: Two remote workers execute an explicit real target run
         working-directory: examples/testng-example
         run: |
           token="p3-${{ github.run_id }}-${{ matrix.java }}"
           port=$((42000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B clean test \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=2 \
             -Dscenariomesh.workers.minimumReady=2 \
