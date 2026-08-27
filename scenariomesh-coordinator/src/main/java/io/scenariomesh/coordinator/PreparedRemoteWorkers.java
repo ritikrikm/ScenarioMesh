@@ -77,7 +77,8 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + config.workerCount()
                         + " remote workers registered; minimum required is " + config.minimumReadyWorkers());
             }
-            verifyEveryWorkerCoverage(sessions, adapters, engines);
+            verifyEveryWorkerCoverage(
+                    sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
             log.accept("ScenarioMesh remote preflight proved " + sessions.size() + " authenticated worker(s); each can execute adapters="
                     + adapters + ", engines=" + engines + ".");
             return new PreparedRemoteWorkers(server, directory, sessions);
@@ -88,11 +89,10 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         }
     }
 
-    private static void verifyEveryWorkerCoverage(List<RemoteWorkerSession> sessions,
-                                                  Set<String> requiredAdapterIds,
-                                                  Set<String> requiredEngineIds) {
-        for (RemoteWorkerSession session : sessions) {
-            RemoteWorkerRegistration registration = session.registration();
+    static void verifyEveryWorkerCoverage(List<RemoteWorkerRegistration> registrations,
+                                          Set<String> requiredAdapterIds,
+                                          Set<String> requiredEngineIds) {
+        for (RemoteWorkerRegistration registration : registrations) {
             Set<String> missingAdapters = new HashSet<>(requiredAdapterIds);
             missingAdapters.removeAll(registration.adapterIds());
             Set<String> missingEngines = new HashSet<>(requiredEngineIds);
