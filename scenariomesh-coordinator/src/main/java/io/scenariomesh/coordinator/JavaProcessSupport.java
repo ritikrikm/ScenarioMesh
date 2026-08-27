@@ -12,13 +12,14 @@ import java.util.concurrent.TimeUnit;
 final class JavaProcessSupport {
     private JavaProcessSupport() {}
 
-    static List<String> command(List<Path> classpath,
+    static List<String> command(Path javaExecutable,
+                                List<Path> classpath,
                                 List<String> jvmArgs,
                                 Map<String, String> properties,
                                 String mainClass,
                                 List<String> args) {
         List<String> command = new ArrayList<>();
-        command.add(javaExecutable().toString());
+        command.add((javaExecutable == null ? defaultJavaExecutable() : javaExecutable).toString());
         // Maven Surefire enables assertions by default. ScenarioMesh child JVMs
         // mirror that default unless a future compatibility layer explicitly
         // reproduces a target project's enableAssertions override.
@@ -35,6 +36,14 @@ final class JavaProcessSupport {
         command.add(mainClass);
         command.addAll(args);
         return command;
+    }
+
+    static List<String> command(List<Path> classpath,
+                                List<String> jvmArgs,
+                                Map<String, String> properties,
+                                String mainClass,
+                                List<String> args) {
+        return command(defaultJavaExecutable(), classpath, jvmArgs, properties, mainClass, args);
     }
 
     static void terminateProcessTree(Process process, Duration gracefulWait) {
@@ -76,7 +85,7 @@ final class JavaProcessSupport {
         }
     }
 
-    private static Path javaExecutable() {
+    private static Path defaultJavaExecutable() {
         boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
         return Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java");
     }
