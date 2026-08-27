@@ -22,6 +22,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,43 +55,71 @@ public final class WorkerMain {
                     write(mapper, writer, Envelope.ack(parsed.workerId));
                     return;
                 }
-                if (envelope.type() != Protocol.Type.RUN || envelope.task() == null || envelope.attempt() == null || envelope.attempt() < 1) {
-                    write(mapper, writer, Envelope.error(parsed.workerId, "Expected RUN command with a positive attempt"));
+                if (envelope.type() != Protocol.Type.RUN
+                        || envelope.tasks().isEmpty()
+                        || envelope.attempt() == null
+                        || envelope.attempt() < 1) {
+                    write(mapper, writer, Envelope.error(parsed.workerId,
+                            "Expected RUN command with at least one task and a positive attempt"));
                     continue;
                 }
 
-                ScenarioTask task = envelope.task();
+                List<ScenarioTask> tasks = envelope.tasks();
                 ExecutionContext context = new ExecutionContext(
                         classLoader,
                         new WorkerId(parsed.workerId),
                         envelope.attempt(),
                         properties);
-                ExecutionResult result = execute(adapters, task, context);
-                result = runCleanupHooks(cleanupHooks, task, context, result);
-                write(mapper, writer, Envelope.result(parsed.workerId, result, telemetry()));
+                List<ExecutionResult> results = executeBatch(adapters, tasks, context);
+                results = runCleanupHooks(cleanupHooks, tasks, context, results);
+                write(mapper, writer, Envelope.resultBatch(parsed.workerId, results, telemetry()));
             }
         }
     }
 
-    private static ExecutionResult execute(AdapterRegistry adapters, ScenarioTask task, ExecutionContext context) {
-        try {
-            return Objects.requireNonNull(
-                    adapters.required(task.adapterId()).execute(task, context),
-                    "Adapter returned null result");
-        } catch (Exception exception) {
-            Instant now = Instant.now();
-            return new ExecutionResult(
-                    task.id(),
-                    task.displayName(),
-                    ResultStatus.INFRASTRUCTURE_FAILURE,
-                    Duration.ZERO,
-                    context.workerId(),
-                    context.attempt(),
-                    now,
-                    now,
-                    safeMessage(exception),
-                    exception.getClass().getName());
+    private static List<ExecutionResult> executeBatch(
+            AdapterRegistry adapters,
+            List<ScenarioTask> tasks,
+            ExecutionContext context) {
+        String adapterId = tasks.get(0).adapterId();
+        for (ScenarioTask task : tasks) {
+            if (!adapterId.equals(task.adapterId())) {
+                return failures(tasks, context,
+                        "Worker received a work unit containing multiple adapters",
+                        "MixedAdapterWorkUnit");
+            }
         }
+        try {
+            List<ExecutionResult> results = Objects.requireNonNull(
+                    adapters.required(adapterId).executeBatch(tasks, context),
+                    "Adapter returned null batch result");
+            if (results.isEmpty()) {
+                return failures(tasks, context, "Adapter returned an empty batch result", "EmptyBatchResult");
+            }
+            return List.copyOf(results);
+        } catch (Exception exception) {
+            return failures(tasks, context, safeMessage(exception), exception.getClass().getName());
+        }
+    }
+
+    private static List<ExecutionResult> runCleanupHooks(
+            List<WorkerTaskCleanup> hooks,
+            List<ScenarioTask> tasks,
+            ExecutionContext context,
+            List<ExecutionResult> results) {
+        Map<String, ExecutionResult> byId = new HashMap<>();
+        for (ExecutionResult result : results) {
+            byId.put(result.scenarioId().value(), result);
+        }
+        List<ExecutionResult> cleaned = new ArrayList<>(tasks.size());
+        for (ScenarioTask task : tasks) {
+            ExecutionResult result = byId.get(task.id().value());
+            if (result == null) {
+                result = failure(task, context, "Adapter did not return a result for this task", "MissingBatchResult");
+            }
+            cleaned.add(runCleanupHooks(hooks, task, context, result));
+        }
+        return List.copyOf(cleaned);
     }
 
     static ExecutionResult runCleanupHooks(
@@ -117,6 +146,25 @@ public final class WorkerMain {
             }
         }
         return result;
+    }
+
+    private static List<ExecutionResult> failures(
+            List<ScenarioTask> tasks,
+            ExecutionContext context,
+            String message,
+            String type) {
+        return tasks.stream().map(task -> failure(task, context, message, type)).toList();
+    }
+
+    private static ExecutionResult failure(
+            ScenarioTask task,
+            ExecutionContext context,
+            String message,
+            String type) {
+        Instant now = Instant.now();
+        return new ExecutionResult(
+                task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                Duration.ZERO, context.workerId(), context.attempt(), now, now, message, type);
     }
 
     private static String cleanupFailureMessage(
@@ -169,9 +217,7 @@ public final class WorkerMain {
             Integer port = null;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
-                if (i + 1 >= args.length) {
-                    throw new IllegalArgumentException(key + " requires a value");
-                }
+                if (i + 1 >= args.length) throw new IllegalArgumentException(key + " requires a value");
                 String value = args[++i];
                 switch (key) {
                     case "--host" -> host = value;
