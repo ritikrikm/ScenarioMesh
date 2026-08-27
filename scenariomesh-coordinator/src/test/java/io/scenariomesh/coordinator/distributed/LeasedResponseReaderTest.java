@@ -51,7 +51,7 @@ class LeasedResponseReaderTest {
         Envelope badHeartbeat = Envelope.heartbeat("worker-2", "unit-1", run.leaseId(), null);
 
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(5));
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(LeaseRegistry.StaleLeaseException.class,
                 () -> reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> badHeartbeat));
     }
 
