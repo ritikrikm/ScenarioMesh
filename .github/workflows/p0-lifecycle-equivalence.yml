@@ -37,7 +37,7 @@ jobs:
           test -f target/scenariomesh/summary.json
           grep -Fq '"total" : 5' target/scenariomesh/summary.json
           grep -Fq '"passed" : 5' target/scenariomesh/summary.json
-          grep -Fq 'parameterizedInvocationsRemainInSameScope' target/scenariomesh/summary.json
+          test "$(grep -Fc 'test-template-invocation' target/scenariomesh/summary.json)" -eq 3
       - name: Cucumber global lifecycle is executed once
         working-directory: examples/cucumber-junit-platform-example
         run: |
