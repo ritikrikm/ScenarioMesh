@@ -1,0 +1,26 @@
+name: p2-framework-spi
+on: [push, pull_request]
+
+jobs:
+  framework-spi:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: External adapter SPI loads without core registry edits
+        run: >-
+          mvn -B -pl scenariomesh-worker-runtime -am test
+          -Dtest='*AdapterRegistrySpiTest'
+          -Dsurefire.failIfNoSpecifiedTests=false
+      - name: Unknown and mixed backends remain fail-closed
+        run: >-
+          mvn -B -pl scenariomesh-maven-extension -am test
+          -Dtest='*ProjectCompatibilityDetectorTest,*SurefireCompatibilityTest,*FailsafeCompatibilityTest'
+          -Dsurefire.failIfNoSpecifiedTests=false
