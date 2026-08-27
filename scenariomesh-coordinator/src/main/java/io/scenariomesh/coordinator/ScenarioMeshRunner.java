@@ -1,5 +1,6 @@
 package io.scenariomesh.coordinator;
 
+import io.scenariomesh.config.ScenarioMeshConfig.SchedulingMode;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.RunId;
@@ -13,7 +14,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class ScenarioMeshRunner {
@@ -35,9 +38,10 @@ public final class ScenarioMeshRunner {
         logger.progress("Run " + runId.value() + " discovering executable tests...");
         DiscoveryMain.DiscoveryResult discovery = new DiscoveryProcess().discover(request, directory);
         discoveryValidator.validate(discovery.adapters(), discovery.tasks());
-        List<ScenarioTask> scheduledTasks = history.enrich(request.config().reportingDirectory(), discovery.tasks());
+        List<ScenarioTask> scheduledTasks = prepareForScheduling(request, discovery.tasks());
         logger.progress("Adapter selected: " + String.join(", ", discovery.adapters()));
         logger.progress("Discovery produced " + discovery.tasks().size() + " executable task(s).");
+        logger.progress("Scheduling strategy: " + request.config().schedulingMode().externalValue() + ".");
 
         List<ExecutionResult> results;
         if (request.config().distributed().remote()) {
@@ -83,5 +87,23 @@ public final class ScenarioMeshRunner {
         logger.progress("Execution finished: " + complete.size() + " terminal result(s) from "
                 + discovery.tasks().size() + " discovery task(s), duration=" + duration + ".");
         return new RunOutcome(runId, discovery.adapters(), discovery.tasks(), complete, duration, directory);
+    }
+
+    private List<ScenarioTask> prepareForScheduling(RunRequest request, List<ScenarioTask> tasks) {
+        if (request.config().schedulingMode() == SchedulingMode.HISTORY_LPT) {
+            return history.enrich(request.config().reportingDirectory(), tasks);
+        }
+        List<ScenarioTask> fifo = new ArrayList<>(tasks.size());
+        for (ScenarioTask task : tasks) {
+            if (!task.metadata().containsKey(ExecutionHistoryStore.ESTIMATED_DURATION_MILLIS)) {
+                fifo.add(task);
+                continue;
+            }
+            Map<String, String> metadata = new LinkedHashMap<>(task.metadata());
+            metadata.remove(ExecutionHistoryStore.ESTIMATED_DURATION_MILLIS);
+            fifo.add(new ScenarioTask(task.id(), task.displayName(), task.adapterId(), task.framework(),
+                    task.source(), task.line(), task.selector(), task.tags(), metadata));
+        }
+        return List.copyOf(fifo);
     }
 }
