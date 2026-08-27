@@ -16,13 +16,16 @@ final class ExecutorConfigurationSemantics {
         static Classification unknown() { return new Classification(Kind.UNKNOWN, null); }
     }
 
-    private static final Set<String> CONCURRENCY = Set.of(
+    private static final Set<String> CONCURRENCY_OR_LAUNCH_OWNED = Set.of(
             "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
-            "useUnlimitedThreads", "parallelOptimized");
+            "useUnlimitedThreads", "parallelOptimized",
+            // ScenarioMesh resolves these through Maven ToolchainManager and uses the
+            // resulting executable for discovery and worker JVMs.
+            "jvm", "jdkToolchain");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
-            "skip", "skipTests", "useModulePath", "jvm", "jdkToolchain");
+            "skip", "skipTests", "useModulePath");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "argLine", "systemPropertyVariables",
@@ -44,14 +47,14 @@ final class ExecutorConfigurationSemantics {
             Map.entry("excludesFile", "external-selection-file"));
 
     static Classification forSurefire(String name) {
-        if (CONCURRENCY.contains(name)) return Classification.replaced();
+        if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
         if (COMMON_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);
     }
 
     static Classification forFailsafe(String name) {
-        if (CONCURRENCY.contains(name)) return Classification.replaced();
+        if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
         if (COMMON_PRESERVED.contains(name) || FAILSAFE_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);
