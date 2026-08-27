@@ -35,10 +35,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Remote-worker execution pool. Jenkins (or another CI orchestrator) owns node allocation;
- * ScenarioMesh owns only authenticated worker registration, work leases and test-level scheduling.
- */
+/** Remote-worker execution pool. CI owns machines/executors; ScenarioMesh owns authenticated test scheduling. */
 final class RemoteWorkerPool implements AutoCloseable {
     private static final String EXECUTION_SCOPE_ID = "executionScopeId";
 
@@ -67,26 +64,21 @@ final class RemoteWorkerPool implements AutoCloseable {
         this.directory = new RemoteWorkerDirectory(request.config().workerTaskTimeout().multipliedBy(2));
         this.server = new RemoteWorkerServer(
                 InetAddress.getByName(distributed.bindHost()), distributed.bindPort(), distributed.token(),
-                registrationValidator, directory);
+                registrationValidator, directory, distributed.tls());
 
         logger.progress("Remote worker coordinator listening on " + distributed.bindHost() + ":"
-                + server.address().getPort() + "; waiting for " + request.config().workerCount()
+                + server.address().getPort() + " transport=" + (server.tlsEnabled() ? "tls" : "loopback-plain")
+                + "; waiting for " + request.config().workerCount()
                 + " authenticated worker process(es). Token is intentionally not logged.");
-        try {
-            acceptInitialWorkers();
-        } catch (Exception exception) {
-            close();
-            throw exception;
-        }
+        try { acceptInitialWorkers(); }
+        catch (Exception exception) { close(); throw exception; }
     }
 
     RemoteWorkerPool(RunRequest request, RunLogger logger, PreparedRemoteWorkers prepared) {
         this.request = request;
         this.logger = logger;
         this.preparedOwnership = true;
-        if (!request.config().distributed().remote()) {
-            throw new IllegalArgumentException("Prepared remote workers require workers.mode=remote");
-        }
+        if (!request.config().distributed().remote()) throw new IllegalArgumentException("Prepared remote workers require workers.mode=remote");
         if (prepared == null) throw new IllegalArgumentException("prepared remote workers are required");
         this.workAuthority = new DistributedWorkAuthority(
                 new LeaseRegistry(request.config().workerTaskTimeout().multipliedBy(2)));
@@ -126,10 +118,7 @@ final class RemoteWorkerPool implements AutoCloseable {
         int tasksOnWorker = 0;
         for (;;) {
             ScenarioTask representative = scheduler.nextEligible(candidate -> true);
-            if (representative == null) {
-                stop(session);
-                return;
-            }
+            if (representative == null) { stop(session); return; }
             WorkUnit unit = workPlan.required(representative.id());
             String workerId = session.registration().workerId();
             int attempt = attempts.merge(representative.id(), 1, Integer::sum);
@@ -144,8 +133,7 @@ final class RemoteWorkerPool implements AutoCloseable {
             try {
                 registrationValidator.requireCanRun(session.registration(), representative.adapterId(), null);
                 directory.claimSlot(workerId, started);
-                Envelope run = workAuthority.issueRun(
-                        representative.id().value(), workerId, attempt, unit.tasks(), started);
+                Envelope run = workAuthority.issueRun(representative.id().value(), workerId, attempt, unit.tasks(), started);
                 session.write(run);
                 Envelope response = responseReader.readTerminal(
                         workerId, request.config().workerTaskTimeout(), session::read,
@@ -155,8 +143,7 @@ final class RemoteWorkerPool implements AutoCloseable {
                             "Remote worker disconnected before returning a work-unit result");
                 } else {
                     workAuthority.acceptResult(workerId, response, Instant.now());
-                    unitResults = resultValidator.validateBatchOrFailures(
-                            unit.tasks(), workerId, attempt, started, response);
+                    unitResults = resultValidator.validateBatchOrFailures(unit.tasks(), workerId, attempt, started, response);
                     if (unitResults.stream().noneMatch(this::isProtocolValidationFailure)) telemetry = response.telemetry();
                 }
             } catch (CapabilityMismatchException exception) {
@@ -196,10 +183,7 @@ final class RemoteWorkerPool implements AutoCloseable {
             if (unitResults.stream().anyMatch(this::requiresWorkerRetirement)) {
                 String reason = unitResults.stream().anyMatch(this::isProtocolValidationFailure)
                         ? "protocol result validation failure" : "worker failure";
-                if (scheduler.queued() == 0) {
-                    retire(session, reason);
-                    return;
-                }
+                if (scheduler.queued() == 0) { retire(session, reason); return; }
                 RemoteWorkerSession replacement = replace(session, reason);
                 if (replacement == null) return;
                 session = replacement;
@@ -242,8 +226,7 @@ final class RemoteWorkerPool implements AutoCloseable {
         } catch (SocketTimeoutException timeout) {
             if (sessions.size() < request.config().minimumReadyWorkers()) {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + request.config().workerCount()
-                        + " remote workers registered; minimum required is "
-                        + request.config().minimumReadyWorkers(), timeout);
+                        + " remote workers registered; minimum required is " + request.config().minimumReadyWorkers(), timeout);
             }
             logger.progress("Starting distributed run in degraded capacity with " + sessions.size() + "/"
                     + request.config().workerCount() + " remote workers ready.");
@@ -340,8 +323,7 @@ final class RemoteWorkerPool implements AutoCloseable {
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
-    @Override
-    public void close() {
+    @Override public void close() {
         for (RemoteWorkerSession session : List.copyOf(sessions)) {
             try { stop(session); } catch (Exception ignored) { }
             try { server.disconnected(session); } catch (Exception ignored) { }
