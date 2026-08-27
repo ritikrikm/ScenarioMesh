@@ -2,8 +2,10 @@ package io.scenariomesh.workerruntime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
+import org.junit.platform.engine.UniqueId;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,14 +36,50 @@ public final class PreflightProbeMain {
         }
         ExecutionBackendInventory.Inventory inventory = ExecutionBackendInventory.inspect(
                 loader, parsed.testRoots, parsed.includes, parsed.excludes, adapterOwnedEngines);
+        RuntimeRequirements requirements = runtimeRequirements(context, registry);
 
         Files.createDirectories(parsed.output.getParent());
         ObjectMapper mapper = JsonCodec.create();
         mapper.writerWithDefaultPrettyPrinter().writeValue(parsed.output.toFile(),
-                new ProbeResult(inventory.ownership().name(), inventory.summary()));
+                new ProbeResult(inventory.ownership().name(), inventory.summary(),
+                        requirements.adapterIds(), requirements.engineIds()));
     }
 
-    public record ProbeResult(String ownership, String summary) {}
+    static RuntimeRequirements runtimeRequirements(AdapterContext context, AdapterRegistry registry) throws Exception {
+        Set<String> adapterIds = new LinkedHashSet<>();
+        Set<String> engineIds = new LinkedHashSet<>();
+        for (ScenarioAdapter adapter : registry.available(context.classLoader())) {
+            List<ScenarioTask> tasks = adapter.discover(context);
+            if (tasks.isEmpty()) continue;
+            adapterIds.add(adapter.id());
+            if ("junit-platform".equals(adapter.id())) {
+                for (ScenarioTask task : tasks) {
+                    try {
+                        UniqueId.parse(task.selector()).getEngineId().ifPresent(engineIds::add);
+                    } catch (RuntimeException exception) {
+                        throw new IllegalStateException("Selected JUnit Platform task has an invalid UniqueId selector: "
+                                + task.selector(), exception);
+                    }
+                }
+            }
+        }
+        return new RuntimeRequirements(Set.copyOf(adapterIds), Set.copyOf(engineIds));
+    }
+
+    public record ProbeResult(String ownership, String summary,
+                              Set<String> requiredAdapterIds, Set<String> requiredEngineIds) {
+        public ProbeResult {
+            requiredAdapterIds = Set.copyOf(requiredAdapterIds == null ? Set.of() : requiredAdapterIds);
+            requiredEngineIds = Set.copyOf(requiredEngineIds == null ? Set.of() : requiredEngineIds);
+        }
+    }
+
+    record RuntimeRequirements(Set<String> adapterIds, Set<String> engineIds) {
+        RuntimeRequirements {
+            adapterIds = Set.copyOf(adapterIds == null ? Set.of() : adapterIds);
+            engineIds = Set.copyOf(engineIds == null ? Set.of() : engineIds);
+        }
+    }
 
     private static final class Arguments {
         private final Path output;
