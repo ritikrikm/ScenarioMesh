@@ -11,7 +11,6 @@ import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -20,6 +19,7 @@ import java.util.function.Consumer;
 /** Authenticated remote-worker sessions proven during Maven preflight and retained for execution. */
 public final class PreparedRemoteWorkers implements AutoCloseable {
     private static final Duration REMOTE_LIVENESS_TIMEOUT = Duration.ofSeconds(20);
+    private static final String JUNIT_PLATFORM_ADAPTER = "junit-platform";
     private final RemoteWorkerServer server;
     private final RemoteWorkerDirectory directory;
     private final List<RemoteWorkerSession> sessions;
@@ -68,8 +68,9 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + config.workerCount()
                         + " remote workers registered; minimum required is " + config.minimumReadyWorkers());
             }
-            verifyEveryWorkerCoverage(sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
-            log.accept("ScenarioMesh remote preflight proved " + sessions.size() + " authenticated worker(s); each can execute adapters="
+            verifyCapabilityCoverage(sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
+            log.accept("ScenarioMesh remote preflight proved " + sessions.size()
+                    + " authenticated worker(s) with aggregate capability coverage for adapters="
                     + adapters + ", engines=" + engines + ".");
             return new PreparedRemoteWorkers(server, directory, sessions);
         } catch (Exception exception) {
@@ -79,18 +80,23 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         }
     }
 
-    static void verifyEveryWorkerCoverage(List<RemoteWorkerRegistration> registrations,
-                                          Set<String> requiredAdapterIds,
-                                          Set<String> requiredEngineIds) {
-        for (RemoteWorkerRegistration registration : registrations) {
-            Set<String> missingAdapters = new HashSet<>(requiredAdapterIds);
-            missingAdapters.removeAll(registration.adapterIds());
-            Set<String> missingEngines = new HashSet<>(requiredEngineIds);
-            missingEngines.removeAll(registration.engineIds());
-            if (!missingAdapters.isEmpty() || !missingEngines.isEmpty()) {
-                throw new IllegalStateException("Remote worker " + registration.workerId()
-                        + " cannot prove the complete selected runtime while capability-aware heterogeneous scheduling is not yet proven; missing adapters="
-                        + missingAdapters + ", missing JUnit Platform engines=" + missingEngines);
+    static void verifyCapabilityCoverage(List<RemoteWorkerRegistration> registrations,
+                                         Set<String> requiredAdapterIds,
+                                         Set<String> requiredEngineIds) {
+        Objects.requireNonNull(registrations, "registrations");
+        WorkerRegistrationValidator validator = new WorkerRegistrationValidator();
+        for (String adapterId : requiredAdapterIds) {
+            boolean covered = registrations.stream().anyMatch(registration -> validator.canRun(registration, adapterId, null));
+            if (!covered) {
+                throw new IllegalStateException("No prepared remote worker can execute required adapter " + adapterId);
+            }
+        }
+        for (String engineId : requiredEngineIds) {
+            boolean covered = registrations.stream().anyMatch(registration ->
+                    validator.canRun(registration, JUNIT_PLATFORM_ADAPTER, engineId));
+            if (!covered) {
+                throw new IllegalStateException("No prepared remote worker can execute required JUnit Platform engine "
+                        + engineId + " with adapter " + JUNIT_PLATFORM_ADAPTER);
             }
         }
     }
