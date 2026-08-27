@@ -31,20 +31,32 @@ class LeasedResponseReaderTest {
         ScenarioTask task = task();
         Envelope run = authority.issueRun("unit-1", "worker-1", 1, List.of(task), start);
         Envelope heartbeat = Envelope.heartbeat("worker-1", "unit-1", run.leaseId(), null);
-        ExecutionResult result = result(task);
-        Envelope terminal = Envelope.resultBatch(
-                "worker-1", "unit-1", run.leaseId(), List.of(), List.of(result), null);
+        Envelope terminal = Envelope.resultBatch("worker-1", "unit-1", run.leaseId(), List.of(), List.of(result(task)), null);
         ArrayDeque<Envelope> responses = new ArrayDeque<>(List.of(heartbeat, terminal));
-        AtomicReference<Instant> observedHeartbeat = new AtomicReference<>();
-
+        AtomicReference<Instant> observed = new AtomicReference<>();
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(5));
-        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2),
-                ignored -> responses.poll(), observedHeartbeat::set);
-
+        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> responses.poll(), observed::set);
         assertSame(terminal, returned);
-        assertEquals(start.plusSeconds(5), observedHeartbeat.get());
+        assertEquals(start.plusSeconds(5), observed.get());
         authority.acceptResult("worker-1", returned, start.plusSeconds(6));
         assertEquals(0, leases.activeLeaseCount());
+    }
+
+    @Test
+    void presenceRefreshesLivenessButDoesNotNeedOrRenewLeaseAuthority() throws Exception {
+        LeaseRegistry leases = new LeaseRegistry(Duration.ofSeconds(30));
+        DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
+        ScenarioTask task = task();
+        Envelope run = authority.issueRun("unit-1", "worker-1", 1, List.of(task), start);
+        Envelope presence = Envelope.presence("worker-1", null);
+        Envelope terminal = Envelope.resultBatch("worker-1", "unit-1", run.leaseId(), List.of(), List.of(result(task)), null);
+        ArrayDeque<Envelope> responses = new ArrayDeque<>(List.of(presence, terminal));
+        AtomicReference<Instant> observed = new AtomicReference<>();
+        LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(5));
+        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> responses.poll(), observed::set);
+        assertSame(terminal, returned);
+        assertEquals(start.plusSeconds(5), observed.get());
+        authority.acceptResult("worker-1", returned, start.plusSeconds(6));
     }
 
     @Test
@@ -52,47 +64,35 @@ class LeasedResponseReaderTest {
         LeaseRegistry leases = new LeaseRegistry(Duration.ofMinutes(1));
         DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
         RemoteWorkerDirectory directory = new RemoteWorkerDirectory(Duration.ofSeconds(20));
-        directory.register(new RemoteWorkerRegistration(
-                "worker-1", "fp", 1, 21, "Linux", "amd64",
+        directory.register(new RemoteWorkerRegistration("worker-1", "fp", 1, 21, "Linux", "amd64",
                 Set.of("junit-platform"), Set.of("junit-jupiter"), Map.of()), start);
         ScenarioTask task = task();
         Envelope run = authority.issueRun("unit-1", "worker-1", 1, List.of(task), start);
         Envelope heartbeat = Envelope.heartbeat("worker-1", "unit-1", run.leaseId(), null);
-        Envelope terminal = Envelope.resultBatch(
-                "worker-1", "unit-1", run.leaseId(), List.of(), List.of(result(task)), null);
+        Envelope terminal = Envelope.resultBatch("worker-1", "unit-1", run.leaseId(), List.of(), List.of(result(task)), null);
         ArrayDeque<Envelope> responses = new ArrayDeque<>(List.of(heartbeat, terminal));
-
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(25));
-        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2),
-                ignored -> responses.poll(), heartbeatAt -> directory.heartbeat("worker-1", heartbeatAt));
-
+        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> responses.poll(),
+                heartbeatAt -> directory.heartbeat("worker-1", heartbeatAt));
         assertSame(terminal, returned);
-        assertEquals(1, directory.eligible(
-                "fp", "junit-platform", "junit-jupiter", start.plusSeconds(26)).size());
+        assertEquals(1, directory.eligible("fp", "junit-platform", "junit-jupiter", start.plusSeconds(26)).size());
     }
 
     @Test
-    void rejectsHeartbeatFromWrongWorkerBeforeNotifyingLivenessObserver() {
+    void rejectsLivenessMessageFromWrongWorkerBeforeNotifyingObserver() {
         LeaseRegistry leases = new LeaseRegistry(Duration.ofSeconds(30));
         DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
-        ScenarioTask task = task();
-        Envelope run = authority.issueRun("unit-1", "worker-1", 1, List.of(task), start);
-        Envelope badHeartbeat = Envelope.heartbeat("worker-2", "unit-1", run.leaseId(), null);
-        AtomicReference<Instant> observedHeartbeat = new AtomicReference<>();
-
+        AtomicReference<Instant> observed = new AtomicReference<>();
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(5));
-        assertThrows(LeaseRegistry.StaleLeaseException.class,
-                () -> reader.readTerminal("worker-1", Duration.ofSeconds(2),
-                        ignored -> badHeartbeat, observedHeartbeat::set));
-        assertNull(observedHeartbeat.get());
+        assertThrows(IllegalArgumentException.class,
+                () -> reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> Envelope.presence("worker-2", null), observed::set));
+        assertNull(observed.get());
     }
 
     @Test
     void heartbeatDoesNotExtendHardTaskTimeout() {
-        LeaseRegistry leases = new LeaseRegistry(Duration.ofSeconds(30));
-        DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
+        DistributedWorkAuthority authority = new DistributedWorkAuthority(new LeaseRegistry(Duration.ofSeconds(30)));
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start);
-
         assertThrows(IllegalArgumentException.class,
                 () -> reader.readTerminal("worker-1", Duration.ZERO, ignored -> null));
     }
