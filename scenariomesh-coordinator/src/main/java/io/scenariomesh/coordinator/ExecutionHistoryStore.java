@@ -69,7 +69,9 @@ final class ExecutionHistoryStore {
                     if (scope != null && !scope.isBlank()) observedScopeMillis.merge(scope, observed, Long::sum);
                 }
             }
-            observedScopeMillis.forEach((scope, observed) -> mergeEstimate(history, SCOPE_PREFIX + scope, observed, observedAt));
+            for (Map.Entry<String, Long> observedScope : observedScopeMillis.entrySet()) {
+                mergeEstimate(history, SCOPE_PREFIX + observedScope.getKey(), observedScope.getValue(), observedAt);
+            }
             history = bounded(history);
             persist(reportingDirectory, history);
         } catch (Exception ignored) {
