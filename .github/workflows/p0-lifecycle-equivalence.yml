@@ -27,6 +27,16 @@ jobs:
           test -f target/scenariomesh-yaml/summary.json
           grep -Fq '"passed" : 6' target/scenariomesh-yaml/summary.json
           grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
+      - name: JUnit PER_CLASS state and parameterized invocations stay in one lifecycle scope
+        working-directory: examples/junit5-per-class-example
+        run: |
+          rm -f target/per-class-lifecycle.log
+          mvn -B clean test
+          test -f target/per-class-lifecycle.log
+          test "$(grep -Fc 'BEFORE_ALL' target/per-class-lifecycle.log)" -eq 1
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"discovered" : 5' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 5' target/scenariomesh/summary.json
       - name: Cucumber global lifecycle is executed once
         working-directory: examples/cucumber-junit-platform-example
         run: |
