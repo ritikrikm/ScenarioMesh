@@ -24,7 +24,7 @@ public final class ScenarioMeshRunner {
         RunId runId = RunId.create();
         Path directory = request.config().reportingDirectory().resolve("runs").resolve(runId.value());
         Files.createDirectories(directory);
-        RunLogger logger = new RunLogger(request.config());
+        RunLogger logger = new RunLogger(request.config(), runId.value(), directory);
         Instant started = Instant.now();
 
         logger.progress("Run " + runId.value() + " discovering executable tests...");
@@ -38,10 +38,6 @@ public final class ScenarioMeshRunner {
             results = workers.execute(discovery.tasks());
         }
 
-        // Every worker result has already passed ExecutionResultValidator, including
-        // strict parent/selector/id validation for runtime-materialized JUnit children.
-        // At this layer we only enforce global uniqueness and fill genuinely missing
-        // non-materializer placeholders.
         Set<String> completed = new HashSet<>();
         for (ExecutionResult result : results) {
             String resultId = result.scenarioId().value();
