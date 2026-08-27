@@ -29,6 +29,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,6 +44,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 final class WorkerPool implements AutoCloseable {
+    private static final String EXECUTION_SCOPE_ID = "executionScopeId";
+
     private final ObjectMapper mapper = JsonCodec.create();
     private final ExecutionResultValidator resultValidator = new ExecutionResultValidator();
     private final RunRequest request;
@@ -74,14 +77,16 @@ final class WorkerPool implements AutoCloseable {
     }
 
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
+        WorkPlan workPlan = WorkPlan.from(tasks);
         SchedulingStrategy scheduler = new FifoSchedulingStrategy();
-        scheduler.load(tasks);
+        scheduler.load(workPlan.representatives());
         ConcurrentLinkedQueue<ExecutionResult> results = new ConcurrentLinkedQueue<>();
         RunProgress progress = new RunProgress(tasks.size());
         ExecutorService executor = Executors.newFixedThreadPool(connections.size());
-        logger.progress("Scheduler FIFO loaded " + tasks.size() + " task(s); " + connections.size() + " worker(s) ready.");
+        logger.progress("Scheduler FIFO loaded " + workPlan.units().size() + " work unit(s) for "
+                + tasks.size() + " logical task(s); " + connections.size() + " worker(s) ready.");
         for (WorkerConnection connection : List.copyOf(connections)) {
-            executor.submit(() -> loop(connection, scheduler, results, progress));
+            executor.submit(() -> loop(connection, scheduler, workPlan, results, progress));
         }
         executor.shutdown();
         executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
@@ -91,90 +96,88 @@ final class WorkerPool implements AutoCloseable {
     private void loop(
             WorkerConnection initialConnection,
             SchedulingStrategy scheduler,
+            WorkPlan workPlan,
             ConcurrentLinkedQueue<ExecutionResult> results,
             RunProgress progress) {
         WorkerConnection connection = initialConnection;
         int tasksOnCurrentWorker = 0;
         for (;;) {
-            ScenarioTask task = scheduler.nextEligible(candidate -> true);
-            if (task == null) {
+            ScenarioTask representative = scheduler.nextEligible(candidate -> true);
+            if (representative == null) {
                 stop(connection);
                 return;
             }
-
-            int attempt = attempts.merge(task.id(), 1, Integer::sum);
-            int busy = progress.busy.incrementAndGet();
-            logger.progress(connection.workerId + " RUN " + task.displayName() + " attempt=" + attempt
+            WorkUnit unit = workPlan.required(representative.id());
+            int attempt = attempts.merge(representative.id(), 1, Integer::sum);
+            int busy = progress.busy.addAndGet(unit.tasks().size());
+            logger.progress(connection.workerId + " RUN " + unit.label() + " attempt=" + attempt
+                    + " leaves=" + unit.tasks().size()
                     + " | completed=" + progress.completed.get() + "/" + progress.total
                     + " busy=" + busy
-                    + " queued=" + scheduler.queued());
+                    + " queuedUnits=" + scheduler.queued());
 
             Instant started = Instant.now();
-            ExecutionResult result;
+            List<ExecutionResult> unitResults;
             WorkerTelemetry telemetry = null;
             try {
-                connection.write(Envelope.run(connection.workerId, task, attempt));
+                connection.write(Envelope.runBatch(connection.workerId, unit.tasks(), attempt));
                 Envelope response = connection.read(request.config().workerTaskTimeout());
                 if (response == null) {
-                    result = failure(task, connection.workerId, attempt, started,
-                            "Worker disconnected before returning a result");
+                    unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
+                            "Worker disconnected before returning a work-unit result");
                 } else {
-                    result = resultValidator.validateOrFailure(
-                            task, connection.workerId, attempt, started, response);
-                    if (!isProtocolValidationFailure(result)) {
+                    unitResults = resultValidator.validateBatchOrFailures(
+                            unit.tasks(), connection.workerId, attempt, started, response);
+                    if (unitResults.stream().noneMatch(this::isProtocolValidationFailure)) {
                         telemetry = response.telemetry();
                     }
                 }
             } catch (SocketTimeoutException exception) {
-                result = failure(task, connection.workerId, attempt, started,
-                        "Worker exceeded task timeout " + request.config().workerTaskTimeout());
+                unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
+                        "Worker exceeded work-unit timeout " + request.config().workerTaskTimeout());
             } catch (Exception exception) {
-                result = failure(task, connection.workerId, attempt, started, safeMessage(exception));
+                unitResults = failures(unit.tasks(), connection.workerId, attempt, started, safeMessage(exception));
             }
 
-            progress.busy.decrementAndGet();
+            progress.busy.addAndGet(-unit.tasks().size());
 
-            if (retryable(result) && attempt <= request.config().infrastructureRetries()) {
-                scheduler.requeue(task);
-                logger.progress(connection.workerId + " RETRY " + task.displayName()
-                        + " after " + result.status() + " | nextAttempt=" + (attempt + 1)
-                        + " queued=" + scheduler.queued());
-                WorkerConnection replacement = replace(connection, "retryable " + result.status());
-                if (replacement == null) {
-                    return;
-                }
+            if (retryableUnit(unit, unitResults) && attempt <= request.config().infrastructureRetries()) {
+                scheduler.requeue(representative);
+                ExecutionResult first = unitResults.get(0);
+                logger.progress(connection.workerId + " RETRY " + unit.label()
+                        + " after " + first.status() + " | nextAttempt=" + (attempt + 1)
+                        + " queuedUnits=" + scheduler.queued());
+                WorkerConnection replacement = replace(connection, "retryable " + first.status());
+                if (replacement == null) return;
                 connection = replacement;
                 tasksOnCurrentWorker = 0;
                 continue;
             }
 
-            attempts.remove(task.id());
-            results.add(result);
-            int completed = progress.completed.incrementAndGet();
-            if (!result.buildSuccessful()) {
-                progress.failed.incrementAndGet();
+            attempts.remove(representative.id());
+            for (ExecutionResult result : unitResults) {
+                results.add(result);
+                int completed = progress.completed.incrementAndGet();
+                if (!result.buildSuccessful()) progress.failed.incrementAndGet();
+                logger.workerCompleted(connection.workerId, result, completed, progress.failed.get(),
+                        progress.busy.get(), progress.total);
             }
-            logger.workerCompleted(connection.workerId, result, completed, progress.failed.get(),
-                    progress.busy.get(), progress.total);
 
-            if (requiresWorkerRetirement(result)) {
-                String reason = isProtocolValidationFailure(result)
-                        ? "protocol result validation failure"
-                        : "worker failure";
+            if (unitResults.stream().anyMatch(this::requiresWorkerRetirement)) {
+                boolean protocolFailure = unitResults.stream().anyMatch(this::isProtocolValidationFailure);
+                String reason = protocolFailure ? "protocol result validation failure" : "worker failure";
                 if (scheduler.queued() == 0) {
                     retireConnection(connection, reason + " with no queued work remaining");
                     return;
                 }
                 WorkerConnection replacement = replace(connection, reason);
-                if (replacement == null) {
-                    return;
-                }
+                if (replacement == null) return;
                 connection = replacement;
                 tasksOnCurrentWorker = 0;
                 continue;
             }
 
-            tasksOnCurrentWorker++;
+            tasksOnCurrentWorker += unit.tasks().size();
             String recycleReason = recycleReason(tasksOnCurrentWorker, telemetry);
             if (recycleReason != null) {
                 if (scheduler.queued() == 0) {
@@ -184,13 +187,21 @@ final class WorkerPool implements AutoCloseable {
                     return;
                 }
                 WorkerConnection replacement = replace(connection, recycleReason);
-                if (replacement == null) {
-                    return;
-                }
+                if (replacement == null) return;
                 connection = replacement;
                 tasksOnCurrentWorker = 0;
             }
         }
+    }
+
+    private boolean retryableUnit(WorkUnit unit, List<ExecutionResult> results) {
+        // A scoped work unit may have executed setup/global hooks or external side effects
+        // before a transport/JVM failure. Re-running it would change native semantics.
+        // Only singleton unscoped units retain the legacy infrastructure retry policy.
+        return !unit.scoped()
+                && unit.tasks().size() == 1
+                && results.size() == 1
+                && retryable(results.get(0));
     }
 
     private boolean retryable(ExecutionResult result) {
@@ -218,12 +229,13 @@ final class WorkerPool implements AutoCloseable {
         return null;
     }
 
-    private ExecutionResult failure(ScenarioTask task, String id, int attempt, Instant started, String message) {
+    private List<ExecutionResult> failures(
+            List<ScenarioTask> tasks, String id, int attempt, Instant started, String message) {
         Instant finished = Instant.now();
-        return new ExecutionResult(
+        return tasks.stream().map(task -> new ExecutionResult(
                 task.id(), task.displayName(), ResultStatus.WORKER_FAILURE,
                 Duration.between(started, finished), new WorkerId(id), attempt,
-                started, finished, message, "WorkerFailure");
+                started, finished, message, "WorkerFailure")).toList();
     }
 
     private String safeMessage(Exception exception) {
@@ -265,31 +277,21 @@ final class WorkerPool implements AutoCloseable {
 
     private void retireProcess(String workerId) {
         Process process = processes.remove(workerId);
-        if (process != null) {
-            destroyProcessTree(process, true);
-        }
+        if (process != null) destroyProcessTree(process, true);
         outputPumps.remove(workerId);
     }
 
     private void launchInitialWorkers() throws Exception {
         prepareLogsDirectory();
-        for (int index = 0; index < request.config().workerCount(); index++) {
-            launchWorker(nextWorkerId());
-        }
+        for (int index = 0; index < request.config().workerCount(); index++) launchWorker(nextWorkerId());
     }
 
-    private String nextWorkerId() {
-        return "worker-" + workerSequence.incrementAndGet();
-    }
+    private String nextWorkerId() { return "worker-" + workerSequence.incrementAndGet(); }
 
-    private Path logsDirectory() {
-        return dir.resolve("logs");
-    }
+    private Path logsDirectory() { return dir.resolve("logs"); }
 
     private void prepareLogsDirectory() throws Exception {
-        if (request.config().workerLogFiles()) {
-            Files.createDirectories(logsDirectory());
-        }
+        if (request.config().workerLogFiles()) Files.createDirectories(logsDirectory());
     }
 
     private void launchWorker(String id) throws Exception {
@@ -302,11 +304,8 @@ final class WorkerPool implements AutoCloseable {
                 "--token", token,
                 "--worker-id", id);
         List<String> command = JavaProcessSupport.command(
-                request.runtimeClasspath(),
-                request.effectiveJvmArgs(),
-                request.effectiveSystemProperties(),
-                WorkerMain.class.getName(),
-                args);
+                request.runtimeClasspath(), request.effectiveJvmArgs(), request.effectiveSystemProperties(),
+                WorkerMain.class.getName(), args);
         Process process = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile())
                 .redirectErrorStream(true)
@@ -345,9 +344,7 @@ final class WorkerPool implements AutoCloseable {
                 .map(connection -> connection.workerId)
                 .collect(Collectors.toSet());
         for (String workerId : new ArrayList<>(processes.keySet())) {
-            if (!connectedIds.contains(workerId)) {
-                retireProcess(workerId);
-            }
+            if (!connectedIds.contains(workerId)) retireProcess(workerId);
         }
     }
 
@@ -402,19 +399,11 @@ final class WorkerPool implements AutoCloseable {
         for (int index = descendants.size() - 1; index >= 0; index--) {
             ProcessHandle descendant = descendants.get(index);
             if (descendant.isAlive()) {
-                if (force) {
-                    descendant.destroyForcibly();
-                } else {
-                    descendant.destroy();
-                }
+                if (force) descendant.destroyForcibly(); else descendant.destroy();
             }
         }
         if (process.isAlive()) {
-            if (force) {
-                process.destroyForcibly();
-            } else {
-                process.destroy();
-            }
+            if (force) process.destroyForcibly(); else process.destroy();
         }
     }
 
@@ -428,25 +417,18 @@ final class WorkerPool implements AutoCloseable {
             }
         }
 
-        // Signal every worker process tree first so the configured shutdown timeout applies to the pool as a whole.
-        for (Process process : processes.values()) {
-            destroyProcessTree(process, false);
-        }
+        for (Process process : processes.values()) destroyProcessTree(process, false);
 
         long deadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
         for (Process process : processes.values()) {
-            if (!process.isAlive()) {
-                continue;
-            }
+            if (!process.isAlive()) continue;
             long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) {
                 destroyProcessTree(process, true);
                 continue;
             }
             try {
-                if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) {
-                    destroyProcessTree(process, true);
-                }
+                if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) destroyProcessTree(process, true);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
                 destroyProcessTree(process, true);
@@ -456,9 +438,7 @@ final class WorkerPool implements AutoCloseable {
         long pumpDeadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
         for (Thread pump : outputPumps.values()) {
             long remainingNanos = pumpDeadlineNanos - System.nanoTime();
-            if (remainingNanos <= 0) {
-                break;
-            }
+            if (remainingNanos <= 0) break;
             try {
                 long millis = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
                 pump.join(millis);
@@ -480,8 +460,55 @@ final class WorkerPool implements AutoCloseable {
         private final AtomicInteger failed = new AtomicInteger();
         private final AtomicInteger busy = new AtomicInteger();
 
-        private RunProgress(int total) {
-            this.total = total;
+        private RunProgress(int total) { this.total = total; }
+    }
+
+    private record WorkUnit(ScenarioTask representative, List<ScenarioTask> tasks, boolean scoped, String label) {
+        private WorkUnit {
+            tasks = List.copyOf(tasks);
+        }
+    }
+
+    private record WorkPlan(List<WorkUnit> units, Map<ScenarioId, WorkUnit> byRepresentative) {
+        private WorkPlan {
+            units = List.copyOf(units);
+            byRepresentative = Map.copyOf(byRepresentative);
+        }
+
+        static WorkPlan from(List<ScenarioTask> tasks) {
+            Map<String, List<ScenarioTask>> grouped = new LinkedHashMap<>();
+            Map<String, Boolean> scopedByKey = new LinkedHashMap<>();
+            for (ScenarioTask task : tasks) {
+                String scope = task.metadata().get(EXECUTION_SCOPE_ID);
+                boolean scoped = scope != null && !scope.isBlank();
+                String key = scoped ? "scope:" + task.adapterId() + ":" + scope : "leaf:" + task.id().value();
+                grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(task);
+                scopedByKey.putIfAbsent(key, scoped);
+            }
+            List<WorkUnit> units = new ArrayList<>(grouped.size());
+            Map<ScenarioId, WorkUnit> byRepresentative = new LinkedHashMap<>();
+            for (Map.Entry<String, List<ScenarioTask>> entry : grouped.entrySet()) {
+                List<ScenarioTask> members = List.copyOf(entry.getValue());
+                ScenarioTask representative = members.get(0);
+                boolean scoped = scopedByKey.get(entry.getKey());
+                String label = scoped
+                        ? representative.framework() + " scope " + members.size() + " leaf/leaves"
+                        : representative.displayName();
+                WorkUnit unit = new WorkUnit(representative, members, scoped, label);
+                units.add(unit);
+                byRepresentative.put(representative.id(), unit);
+            }
+            return new WorkPlan(units, byRepresentative);
+        }
+
+        List<ScenarioTask> representatives() {
+            return units.stream().map(WorkUnit::representative).toList();
+        }
+
+        WorkUnit required(ScenarioId representativeId) {
+            WorkUnit unit = byRepresentative.get(representativeId);
+            if (unit == null) throw new IllegalStateException("No work unit for representative " + representativeId.value());
+            return unit;
         }
     }
 
@@ -523,8 +550,6 @@ final class WorkerPool implements AutoCloseable {
         }
 
         @Override
-        public void close() throws Exception {
-            socket.close();
-        }
+        public void close() throws Exception { socket.close(); }
     }
 }
