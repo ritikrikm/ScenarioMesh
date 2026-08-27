@@ -32,6 +32,21 @@ jobs:
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' target/scenariomesh/summary.json
           grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" toolchain-run.log
+      - name: JPMS module path safely remains native Maven
+        working-directory: examples/junit5-jpms-example
+        run: |
+          mvn -B clean test -Dtest.module.path=true | tee jpms-native.log
+          grep -Fq 'ScenarioMesh preflight: native Maven pass-through - JPMS module-path execution is active' jpms-native.log
+          test ! -f target/scenariomesh/summary.json
+          test -f target/surefire-reports/TEST-example.ModularTest.xml
+      - name: Modular project with useModulePath false can be accelerated
+        working-directory: examples/junit5-jpms-example
+        run: |
+          mvn -B clean test -Dtest.module.path=false | tee jpms-classpath.log
+          grep -Fq 'ScenarioMesh: takeover enabled after runtime ownership preflight' jpms-classpath.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
       - name: Maven reactor order and module-local ownership
         working-directory: examples/multi-module-example
         run: |
