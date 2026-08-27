@@ -30,8 +30,10 @@ public record RemoteWorkerRegistration(
 
     public boolean canRun(String requiredFingerprint, String adapterId, String engineId) {
         if (!runtimeFingerprint.equals(requiredFingerprint)) return false;
-        if (adapterId != null && !adapterId.isBlank() && !adapterIds.contains(adapterId)) return false;
-        return engineId == null || engineId.isBlank() || engineIds.contains(engineId);
+        if (adapterId != null && !adapterId.isBlank()
+                && !adapterIds.isEmpty() && !adapterIds.contains(adapterId)) return false;
+        return engineId == null || engineId.isBlank()
+                || engineIds.isEmpty() || engineIds.contains(engineId);
     }
 
     private static String require(String value, String name) {
