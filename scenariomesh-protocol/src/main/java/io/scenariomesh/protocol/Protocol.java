@@ -8,14 +8,13 @@ import java.util.List;
 import java.util.Set;
 
 public final class Protocol {
-    /** Version 7 adds executable adapter/engine inventory to worker registration. */
-    public static final int VERSION = 7;
+    /** Version 8 adds idle worker presence heartbeats and graceful draining. */
+    public static final int VERSION = 8;
 
     private Protocol() {}
 
-    public enum Type { HELLO, RUN, RESULT, HEARTBEAT, STOP, ACK, ERROR }
+    public enum Type { HELLO, RUN, RESULT, HEARTBEAT, PRESENCE, DRAIN, STOP, ACK, ERROR }
 
-    /** Immutable capabilities advertised by a worker process/agent at registration time. */
     public record WorkerCapabilities(
             String agentId,
             int slots,
@@ -42,7 +41,6 @@ public final class Protocol {
             }
         }
 
-        /** Source-compatibility constructor for callers that do not yet publish execution inventory. */
         public WorkerCapabilities(String agentId, int slots, int javaFeature, String osName,
                                   String architecture, String runtimeFingerprint) {
             this(agentId, slots, javaFeature, osName, architecture, runtimeFingerprint, Set.of(), Set.of());
@@ -79,10 +77,7 @@ public final class Protocol {
             results = List.copyOf(results == null ? List.of() : results);
         }
 
-        public static Envelope hello(String workerId, String token) {
-            return hello(workerId, token, null);
-        }
-
+        public static Envelope hello(String workerId, String token) { return hello(workerId, token, null); }
         public static Envelope hello(String workerId, String token, WorkerCapabilities capabilities) {
             return new Envelope(VERSION, Type.HELLO, workerId, token, capabilities,
                     null, null, null, List.of(), List.of(), null, List.of(), null, null);
@@ -91,11 +86,9 @@ public final class Protocol {
         public static Envelope run(String workerId, ScenarioTask task, int attempt) {
             return runBatch(workerId, List.of(task), attempt);
         }
-
         public static Envelope runBatch(String workerId, List<ScenarioTask> tasks, int attempt) {
             return runBatch(workerId, null, null, null, tasks, attempt);
         }
-
         public static Envelope runBatch(String workerId, String workUnitId, String leaseId, Instant leaseExpiresAt,
                                         List<ScenarioTask> tasks, int attempt) {
             if (tasks == null || tasks.isEmpty()) throw new IllegalArgumentException("RUN requires at least one task");
@@ -106,16 +99,13 @@ public final class Protocol {
         public static Envelope result(String workerId, ExecutionResult result, WorkerTelemetry telemetry) {
             return resultBatch(workerId, List.of(), List.of(result), telemetry);
         }
-
         public static Envelope resultBatch(String workerId, List<ExecutionResult> results, WorkerTelemetry telemetry) {
             return resultBatch(workerId, List.of(), results, telemetry);
         }
-
         public static Envelope resultBatch(String workerId, List<ScenarioTask> materializedTasks,
                                            List<ExecutionResult> results, WorkerTelemetry telemetry) {
             return resultBatch(workerId, null, null, materializedTasks, results, telemetry);
         }
-
         public static Envelope resultBatch(String workerId, String workUnitId, String leaseId,
                                            List<ScenarioTask> materializedTasks,
                                            List<ExecutionResult> results, WorkerTelemetry telemetry) {
@@ -126,9 +116,21 @@ public final class Protocol {
                     attempt, results, telemetry, null);
         }
 
+        /** Lease-scoped heartbeat. It may renew only the exact authoritative work lease. */
         public static Envelope heartbeat(String workerId, String workUnitId, String leaseId, WorkerTelemetry telemetry) {
             return new Envelope(VERSION, Type.HEARTBEAT, workerId, null, null,
                     workUnitId, leaseId, null, List.of(), List.of(), null, List.of(), telemetry, null);
+        }
+
+        /** Presence heartbeat proves the worker process/socket is alive but grants no work authority. */
+        public static Envelope presence(String workerId, WorkerTelemetry telemetry) {
+            return new Envelope(VERSION, Type.PRESENCE, workerId, null, null,
+                    null, null, null, List.of(), List.of(), null, List.of(), telemetry, null);
+        }
+
+        public static Envelope drain(String workerId) {
+            return new Envelope(VERSION, Type.DRAIN, workerId, null, null,
+                    null, null, null, List.of(), List.of(), null, List.of(), null, null);
         }
 
         public ExecutionResult result() { return results.size() == 1 ? results.get(0) : null; }
@@ -138,12 +140,10 @@ public final class Protocol {
             return new Envelope(VERSION, Type.STOP, workerId, null, null,
                     null, null, null, List.of(), List.of(), null, List.of(), null, null);
         }
-
         public static Envelope ack(String workerId) {
             return new Envelope(VERSION, Type.ACK, workerId, null, null,
                     null, null, null, List.of(), List.of(), null, List.of(), null, null);
         }
-
         public static Envelope error(String workerId, String error) {
             return new Envelope(VERSION, Type.ERROR, workerId, null, null,
                     null, null, null, List.of(), List.of(), null, List.of(), null, error);
