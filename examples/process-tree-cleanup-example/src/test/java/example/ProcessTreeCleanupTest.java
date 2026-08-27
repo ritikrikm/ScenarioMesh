@@ -9,19 +9,18 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessTreeCleanupTest {
+    @Test
+    void independentScopeOne() throws Exception {
+        ProcessTreeProbe.spawnOrVerifyRetiredChild();
+    }
+}
+
+final class ProcessTreeProbe {
     private static final Path PID_FILE = Path.of("target", "child.pid");
 
-    @Test
-    void firstIndependentScope() throws Exception {
-        spawnOrVerifyRetiredChild();
-    }
+    private ProcessTreeProbe() {}
 
-    @Test
-    void secondIndependentScope() throws Exception {
-        spawnOrVerifyRetiredChild();
-    }
-
-    private void spawnOrVerifyRetiredChild() throws Exception {
+    static void spawnOrVerifyRetiredChild() throws Exception {
         Files.createDirectories(PID_FILE.getParent());
         if (Files.notExists(PID_FILE)) {
             String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
