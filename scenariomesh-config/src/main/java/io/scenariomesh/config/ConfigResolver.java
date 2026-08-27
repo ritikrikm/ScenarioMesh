@@ -3,6 +3,7 @@ package io.scenariomesh.config;
 import io.scenariomesh.config.ConfigFileLoader.LoadedConfig;
 import io.scenariomesh.config.DistributedConfig.WorkerMode;
 import io.scenariomesh.config.ScenarioMeshConfig.AdapterMismatchPolicy;
+import io.scenariomesh.config.ScenarioMeshConfig.SchedulingMode;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -83,7 +84,8 @@ public final class ConfigResolver {
                 booleanValue(value(ConfigKey.LOGGING_WORKER_FILES, properties, environment, yaml), defaults.workerLogFiles(), ConfigKey.LOGGING_WORKER_FILES),
                 booleanValue(value(ConfigKey.LOGGING_SHOW_CONFIGURATION, properties, environment, yaml), defaults.showConfiguration(), ConfigKey.LOGGING_SHOW_CONFIGURATION),
                 booleanValue(value(ConfigKey.LOGGING_SHOW_PROGRESS, properties, environment, yaml), defaults.showProgress(), ConfigKey.LOGGING_SHOW_PROGRESS),
-                distributed);
+                distributed,
+                schedulingMode(value(ConfigKey.SCHEDULING_STRATEGY, properties, environment, yaml), defaults.schedulingMode()));
         return new ConfigResolution(resolved, loaded.source());
     }
 
@@ -129,6 +131,7 @@ public final class ConfigResolver {
 
     private String stringValue(Object raw, String defaultValue) { return raw == null ? defaultValue : String.valueOf(raw).trim(); }
     private AdapterMismatchPolicy mismatchPolicy(Object raw, AdapterMismatchPolicy defaultValue) { return raw == null ? defaultValue : AdapterMismatchPolicy.parse(String.valueOf(raw).trim()); }
+    private SchedulingMode schedulingMode(Object raw, SchedulingMode defaultValue) { return raw == null ? defaultValue : SchedulingMode.parse(String.valueOf(raw).trim()); }
     private WorkerMode workerMode(Object raw, WorkerMode defaultValue) { return raw == null ? defaultValue : WorkerMode.parse(String.valueOf(raw).trim()); }
 
     private Path pathValue(Object raw, Path projectDirectory, Path defaultValue) {
