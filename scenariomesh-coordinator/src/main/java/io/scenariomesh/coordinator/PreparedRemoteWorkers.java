@@ -9,7 +9,6 @@ import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator;
 
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -78,8 +77,8 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + config.workerCount()
                         + " remote workers registered; minimum required is " + config.minimumReadyWorkers());
             }
-            verifyCoverage(sessions, adapters, engines);
-            log.accept("ScenarioMesh remote preflight proved " + sessions.size() + " authenticated worker(s), adapters="
+            verifyEveryWorkerCoverage(sessions, adapters, engines);
+            log.accept("ScenarioMesh remote preflight proved " + sessions.size() + " authenticated worker(s); each can execute adapters="
                     + adapters + ", engines=" + engines + ".");
             return new PreparedRemoteWorkers(server, directory, sessions);
         } catch (Exception exception) {
@@ -89,25 +88,20 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         }
     }
 
-    private static void verifyCoverage(List<RemoteWorkerSession> sessions,
-                                       Set<String> requiredAdapterIds,
-                                       Set<String> requiredEngineIds) {
-        Set<String> availableAdapters = new HashSet<>();
-        Set<String> availableEngines = new HashSet<>();
+    private static void verifyEveryWorkerCoverage(List<RemoteWorkerSession> sessions,
+                                                  Set<String> requiredAdapterIds,
+                                                  Set<String> requiredEngineIds) {
         for (RemoteWorkerSession session : sessions) {
             RemoteWorkerRegistration registration = session.registration();
-            availableAdapters.addAll(registration.adapterIds());
-            if (registration.adapterIds().contains("junit-platform")) {
-                availableEngines.addAll(registration.engineIds());
+            Set<String> missingAdapters = new HashSet<>(requiredAdapterIds);
+            missingAdapters.removeAll(registration.adapterIds());
+            Set<String> missingEngines = new HashSet<>(requiredEngineIds);
+            missingEngines.removeAll(registration.engineIds());
+            if (!missingAdapters.isEmpty() || !missingEngines.isEmpty()) {
+                throw new IllegalStateException("Remote worker " + registration.workerId()
+                        + " cannot prove the complete selected runtime while capability-aware heterogeneous scheduling is disabled; missing adapters="
+                        + missingAdapters + ", missing JUnit Platform engines=" + missingEngines);
             }
-        }
-        Set<String> missingAdapters = new HashSet<>(requiredAdapterIds);
-        missingAdapters.removeAll(availableAdapters);
-        Set<String> missingEngines = new HashSet<>(requiredEngineIds);
-        missingEngines.removeAll(availableEngines);
-        if (!missingAdapters.isEmpty() || !missingEngines.isEmpty()) {
-            throw new IllegalStateException("Remote workers cannot prove selected runtime coverage; missing adapters="
-                    + missingAdapters + ", missing JUnit Platform engines=" + missingEngines);
         }
     }
 
