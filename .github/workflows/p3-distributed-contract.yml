@@ -1,0 +1,18 @@
+name: p3-distributed-contract
+on: [push, pull_request]
+
+jobs:
+  distributed-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Distributed correctness contracts
+        run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest' -Dsurefire.failIfNoSpecifiedTests=false
