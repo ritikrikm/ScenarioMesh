@@ -1,40 +1,42 @@
 package io.scenariomesh.maven;
 
-import io.scenariomesh.core.DiscoverySelection;
-import io.scenariomesh.core.Ports.AdapterContext;
-import io.scenariomesh.workerruntime.ExecutionBackendInventory;
-import io.scenariomesh.workerruntime.FrameworkOwnershipGuard;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.workerruntime.JsonCodec;
+import io.scenariomesh.workerruntime.PreflightProbeMain;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
+import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.toolchain.ToolchainManager;
 
-import java.net.URL;
-import java.net.URLClassLoader;
+import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
-/**
- * Proves runtime framework ownership after test compilation and before native
- * Surefire/Failsafe execution is suppressed.
- *
- * <p>This is deliberately fail-closed for ScenarioMesh ownership and fail-open
- * for Maven: any uncertainty leaves the native Maven executor active.</p>
- */
+/** Proves runtime ownership in the exact JVM Maven selected for target tests. */
 @Mojo(name = "preflight", defaultPhase = LifecyclePhase.PROCESS_TEST_CLASSES, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
 public final class PreflightMojo extends AbstractMojo {
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(60);
+
     @Parameter(defaultValue = "${project}", readonly = true, required = true)
     private MavenProject project;
     @Parameter(defaultValue = "${session}", readonly = true, required = true)
     private MavenSession session;
     @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true)
     private List<Artifact> pluginArtifacts;
+    @Component
+    private ToolchainManager toolchainManager;
     @Parameter(defaultValue = "surefire")
     private String takeoverExecutor;
     @Parameter(defaultValue = "false")
@@ -57,36 +59,83 @@ public final class PreflightMojo extends AbstractMojo {
             Map<String, String> properties = effectiveProperties();
             List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
             List<String> excludes = excludeClassNameRegexes == null ? List.of() : List.copyOf(excludeClassNameRegexes);
+            Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
 
-            URL[] urls = runtimeClasspath.stream().map(this::toUrl).toArray(URL[]::new);
-            try (URLClassLoader targetLoader = new URLClassLoader(urls, getClass().getClassLoader())) {
-                DiscoverySelection selected = new DiscoverySelection(includes, excludes);
-                AdapterContext context = new AdapterContext(targetLoader, testRoots, properties, selected);
+            PreflightProbeMain.ProbeResult probe = probe(
+                    javaExecutable, runtimeClasspath, testRoots, properties, includes, excludes);
 
-                new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
-                ExecutionBackendInventory.Inventory inventory = ExecutionBackendInventory.inspect(
-                        targetLoader, testRoots, includes, excludes);
-
-                if (inventory.ownership() == ExecutionBackendInventory.Ownership.DETECTED_NOT_OWNABLE) {
-                    passThrough("runtime backend is detected but not safely ownable: " + inventory.summary());
-                    return;
-                }
-                if (inventory.ownership() == ExecutionBackendInventory.Ownership.NOT_DETECTED && !knownModelFramework) {
-                    passThrough("no executable runtime backend was detected and no known legacy framework signal exists: "
-                            + inventory.summary());
-                    return;
-                }
-
-                // NOT_DETECTED remains valid only for known legacy paths such as Cucumber JUnit4
-                // and TestNG, which are not required to expose a JUnit Platform TestEngine.
-                PreflightState.owned(project, inventory.summary());
-                suppressNativeExecutor();
-                getLog().info("ScenarioMesh preflight: ownership proven for Maven-selected tests; native "
-                        + normalizedExecutor() + " execution will be suppressed. Backend inventory: " + inventory.summary());
+            if ("DETECTED_NOT_OWNABLE".equals(probe.ownership())) {
+                passThrough("runtime backend is detected but not safely ownable: " + probe.summary());
+                return;
             }
+            if ("NOT_DETECTED".equals(probe.ownership()) && !knownModelFramework) {
+                passThrough("no executable runtime backend was detected and no known legacy framework signal exists: "
+                        + probe.summary());
+                return;
+            }
+
+            PreflightState.owned(project, probe.summary() + "; testJvm=" + javaExecutable);
+            suppressNativeExecutor();
+            getLog().info("ScenarioMesh preflight: ownership proven in Maven-selected test JVM " + javaExecutable
+                    + "; native " + normalizedExecutor() + " execution will be suppressed. Backend inventory: "
+                    + probe.summary());
         } catch (Exception | LinkageError exception) {
             passThrough("preflight could not prove complete runtime ownership: " + message(exception));
         }
+    }
+
+    private PreflightProbeMain.ProbeResult probe(Path javaExecutable,
+                                                  List<Path> runtimeClasspath,
+                                                  List<Path> testRoots,
+                                                  Map<String, String> properties,
+                                                  List<String> includes,
+                                                  List<String> excludes) throws Exception {
+        Path directory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize()
+                .resolve("scenariomesh-preflight");
+        Files.createDirectories(directory);
+        Path output = directory.resolve("probe.json");
+        Path log = directory.resolve("probe.log");
+
+        List<String> command = new ArrayList<>();
+        command.add(javaExecutable.toString());
+        command.add("-ea");
+        properties.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
+        command.add("-cp");
+        command.add(runtimeClasspath.stream().map(Path::toString)
+                .reduce((left, right) -> left + File.pathSeparator + right).orElse(""));
+        command.add(PreflightProbeMain.class.getName());
+        command.add("--output");
+        command.add(output.toString());
+        for (Path root : testRoots) {
+            command.add("--test-root");
+            command.add(root.toString());
+        }
+        for (String include : includes) {
+            command.add("--include-class-regex");
+            command.add(include);
+        }
+        for (String exclude : excludes) {
+            command.add("--exclude-class-regex");
+            command.add(exclude);
+        }
+
+        Process process = new ProcessBuilder(command)
+                .directory(project.getBasedir())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start();
+        if (!process.waitFor(PROBE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+            process.destroyForcibly();
+            throw new IllegalStateException("selected-JVM ownership probe exceeded " + PROBE_TIMEOUT + "; see " + log);
+        }
+        if (process.exitValue() != 0) {
+            String detail = Files.exists(log) ? Files.readString(log) : "no probe log";
+            throw new IllegalStateException("selected-JVM ownership probe exited " + process.exitValue()
+                    + "; see " + log + System.lineSeparator() + detail);
+        }
+        ObjectMapper mapper = JsonCodec.create();
+        return mapper.readValue(output.toFile(), PreflightProbeMain.ProbeResult.class);
     }
 
     private void passThrough(String reason) {
@@ -120,14 +169,6 @@ public final class PreflightMojo extends AbstractMojo {
         session.getSystemProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         session.getUserProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         return values;
-    }
-
-    private URL toUrl(Path path) {
-        try {
-            return path.toUri().toURL();
-        } catch (Exception exception) {
-            throw new IllegalArgumentException("Invalid runtime classpath element: " + path, exception);
-        }
     }
 
     private String message(Throwable throwable) {
