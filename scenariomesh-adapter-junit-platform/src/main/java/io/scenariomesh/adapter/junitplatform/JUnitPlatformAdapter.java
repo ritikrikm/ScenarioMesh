@@ -13,6 +13,7 @@ import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.TestSource;
 import org.junit.platform.engine.TestTag;
+import org.junit.platform.engine.UniqueId;
 import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
@@ -47,6 +48,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String META_RUNTIME_MATERIALIZER = "runtimeMaterializer";
     public static final String META_PARENT_MATERIALIZER_ID = "parentMaterializerId";
     public static final String META_PARENT_MATERIALIZER_SELECTOR = "parentMaterializerSelector";
+    /** Generic scheduler requirement published by the adapter that owns JUnit UniqueId semantics. */
+    public static final String META_REQUIRED_ENGINE_ID = "requiredEngineId";
 
     @Override public String id() { return ID; }
     @Override public String framework() { return "junit-platform"; }
@@ -163,9 +166,11 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         String uniqueId = identifier.getUniqueId();
         Set<String> tags = new HashSet<>();
         for (TestTag tag : identifier.getTags()) tags.add(tag.getName());
-        String framework = uniqueId.contains("[engine:cucumber]") ? "cucumber-junit-platform" : "junit5";
+        String engineId = requiredEngineId(uniqueId);
+        String framework = "cucumber".equals(engineId) ? "cucumber-junit-platform" : "junit5";
         Map<String, String> metadata = new LinkedHashMap<>();
         metadata.put("uniqueId", uniqueId);
+        metadata.put(META_REQUIRED_ENGINE_ID, engineId);
         metadata.put(META_SCOPE_ID, scope.id());
         metadata.put(META_SCOPE_SELECTOR, scope.selector());
         metadata.put(META_SCOPE_KIND, scope.kind());
@@ -176,6 +181,11 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         }
         return new ScenarioTask(ScenarioIds.from(ID, uniqueId), identifier.getDisplayName(), ID, framework,
                 null, null, uniqueId, tags, metadata);
+    }
+
+    private String requiredEngineId(String uniqueId) {
+        return UniqueId.parse(uniqueId).getEngineId()
+                .orElseThrow(() -> new IllegalStateException("JUnit Platform UniqueId has no engine id: " + uniqueId));
     }
 
     private ScenarioTask materializedTask(ScenarioTask parent, TestIdentifier child) {
