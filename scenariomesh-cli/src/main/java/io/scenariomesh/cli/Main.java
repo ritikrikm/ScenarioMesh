@@ -7,18 +7,13 @@ public final class Main {
 
     public static void main(String[] args) {
         int exitCode = run(args);
-        if (exitCode != 0) {
-            System.exit(exitCode);
-        }
+        if (exitCode != 0) System.exit(exitCode);
     }
 
     static int run(String[] args) {
         if (args.length == 0 || "doctor".equals(args[0])) {
-            System.out.println("ScenarioMesh doctor");
-            System.out.println("Java: " + System.getProperty("java.version"));
-            System.out.println("OS: " + System.getProperty("os.name"));
-            System.out.println("Use 'scenariomesh init' once, then keep using normal Maven commands.");
-            return 0;
+            String[] doctorArgs = args.length == 0 ? new String[0] : Arrays.copyOfRange(args, 1, args.length);
+            return new DoctorCommand().run(doctorArgs);
         }
         if ("init".equals(args[0])) {
             return new InitCommand().run(Arrays.copyOfRange(args, 1, args.length));
@@ -28,6 +23,7 @@ public final class Main {
             return 0;
         }
         System.err.println("Unknown command: " + String.join(" ", args));
+        System.err.println("Commands: init, doctor [--deep] [--root PATH], version");
         return 2;
     }
 }
