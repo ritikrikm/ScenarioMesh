@@ -35,9 +35,8 @@ jobs:
           test -f target/per-class-lifecycle.log
           test "$(grep -Fc 'BEFORE_ALL' target/per-class-lifecycle.log)" -eq 1
           test -f target/scenariomesh/summary.json
-          grep -Fq '"total" : 5' target/scenariomesh/summary.json
-          grep -Fq '"passed" : 5' target/scenariomesh/summary.json
-          test "$(grep -Fc 'test-template-invocation' target/scenariomesh/summary.json)" -eq 3
+          jq -e '.total == 5 and .passed == 5' target/scenariomesh/summary.json >/dev/null
+          jq -e '[.results[].displayName] | index("[1] 1") != null and index("[2] 2") != null and index("[3] 3") != null' target/scenariomesh/summary.json >/dev/null
       - name: Cucumber global lifecycle is executed once
         working-directory: examples/cucumber-junit-platform-example
         run: |
