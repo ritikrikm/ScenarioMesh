@@ -14,8 +14,10 @@ import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -33,26 +35,32 @@ class LeasedResponseReaderTest {
         Envelope terminal = Envelope.resultBatch(
                 "worker-1", "unit-1", run.leaseId(), List.of(), List.of(result), null);
         ArrayDeque<Envelope> responses = new ArrayDeque<>(List.of(heartbeat, terminal));
+        AtomicReference<Instant> observedHeartbeat = new AtomicReference<>();
 
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(5));
-        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> responses.poll());
+        Envelope returned = reader.readTerminal("worker-1", Duration.ofSeconds(2),
+                ignored -> responses.poll(), observedHeartbeat::set);
 
         assertSame(terminal, returned);
+        assertEquals(start.plusSeconds(5), observedHeartbeat.get());
         authority.acceptResult("worker-1", returned, start.plusSeconds(6));
         assertEquals(0, leases.activeLeaseCount());
     }
 
     @Test
-    void rejectsHeartbeatFromWrongWorkerBeforeTerminalPayloadCanCount() {
+    void rejectsHeartbeatFromWrongWorkerBeforeNotifyingLivenessObserver() {
         LeaseRegistry leases = new LeaseRegistry(Duration.ofSeconds(30));
         DistributedWorkAuthority authority = new DistributedWorkAuthority(leases);
         ScenarioTask task = task();
         Envelope run = authority.issueRun("unit-1", "worker-1", 1, List.of(task), start);
         Envelope badHeartbeat = Envelope.heartbeat("worker-2", "unit-1", run.leaseId(), null);
+        AtomicReference<Instant> observedHeartbeat = new AtomicReference<>();
 
         LeasedResponseReader reader = new LeasedResponseReader(authority, () -> start.plusSeconds(5));
         assertThrows(LeaseRegistry.StaleLeaseException.class,
-                () -> reader.readTerminal("worker-1", Duration.ofSeconds(2), ignored -> badHeartbeat));
+                () -> reader.readTerminal("worker-1", Duration.ofSeconds(2),
+                        ignored -> badHeartbeat, observedHeartbeat::set));
+        assertNull(observedHeartbeat.get());
     }
 
     @Test
