@@ -14,6 +14,21 @@ import java.util.function.Predicate;
 public final class Ports {
     private Ports() {}
 
+    /**
+     * Atomic worker-side execution output. Most adapters return the dispatched tasks
+     * unchanged. Engines that materialize executable children at runtime (for example
+     * JUnit parameterized or dynamic tests) may replace a materializer placeholder with
+     * the concrete child tasks that actually executed.
+     */
+    public record WorkUnitExecution(List<ScenarioTask> tasks, List<ExecutionResult> results) {
+        public WorkUnitExecution {
+            tasks = List.copyOf(tasks == null ? List.of() : tasks);
+            results = List.copyOf(results == null ? List.of() : results);
+            if (tasks.isEmpty()) throw new IllegalArgumentException("WorkUnitExecution requires at least one task");
+            if (results.isEmpty()) throw new IllegalArgumentException("WorkUnitExecution requires at least one result");
+        }
+    }
+
     public interface ScenarioAdapter {
         String id();
         String framework();
@@ -21,25 +36,22 @@ public final class Ports {
         List<ScenarioTask> discover(AdapterContext context) throws Exception;
         ExecutionResult execute(ScenarioTask task, ExecutionContext context) throws Exception;
 
-        /**
-         * Executes one scheduler work unit atomically from the coordinator's point of view.
-         *
-         * <p>The default implementation preserves existing leaf-oriented adapters by
-         * executing every supplied task independently. Lifecycle-scoped adapters override
-         * this method so one class/suite/engine lifecycle is executed once and all of its
-         * leaf outcomes are returned in the same worker response. This is required so a
-         * worker can be recycled after the response without forcing the coordinator to
-         * rerun an already-completed lifecycle scope.</p>
-         */
         default List<ExecutionResult> executeBatch(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
             if (tasks == null || tasks.isEmpty()) {
                 throw new IllegalArgumentException("ScenarioAdapter.executeBatch requires at least one task");
             }
             List<ExecutionResult> results = new ArrayList<>(tasks.size());
-            for (ScenarioTask task : tasks) {
-                results.add(execute(task, context));
-            }
+            for (ScenarioTask task : tasks) results.add(execute(task, context));
             return List.copyOf(results);
+        }
+
+        /**
+         * Product-level work-unit contract. Runtime-materializing engines override this
+         * method so the worker can return the concrete tasks that came into existence
+         * during execution. Existing leaf-oriented adapters inherit exact prior behavior.
+         */
+        default WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
+            return new WorkUnitExecution(tasks, executeBatch(tasks, context));
         }
     }
 
@@ -63,10 +75,6 @@ public final class Ports {
         }
     }
 
-    /**
-     * Optional worker-side cleanup extension loaded with {@link java.util.ServiceLoader}.
-     * Implementations must clean only resources owned by the completed task/worker.
-     */
     public interface WorkerTaskCleanup {
         void afterTask(ScenarioTask task, ExecutionContext context, ExecutionResult result) throws Exception;
     }
