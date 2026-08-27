@@ -6,6 +6,7 @@ import io.scenariomesh.protocol.Protocol.Envelope;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -27,8 +28,14 @@ public final class LeasedResponseReader {
     }
 
     public Envelope readTerminal(String workerId, Duration timeout, TimedEnvelopeReader reader) throws Exception {
+        return readTerminal(workerId, timeout, reader, ignored -> { });
+    }
+
+    public Envelope readTerminal(String workerId, Duration timeout, TimedEnvelopeReader reader,
+                                 Consumer<Instant> authoritativeHeartbeatObserver) throws Exception {
         Objects.requireNonNull(timeout, "timeout");
         Objects.requireNonNull(reader, "reader");
+        Objects.requireNonNull(authoritativeHeartbeatObserver, "authoritativeHeartbeatObserver");
         if (timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("timeout must be greater than zero");
         }
@@ -40,7 +47,9 @@ public final class LeasedResponseReader {
             Envelope envelope = reader.read(Duration.ofNanos(remainingNanos));
             if (envelope == null) return null;
             if (envelope.type() != Protocol.Type.HEARTBEAT) return envelope;
-            authority.heartbeat(workerId, envelope, wallClock.get());
+            Instant heartbeatAt = wallClock.get();
+            authority.heartbeat(workerId, envelope, heartbeatAt);
+            authoritativeHeartbeatObserver.accept(heartbeatAt);
         }
     }
 
