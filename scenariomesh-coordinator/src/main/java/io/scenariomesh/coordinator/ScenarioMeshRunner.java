@@ -19,6 +19,7 @@ import java.util.Set;
 public final class ScenarioMeshRunner {
     private static final String META_RUNTIME_MATERIALIZER = "runtimeMaterializer";
     private final DiscoveryInvariantValidator discoveryValidator = new DiscoveryInvariantValidator();
+    private final ExecutionHistoryStore history = new ExecutionHistoryStore();
 
     public RunOutcome run(RunRequest request) throws Exception {
         RunId runId = RunId.create();
@@ -30,12 +31,13 @@ public final class ScenarioMeshRunner {
         logger.progress("Run " + runId.value() + " discovering executable tests...");
         DiscoveryMain.DiscoveryResult discovery = new DiscoveryProcess().discover(request, directory);
         discoveryValidator.validate(discovery.adapters(), discovery.tasks());
+        List<ScenarioTask> scheduledTasks = history.enrich(request.config().reportingDirectory(), discovery.tasks());
         logger.progress("Adapter selected: " + String.join(", ", discovery.adapters()));
         logger.progress("Discovery produced " + discovery.tasks().size() + " executable task(s).");
 
         List<ExecutionResult> results;
         try (WorkerPool workers = new WorkerPool(request, directory, logger)) {
-            results = workers.execute(discovery.tasks());
+            results = workers.execute(scheduledTasks);
         }
 
         Set<String> completed = new HashSet<>();
@@ -60,6 +62,7 @@ public final class ScenarioMeshRunner {
             }
         }
 
+        history.update(request.config().reportingDirectory(), scheduledTasks, complete);
         Duration duration = Duration.between(started, Instant.now());
         logger.progress("Execution finished: " + complete.size() + " terminal result(s) from "
                 + discovery.tasks().size() + " discovery task(s), duration=" + duration + ".");
