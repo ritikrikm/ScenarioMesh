@@ -1,0 +1,21 @@
+name: p4-scheduler-history
+on: [push, pull_request]
+
+jobs:
+  scheduler-history:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: LPT ordering, FIFO fallback, lifecycle affinity and persistent history
+        run: >-
+          mvn -B -pl scenariomesh-coordinator -am test
+          -Dtest='*FifoSchedulingStrategyTest,*HistoryAwareFifoTest,*ExecutionHistoryStoreTest'
+          -Dsurefire.failIfNoSpecifiedTests=false
