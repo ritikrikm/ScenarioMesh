@@ -126,7 +126,8 @@ final class RemoteWorkerPool implements AutoCloseable {
                         representative.id().value(), workerId, attempt, unit.tasks(), started);
                 session.write(run);
                 Envelope response = responseReader.readTerminal(
-                        workerId, request.config().workerTaskTimeout(), session::read);
+                        workerId, request.config().workerTaskTimeout(), session::read,
+                        heartbeatAt -> directory.heartbeat(workerId, heartbeatAt));
                 if (response == null) {
                     unitResults = failures(unit.tasks(), workerId, attempt, started,
                             "Remote worker disconnected before returning a work-unit result");
