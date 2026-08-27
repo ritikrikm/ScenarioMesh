@@ -34,6 +34,7 @@ class DistributedConfigResolverTest {
     void explicitPropertyOverridesEnvironmentAndYaml() throws Exception {
         Files.writeString(project.resolve("scenariomesh.yml"), """
                 scenariomesh:
+                  configVersion: 1
                   workers:
                     mode: remote
                   distributed:
