@@ -16,6 +16,14 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
+      - name: Explicit Surefire JVM selection is preserved
+        working-directory: examples/junit5-explicit-jvm-example
+        run: |
+          mvn -B clean test -Dtest.jvm="$JAVA_HOME/bin/java" | tee target-run.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" target-run.log
       - name: Maven reactor order and module-local ownership
         working-directory: examples/multi-module-example
         run: |
