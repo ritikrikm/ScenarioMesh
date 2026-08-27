@@ -1,6 +1,10 @@
 name: p5-observability
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   observability:
     runs-on: ubuntu-latest
@@ -14,7 +18,7 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: maven
-      - name: Structured correlated event contract
+      - name: Structured correlated redacted event contract
         run: >-
           mvn -B -pl scenariomesh-coordinator -am test
           -Dtest='*RunLoggerTest'
@@ -32,3 +36,5 @@ jobs:
           grep -Fq '"type":"TASK_COMPLETED"' "$run_dir/events.jsonl"
           grep -Fq '"workerId":"worker-' "$run_dir/events.jsonl"
           grep -Fq '"taskId":' "$run_dir/events.jsonl"
+          grep -Fq '"durationMillis":' "$run_dir/events.jsonl"
+          grep -Fq '"queueDepth":' "$run_dir/events.jsonl"
