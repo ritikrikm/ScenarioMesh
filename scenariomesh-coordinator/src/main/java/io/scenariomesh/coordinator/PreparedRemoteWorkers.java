@@ -9,6 +9,7 @@ import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator;
 
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -18,6 +19,7 @@ import java.util.function.Consumer;
 
 /** Authenticated remote-worker sessions proven during Maven preflight and retained for execution. */
 public final class PreparedRemoteWorkers implements AutoCloseable {
+    private static final Duration REMOTE_LIVENESS_TIMEOUT = Duration.ofSeconds(20);
     private final RemoteWorkerServer server;
     private final RemoteWorkerDirectory directory;
     private final List<RemoteWorkerSession> sessions;
@@ -40,7 +42,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         Set<String> engines = Set.copyOf(requiredEngineIds == null ? Set.of() : requiredEngineIds);
         Consumer<String> log = progress == null ? ignored -> { } : progress;
         WorkerRegistrationValidator validator = new WorkerRegistrationValidator();
-        RemoteWorkerDirectory directory = new RemoteWorkerDirectory(config.workerTaskTimeout().multipliedBy(2));
+        RemoteWorkerDirectory directory = new RemoteWorkerDirectory(REMOTE_LIVENESS_TIMEOUT);
         RemoteWorkerServer server = new RemoteWorkerServer(
                 InetAddress.getByName(config.distributed().bindHost()), config.distributed().bindPort(),
                 config.distributed().token(), validator, directory, config.distributed().tls());
