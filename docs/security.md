@@ -38,9 +38,19 @@ Every dispatched work unit receives an authoritative `workUnitId` and `leaseId`.
 
 Idle `PRESENCE` heartbeats are intentionally authority-free. They prove worker/socket liveness but cannot create or renew a work lease.
 
-## Logging and telemetry
+## Capability authorization
+
+Remote workers explicitly advertise executable adapters and JUnit Platform engine IDs. Transparent takeover is allowed only when the prepared worker set collectively proves coverage for every selected adapter and engine. JUnit engine coverage is valid only when the same worker advertises both `junit-platform` and the required engine.
+
+At runtime, each worker pulls only tasks compatible with its own adapter/engine registration, and ScenarioMesh re-validates that capability immediately before issuing the work lease. Scoped work units include the engine identity in their grouping key so lifecycle affinity cannot merge work from different JUnit engines.
+
+If any discovered task has no eligible registered worker, ScenarioMesh fails closed instead of guessing compatibility.
+
+## Logging, diagnostics, and telemetry
 
 ScenarioMesh never intentionally logs the distributed token or TLS passwords. Structured events pass through a central sanitizer that redacts known configured/environment secret values and truncates oversized messages. Optional observability providers run behind the `RunEventSink` SPI; provider failures do not change the test result.
+
+The `scenariomesh diagnostics` command creates an allowlist-only archive from generated ScenarioMesh reports/events plus a sanitized manifest. It does not dump the process environment and does not collect raw worker logs by default.
 
 Do not rely on masking as the primary secret boundary. Keep credentials out of command arguments and repository files in the first place.
 
@@ -50,6 +60,6 @@ Healthy remote workers shut down through `DRAIN -> ACK -> STOP -> ACK`. Once dra
 
 Transparent Maven takeover retains the exact remote sessions proven during preflight. After native Maven has been suppressed, ScenarioMesh does not silently replace a prepared worker with an unproven connection.
 
-## Current compatibility boundary
+## Protocol compatibility boundary
 
-Transparent heterogeneous-worker takeover remains conservative: each preflight-prepared worker must currently prove the full selected adapter/engine capability set. ScenarioMesh will not infer unsupported engine compatibility. Capability-aware heterogeneous scheduling may relax this only after task-level capability requirements are machine-verifiable.
+Protocol v8 remains an exact-version contract. Mixed protocol versions fail closed. The v8 wire format predates an explicit negotiation extension point and registration acknowledgement, so ScenarioMesh does not encode upgrade metadata into unrelated engine IDs, runtime fingerprints, or other capability fields. A future protocol major must introduce negotiation as a first-class wire concept before rolling cross-version operation can be claimed.
