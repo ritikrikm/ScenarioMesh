@@ -7,6 +7,7 @@ import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
+import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.TestSource;
@@ -119,8 +120,15 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             }
         }
 
+        /*
+         * Re-select every already-discovered leaf in one Launcher request instead
+         * of trying to rediscover the scope from its container/root UniqueId.
+         * Resource-driven engines such as Cucumber do not necessarily reconstruct
+         * their feature selection from an engine-root UniqueId, while a single
+         * multi-selector request still preserves one class/suite/run lifecycle.
+         */
         Map<String, CachedOutcome> outcomes = scopedResults.computeIfAbsent(
-                scopeId, ignored -> executeScope(scopeSelector));
+                scopeId, ignored -> executeScope(tasks));
         List<ExecutionResult> results = new ArrayList<>(tasks.size());
         for (ScenarioTask task : tasks) {
             CachedOutcome outcome = outcomes.get(task.selector());
@@ -147,10 +155,13 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         return task.metadata().getOrDefault(META_SCOPE_SELECTOR, task.selector());
     }
 
-    private Map<String, CachedOutcome> executeScope(String scopeSelector) {
+    private Map<String, CachedOutcome> executeScope(List<ScenarioTask> tasks) {
         ScopedResultListener listener = new ScopedResultListener();
+        List<DiscoverySelector> selectors = tasks.stream()
+                .map(task -> (DiscoverySelector) selectUniqueId(task.selector()))
+                .toList();
         LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectUniqueId(scopeSelector))
+                .selectors(selectors)
                 .filters(EngineFilter.excludeEngines("junit-vintage"))
                 .build();
         Launcher launcher = LauncherFactory.create();
