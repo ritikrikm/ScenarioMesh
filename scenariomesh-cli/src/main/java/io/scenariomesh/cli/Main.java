@@ -1,6 +1,8 @@
 package io.scenariomesh.cli;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 public final class Main {
     private Main() {}
@@ -15,6 +17,12 @@ public final class Main {
             String[] doctorArgs = args.length == 0 ? new String[0] : Arrays.copyOfRange(args, 1, args.length);
             return new DoctorCommand().run(doctorArgs);
         }
+        if ("compatibility".equals(args[0]) || "explain".equals(args[0])) {
+            List<String> doctorArgs = new ArrayList<>();
+            doctorArgs.add("--deep");
+            doctorArgs.addAll(Arrays.asList(Arrays.copyOfRange(args, 1, args.length)));
+            return new DoctorCommand().run(doctorArgs.toArray(String[]::new));
+        }
         if ("init".equals(args[0])) {
             return new InitCommand().run(Arrays.copyOfRange(args, 1, args.length));
         }
@@ -23,7 +31,7 @@ public final class Main {
             return 0;
         }
         System.err.println("Unknown command: " + String.join(" ", args));
-        System.err.println("Commands: init, doctor [--deep] [--root PATH], version");
+        System.err.println("Commands: init, doctor [--deep] [--root PATH], compatibility [--root PATH], explain [--root PATH], version");
         return 2;
     }
 }
