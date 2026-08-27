@@ -26,7 +26,8 @@ public record ScenarioMeshConfig(
         boolean workerLogFiles,
         boolean showConfiguration,
         boolean showProgress,
-        DistributedConfig distributed) {
+        DistributedConfig distributed,
+        SchedulingMode schedulingMode) {
 
     public static final String AUTO_ADAPTER = "auto";
     private static final long MAX_SOCKET_TIMEOUT_MILLIS = Integer.MAX_VALUE;
@@ -55,7 +56,35 @@ public record ScenarioMeshConfig(
                 workerCount, minimumReadyWorkers, maxTasksPerWorker, maxHeapUsagePercent,
                 discoveryTimeout, workerStartupTimeout, workerTaskTimeout, workerShutdownTimeout,
                 reportingDirectory, workerJvmArgs, liveConsoleLogs, workerLogFiles,
-                showConfiguration, showProgress, DistributedConfig.defaults());
+                showConfiguration, showProgress, DistributedConfig.defaults(), SchedulingMode.HISTORY_LPT);
+    }
+
+    /** Backward-compatible constructor for integrations compiled before scheduling strategy became configurable. */
+    public ScenarioMeshConfig(
+            boolean enabled,
+            String executionAdapter,
+            AdapterMismatchPolicy adapterMismatchPolicy,
+            int infrastructureRetries,
+            int workerCount,
+            int minimumReadyWorkers,
+            int maxTasksPerWorker,
+            int maxHeapUsagePercent,
+            Duration discoveryTimeout,
+            Duration workerStartupTimeout,
+            Duration workerTaskTimeout,
+            Duration workerShutdownTimeout,
+            Path reportingDirectory,
+            List<String> workerJvmArgs,
+            boolean liveConsoleLogs,
+            boolean workerLogFiles,
+            boolean showConfiguration,
+            boolean showProgress,
+            DistributedConfig distributed) {
+        this(enabled, executionAdapter, adapterMismatchPolicy, infrastructureRetries,
+                workerCount, minimumReadyWorkers, maxTasksPerWorker, maxHeapUsagePercent,
+                discoveryTimeout, workerStartupTimeout, workerTaskTimeout, workerShutdownTimeout,
+                reportingDirectory, workerJvmArgs, liveConsoleLogs, workerLogFiles,
+                showConfiguration, showProgress, distributed, SchedulingMode.HISTORY_LPT);
     }
 
     public ScenarioMeshConfig {
@@ -81,6 +110,7 @@ public record ScenarioMeshConfig(
         }
         workerJvmArgs = List.copyOf(workerJvmArgs == null ? List.of() : workerJvmArgs);
         distributed = distributed == null ? DistributedConfig.defaults() : distributed;
+        schedulingMode = schedulingMode == null ? SchedulingMode.HISTORY_LPT : schedulingMode;
     }
 
     public boolean automaticAdapterSelection() {
@@ -115,7 +145,8 @@ public record ScenarioMeshConfig(
                 true,
                 true,
                 true,
-                DistributedConfig.defaults());
+                DistributedConfig.defaults(),
+                SchedulingMode.HISTORY_LPT);
     }
 
     private static String normalizeAdapter(String adapter) {
@@ -173,6 +204,28 @@ public record ScenarioMeshConfig(
                 }
             }
             throw new IllegalArgumentException("Invalid configuration: execution.adapterMismatchPolicy must be one of: fail, use-detected");
+        }
+    }
+
+    public enum SchedulingMode {
+        HISTORY_LPT("history-lpt"),
+        FIFO("fifo");
+
+        private final String externalValue;
+
+        SchedulingMode(String externalValue) {
+            this.externalValue = externalValue;
+        }
+
+        public String externalValue() {
+            return externalValue;
+        }
+
+        public static SchedulingMode parse(String value) {
+            for (SchedulingMode mode : values()) {
+                if (mode.externalValue.equalsIgnoreCase(value)) return mode;
+            }
+            throw new IllegalArgumentException("Invalid configuration: scheduling.strategy must be one of: history-lpt, fifo");
         }
     }
 }
