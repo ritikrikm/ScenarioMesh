@@ -126,31 +126,24 @@ jobs:
             echo 'Normal test failure incorrectly replaced the worker'
             exit 1
           fi
-      - name: Task-count recycling replaces healthy workers
-        working-directory: examples/test-failure-continuation-example
+      - name: Task-count recycling replaces healthy workers between independent scopes
+        working-directory: examples/worker-recycling-scopes-example
         run: |
-          set +e
           mvn -B clean test -Dscenariomesh.workers.maxTasksPerWorker=1 > task-recycling.log 2>&1
-          exit_code=$?
-          set -e
           cat task-recycling.log
-          test "$exit_code" -ne 0
+          grep -Fq 'worker-1 PASSED firstScope()' task-recycling.log
           grep -Fq 'worker-2 REPLACED worker-1 after task-count recycling after 1 task(s)' task-recycling.log
-          grep -Fq 'worker-2 PASSED b_sameWorkerContinues()' task-recycling.log
+          grep -Fq 'worker-2 PASSED secondScope()' task-recycling.log
           grep -Fq 'worker-3 REPLACED worker-2 after task-count recycling after 1 task(s)' task-recycling.log
-          grep -Fq 'worker-3 PASSED c_sameWorkerStillContinues()' task-recycling.log
-      - name: Heap threshold recycles healthy workers
-        working-directory: examples/test-failure-continuation-example
+          grep -Fq 'worker-3 PASSED thirdScope()' task-recycling.log
+      - name: Heap threshold recycles healthy workers between independent scopes
+        working-directory: examples/worker-recycling-scopes-example
         run: |
-          set +e
           mvn -B clean test -Dscenariomesh.workers.maxHeapUsagePercent=1 -Dscenariomesh.workers.jvmArgs=-Xmx64m > heap-recycling.log 2>&1
-          exit_code=$?
-          set -e
           cat heap-recycling.log
-          test "$exit_code" -ne 0
           grep -Fq 'after heap recycling at ' heap-recycling.log
-          grep -Fq ' PASSED b_sameWorkerContinues()' heap-recycling.log
-          grep -Fq ' PASSED c_sameWorkerStillContinues()' heap-recycling.log
+          grep -Fq ' PASSED secondScope()' heap-recycling.log
+          grep -Fq ' PASSED thirdScope()' heap-recycling.log
       - name: Per-task cleanup hook executes after every task
         working-directory: examples/cleanup-hook-example
         run: |
@@ -189,6 +182,7 @@ jobs:
           test -f examples/failsafe-junit5-example/target/scenariomesh/deferred-verification.properties
           test -f examples/cleanup-hook-example/target/scenariomesh/report.html
           test -f examples/process-tree-cleanup-example/target/scenariomesh/report.html
+          test -f examples/worker-recycling-scopes-example/target/scenariomesh/report.html
       - name: Verify modern report content and machine-readable timing
         run: |
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
