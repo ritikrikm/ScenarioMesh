@@ -36,8 +36,14 @@ public final class ScenarioMeshRunner {
         logger.progress("Discovery produced " + discovery.tasks().size() + " executable task(s).");
 
         List<ExecutionResult> results;
-        try (WorkerPool workers = new WorkerPool(request, directory, logger)) {
-            results = workers.execute(scheduledTasks);
+        if (request.config().distributed().remote()) {
+            try (RemoteWorkerPool workers = new RemoteWorkerPool(request, logger)) {
+                results = workers.execute(scheduledTasks);
+            }
+        } else {
+            try (WorkerPool workers = new WorkerPool(request, directory, logger)) {
+                results = workers.execute(scheduledTasks);
+            }
         }
 
         Set<String> completed = new HashSet<>();
