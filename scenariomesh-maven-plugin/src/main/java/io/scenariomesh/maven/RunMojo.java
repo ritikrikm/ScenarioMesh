@@ -9,6 +9,7 @@ import io.scenariomesh.coordinator.ScenarioMeshRunner;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.reporting.LatestReportCleaner;
+import io.scenariomesh.reporting.ReportExporters;
 import io.scenariomesh.reporting.ReportWriter;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
@@ -117,6 +118,7 @@ public final class RunMojo extends AbstractMojo {
 
             RunOutcome outcome = new ScenarioMeshRunner().run(request);
             ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
+            ReportExporters.export(outcome, config.reportingDirectory(), reports);
             long passed = outcome.results().stream().filter(result -> result.passed()).count();
             long skipped = outcome.results().stream().filter(result -> result.skipped()).count();
             long failed = outcome.results().size() - passed - skipped;
@@ -174,8 +176,10 @@ public final class RunMojo extends AbstractMojo {
         getLog().info("Adapter mismatch policy    : " + config.adapterMismatchPolicy().externalValue());
         getLog().info("Infrastructure retries     : " + config.infrastructureRetries()
                 + (config.infrastructureRetries() > 0 ? " (at-least-once under uncertain worker/transport failure)" : ""));
-        getLog().info("Workers                    : " + config.workerCount() + " isolated JVM(s)");
-        getLog().info("Scheduler                  : FIFO dynamic assignment");
+        getLog().info("Workers                    : " + config.workerCount() + " "
+                + (config.distributed().remote() ? "remote JVM(s)" : "isolated local JVM(s)"));
+        getLog().info("Worker mode                : " + config.distributed().mode().externalValue());
+        getLog().info("Scheduler                  : history-aware LPT with FIFO fallback and lifecycle affinity");
         getLog().info("Live worker console logs   : " + enabled(config.liveConsoleLogs()));
         getLog().info("Per-worker log files       : " + enabled(config.workerLogFiles()));
         getLog().info("Progress output            : " + enabled(config.showProgress()));
