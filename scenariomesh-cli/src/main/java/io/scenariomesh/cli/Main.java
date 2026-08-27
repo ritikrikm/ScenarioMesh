@@ -23,15 +23,14 @@ public final class Main {
             doctorArgs.addAll(Arrays.asList(Arrays.copyOfRange(args, 1, args.length)));
             return new DoctorCommand().run(doctorArgs.toArray(String[]::new));
         }
-        if ("init".equals(args[0])) {
-            return new InitCommand().run(Arrays.copyOfRange(args, 1, args.length));
-        }
+        if ("init".equals(args[0])) return new InitCommand().run(Arrays.copyOfRange(args, 1, args.length));
+        if ("run".equals(args[0])) return new RunCommand().run(Arrays.copyOfRange(args, 1, args.length));
         if ("version".equals(args[0]) || "--version".equals(args[0])) {
             System.out.println(ScenarioMeshVersion.current());
             return 0;
         }
         System.err.println("Unknown command: " + String.join(" ", args));
-        System.err.println("Commands: init, doctor [--deep] [--root PATH], compatibility [--root PATH], explain [--root PATH], version");
+        System.err.println("Commands: init, doctor [--deep] [--root PATH], compatibility [--root PATH], explain [--root PATH], run [--root PATH] [Maven -D options], version");
         return 2;
     }
 }
