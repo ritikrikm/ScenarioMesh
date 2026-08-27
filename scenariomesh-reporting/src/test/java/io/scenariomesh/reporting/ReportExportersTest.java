@@ -9,7 +9,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReportExportersTest {
@@ -17,7 +19,7 @@ class ReportExportersTest {
     Path directory;
 
     @Test
-    void serviceLoadedExporterReceivesCompletedBuiltInReportContext() throws Exception {
+    void serviceLoadedArtifactsAreManifestedAndVisibleToExporters() throws Exception {
         Path latestJson = directory.resolve("summary.json");
         Path latestJunit = directory.resolve("junit.xml");
         Path latestHtml = directory.resolve("report.html");
@@ -39,5 +41,23 @@ class ReportExportersTest {
         String content = Files.readString(marker);
         assertTrue(content.contains("run-p6"));
         assertTrue(content.contains("junit.xml"));
+        assertTrue(content.contains("artifacts=2"));
+
+        Path manifest = directory.resolve("artifacts.json");
+        assertTrue(Files.isRegularFile(manifest));
+        String json = Files.readString(manifest);
+        assertTrue(json.contains("\"version\" : 1"));
+        assertTrue(json.contains("failure.png"));
+        assertTrue(json.contains("https://example.test/traces/1"));
+    }
+
+    @Test
+    void artifactLocationRejectsTraversalAndNonHttpsExternalUris() {
+        assertThrows(IllegalArgumentException.class, () -> new ReportArtifact(
+                "bad-1", null, "log", "bad", "../secret.log", "text/plain", Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ReportArtifact(
+                "bad-2", null, "trace", "bad", "http://example.test/trace", "text/html", Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> new ReportArtifact(
+                "bad-3", null, "file", "bad", "/tmp/secret", null, Map.of()));
     }
 }
