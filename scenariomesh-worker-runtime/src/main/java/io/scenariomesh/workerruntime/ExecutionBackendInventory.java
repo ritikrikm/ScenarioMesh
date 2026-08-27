@@ -2,6 +2,7 @@ package io.scenariomesh.workerruntime;
 
 import io.scenariomesh.adapter.junitplatform.MavenClassSelectionPostFilter;
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.Ports.ScenarioAdapter;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.Launcher;
@@ -31,13 +32,10 @@ public final class ExecutionBackendInventory {
 
     public static Inventory inspect(ClassLoader targetClassLoader, List<Path> testRoots,
                                     List<String> includeClassNameRegexes, List<String> excludeClassNameRegexes) {
-        return inspect(targetClassLoader, testRoots, includeClassNameRegexes, excludeClassNameRegexes, Set.of());
+        return inspect(targetClassLoader, testRoots, includeClassNameRegexes, excludeClassNameRegexes,
+                adapterOwnedEngineIds(targetClassLoader));
     }
 
-    /**
-     * Additional engine ids may only come from loaded ScenarioAdapter capability declarations.
-     * Declaring an engine makes it lifecycle-scoped ownable; it never grants leaf-isolation implicitly.
-     */
     public static Inventory inspect(ClassLoader targetClassLoader, List<Path> testRoots,
                                     List<String> includeClassNameRegexes, List<String> excludeClassNameRegexes,
                                     Set<String> adapterOwnedEngineIds) {
@@ -118,6 +116,15 @@ public final class ExecutionBackendInventory {
         } finally {
             Thread.currentThread().setContextClassLoader(previous);
         }
+    }
+
+    private static Set<String> adapterOwnedEngineIds(ClassLoader classLoader) {
+        Set<String> ids = new LinkedHashSet<>();
+        AdapterRegistry registry = new AdapterRegistry(classLoader);
+        for (ScenarioAdapter adapter : registry.available(classLoader)) {
+            ids.addAll(adapter.capabilities().junitPlatformEngineIds());
+        }
+        return Set.copyOf(ids);
     }
 
     private static List<TestEngine> loadEngines(ClassLoader classLoader) {
