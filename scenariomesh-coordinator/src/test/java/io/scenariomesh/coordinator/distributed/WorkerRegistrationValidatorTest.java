@@ -1,6 +1,5 @@
 package io.scenariomesh.coordinator.distributed;
 
-import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import org.junit.jupiter.api.Test;
@@ -8,7 +7,9 @@ import org.junit.jupiter.api.Test;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkerRegistrationValidatorTest {
     private final WorkerRegistrationValidator validator = new WorkerRegistrationValidator();
@@ -26,6 +27,7 @@ class WorkerRegistrationValidatorTest {
         assertEquals(Set.of("junit-platform", "testng"), registration.adapterIds());
         assertEquals("jenkins-linux-a", registration.labels().get("agentId"));
         validator.requireCanRun(registration, "junit-platform", "junit-jupiter");
+        assertTrue(validator.canRun(registration, "junit-platform", "junit-jupiter"));
     }
 
     @Test
@@ -41,7 +43,7 @@ class WorkerRegistrationValidatorTest {
     }
 
     @Test
-    void rejectsWorkerThatCannotRunRequestedAdapterOrAdvertisedEngine() {
+    void rejectsWorkerThatCannotRunRequestedAdapterOrEngine() {
         RemoteWorkerRegistration registration = validator.requireRegistration(
                 Envelope.hello("worker-a", "secret", new WorkerCapabilities(
                         "agent", 1, 21, "Linux", "amd64", "fp",
@@ -51,15 +53,18 @@ class WorkerRegistrationValidatorTest {
                 () -> validator.requireCanRun(registration, "testng", null));
         assertThrows(IllegalStateException.class,
                 () -> validator.requireCanRun(registration, "junit-platform", "cucumber"));
+        assertFalse(validator.canRun(registration, "junit-platform", "cucumber"));
     }
 
     @Test
-    void emptyEngineInventoryDefersEngineProofToTargetPreflight() {
+    void emptyEngineInventoryCannotSatisfyEngineRequiredWork() {
         RemoteWorkerRegistration registration = validator.requireRegistration(
                 Envelope.hello("worker-a", "secret", new WorkerCapabilities(
                         "agent", 1, 21, "Linux", "amd64", "fp",
                         Set.of("junit-platform"), Set.of())), "secret");
 
-        validator.requireCanRun(registration, "junit-platform", "cucumber");
+        assertThrows(IllegalStateException.class,
+                () -> validator.requireCanRun(registration, "junit-platform", "cucumber"));
+        assertFalse(validator.canRun(registration, "junit-platform", "cucumber"));
     }
 }
