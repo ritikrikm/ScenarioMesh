@@ -83,10 +83,9 @@ public final class WorkerMain {
             }
         }
         try {
-            WorkUnitExecution execution = Objects.requireNonNull(
+            return Objects.requireNonNull(
                     adapters.required(adapterId).executeWorkUnit(tasks, context),
                     "Adapter returned null work-unit execution");
-            return execution;
         } catch (Exception exception) {
             return new WorkUnitExecution(tasks, failures(tasks, context,
                     safeMessage(exception), exception.getClass().getName()));
@@ -140,8 +139,20 @@ public final class WorkerMain {
 
     private static String cleanupFailureMessage(WorkerTaskCleanup hook, Exception cleanupFailure,
                                                 ExecutionResult originalResult) {
-        return "Worker cleanup hook " + hook.getClass().getName() + " failed: "
-                + safeMessage(cleanupFailure) + ". Original task outcome: status=" + originalResult.status();
+        StringBuilder message = new StringBuilder()
+                .append("Worker cleanup hook ")
+                .append(hook.getClass().getName())
+                .append(" failed: ")
+                .append(safeMessage(cleanupFailure))
+                .append(". Original task outcome: status=")
+                .append(originalResult.status());
+        if (originalResult.failureType() != null && !originalResult.failureType().isBlank()) {
+            message.append(", failureType=").append(originalResult.failureType());
+        }
+        if (originalResult.failureMessage() != null && !originalResult.failureMessage().isBlank()) {
+            message.append(", failureMessage=").append(originalResult.failureMessage());
+        }
+        return message.toString();
     }
 
     private static WorkerTelemetry telemetry() {
