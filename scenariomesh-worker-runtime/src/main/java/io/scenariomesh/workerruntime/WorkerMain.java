@@ -10,6 +10,7 @@ import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.Ports.WorkerTaskCleanup;
 import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
+import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 
 import java.io.BufferedReader;
@@ -21,10 +22,12 @@ import java.lang.management.MemoryUsage;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -46,7 +49,7 @@ public final class WorkerMain {
         try (Socket socket = new Socket(InetAddress.getByName(parsed.host), parsed.port);
              BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
-            write(mapper, writer, Envelope.hello(parsed.workerId, parsed.token));
+            write(mapper, writer, Envelope.hello(parsed.workerId, parsed.token, capabilities(parsed.workerId)));
             for (String line; (line = reader.readLine()) != null;) {
                 Envelope envelope = mapper.readValue(line, Envelope.class);
                 validate(envelope);
@@ -68,9 +71,30 @@ public final class WorkerMain {
                 List<ExecutionResult> cleaned = runCleanupHooks(
                         cleanupHooks, execution.tasks(), context, execution.results());
                 write(mapper, writer, Envelope.resultBatch(parsed.workerId,
-                        execution.tasks(), cleaned, telemetry()));
+                        envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()));
             }
         }
+    }
+
+    private static WorkerCapabilities capabilities(String workerId) throws Exception {
+        String configuredAgent = System.getenv("JENKINS_NODE_NAME");
+        String agentId = configuredAgent == null || configuredAgent.isBlank()
+                ? InetAddress.getLocalHost().getHostName() : configuredAgent.trim();
+        String os = System.getProperty("os.name", "unknown");
+        String architecture = System.getProperty("os.arch", "unknown");
+        int javaFeature = Runtime.version().feature();
+        String fingerprintInput = String.join("\n",
+                Integer.toString(Protocol.VERSION),
+                Integer.toString(javaFeature),
+                System.getProperty("java.vendor", "unknown"),
+                System.getProperty("java.version", "unknown"),
+                os,
+                architecture,
+                System.getProperty("java.class.path", ""));
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+                .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
+        return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
+                HexFormat.of().formatHex(digest));
     }
 
     private static WorkUnitExecution executeWorkUnit(
