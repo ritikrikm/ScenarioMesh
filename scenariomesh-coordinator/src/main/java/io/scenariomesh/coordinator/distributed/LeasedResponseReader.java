@@ -9,18 +9,12 @@ import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-/**
- * Reads one terminal worker response while consuming lease heartbeats internally.
- * The timeout remains a hard upper bound for the work-unit response; heartbeats renew
- * distributed authority but do not silently extend the configured task timeout.
- */
+/** Reads one terminal worker response while consuming lease and presence heartbeats internally. */
 public final class LeasedResponseReader {
     private final DistributedWorkAuthority authority;
     private final Supplier<Instant> wallClock;
 
-    public LeasedResponseReader(DistributedWorkAuthority authority) {
-        this(authority, Instant::now);
-    }
+    public LeasedResponseReader(DistributedWorkAuthority authority) { this(authority, Instant::now); }
 
     LeasedResponseReader(DistributedWorkAuthority authority, Supplier<Instant> wallClock) {
         this.authority = Objects.requireNonNull(authority, "authority");
@@ -31,14 +25,16 @@ public final class LeasedResponseReader {
         return readTerminal(workerId, timeout, reader, ignored -> { });
     }
 
+    /**
+     * Presence proves only socket/process liveness. Lease heartbeats additionally renew authoritative
+     * work ownership. Both refresh the worker directory only after worker identity validation.
+     */
     public Envelope readTerminal(String workerId, Duration timeout, TimedEnvelopeReader reader,
-                                 Consumer<Instant> authoritativeHeartbeatObserver) throws Exception {
+                                 Consumer<Instant> livenessObserver) throws Exception {
         Objects.requireNonNull(timeout, "timeout");
         Objects.requireNonNull(reader, "reader");
-        Objects.requireNonNull(authoritativeHeartbeatObserver, "authoritativeHeartbeatObserver");
-        if (timeout.isZero() || timeout.isNegative()) {
-            throw new IllegalArgumentException("timeout must be greater than zero");
-        }
+        Objects.requireNonNull(livenessObserver, "livenessObserver");
+        if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be greater than zero");
 
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
         for (;;) {
@@ -46,10 +42,21 @@ public final class LeasedResponseReader {
             if (remainingNanos <= 0) throw new java.net.SocketTimeoutException("worker response timeout");
             Envelope envelope = reader.read(Duration.ofNanos(remainingNanos));
             if (envelope == null) return null;
-            if (envelope.type() != Protocol.Type.HEARTBEAT) return envelope;
+            if (!Objects.equals(workerId, envelope.workerId())) {
+                throw new IllegalArgumentException("worker response identity mismatch: expected " + workerId
+                        + " but received " + envelope.workerId());
+            }
             Instant heartbeatAt = wallClock.get();
-            authority.heartbeat(workerId, envelope, heartbeatAt);
-            authoritativeHeartbeatObserver.accept(heartbeatAt);
+            if (envelope.type() == Protocol.Type.PRESENCE) {
+                livenessObserver.accept(heartbeatAt);
+                continue;
+            }
+            if (envelope.type() == Protocol.Type.HEARTBEAT) {
+                authority.heartbeat(workerId, envelope, heartbeatAt);
+                livenessObserver.accept(heartbeatAt);
+                continue;
+            }
+            return envelope;
         }
     }
 
