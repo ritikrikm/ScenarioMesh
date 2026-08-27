@@ -1,6 +1,10 @@
 name: p7-cli-product
 on: [push, pull_request]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   cli-product:
     runs-on: ubuntu-latest
@@ -16,7 +20,7 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install
-      - name: CLI version
+      - name: CLI version and self-contained packaging
         run: |
           cli="scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
           java -jar "$cli" version | grep -Fxq '0.1.0-SNAPSHOT'
@@ -25,10 +29,18 @@ jobs:
           cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
           java -jar "$cli" doctor --root examples/junit5-example
           java -jar "$cli" compatibility --root examples/junit5-example > compatibility.log
-          grep -Fq 'Acceleration' compatibility.log
+          grep -Fq 'Ownership decision' compatibility.log
           grep -Fq 'ScenarioMesh can safely own this test execution' compatibility.log
           java -jar "$cli" explain --root examples/junit5-example > explain.log
           grep -Fq 'ScenarioMesh preflight: ownership proven' explain.log
+      - name: Explicit CLI run delegates to production Maven runtime
+        run: |
+          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
+          rm -rf examples/junit5-example/target/scenariomesh-yaml
+          java -jar "$cli" run --root examples/junit5-example
+          test -f examples/junit5-example/target/scenariomesh-yaml/summary.json
+          grep -Fq '"passed" : 6' examples/junit5-example/target/scenariomesh-yaml/summary.json
+          grep -Fq '"skipped" : 2' examples/junit5-example/target/scenariomesh-yaml/summary.json
       - name: Init remains idempotent and dry-run safe
         run: |
           cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar"
