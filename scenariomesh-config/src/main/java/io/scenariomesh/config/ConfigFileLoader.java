@@ -23,6 +23,7 @@ final class ConfigFileLoader {
     private static final Set<String> ALLOWED_KEYS = Set.of(
             "configVersion", "enabled",
             "execution.adapter", "execution.adapterMismatchPolicy", "execution.infrastructureRetries",
+            "scheduling.strategy",
             "workers.count", "workers.minimumReady", "workers.mode", "workers.maxTasksPerWorker",
             "workers.maxHeapUsagePercent", "workers.startupTimeout", "workers.taskTimeout",
             "workers.shutdownTimeout", "workers.jvmArgs",
