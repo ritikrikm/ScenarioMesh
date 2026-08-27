@@ -70,9 +70,15 @@ public final class WorkerMain {
                 List<ScenarioTask> dispatched = envelope.tasks();
                 ExecutionContext context = new ExecutionContext(classLoader, new WorkerId(parsed.workerId),
                         envelope.attempt(), properties);
-                WorkUnitExecution execution = executeWorkUnit(adapters, dispatched, context);
-                List<ExecutionResult> cleaned = runCleanupHooks(
-                        cleanupHooks, execution.tasks(), context, execution.results());
+                WorkUnitExecution execution;
+                List<ExecutionResult> cleaned;
+                try (LeaseHeartbeatEmitter heartbeat = LeaseHeartbeatEmitter.start(
+                        parsed.workerId, envelope, WorkerMain::telemetry,
+                        heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope))) {
+                    execution = executeWorkUnit(adapters, dispatched, context);
+                    cleaned = runCleanupHooks(cleanupHooks, execution.tasks(), context, execution.results());
+                    heartbeat.throwIfFailed();
+                }
                 write(mapper, writer, Envelope.resultBatch(parsed.workerId,
                         envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()));
             }
@@ -202,9 +208,11 @@ public final class WorkerMain {
     }
 
     private static void write(ObjectMapper mapper, BufferedWriter writer, Envelope envelope) throws Exception {
-        writer.write(mapper.writeValueAsString(envelope));
-        writer.newLine();
-        writer.flush();
+        synchronized (writer) {
+            writer.write(mapper.writeValueAsString(envelope));
+            writer.newLine();
+            writer.flush();
+        }
     }
 
     private record Arguments(String host, int port, String token, String workerId) {
