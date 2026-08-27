@@ -22,7 +22,6 @@ public record RunOutcome(
     }
 
     public boolean successful() {
-        return results.size() == tasks.size()
-                && results.stream().allMatch(ExecutionResult::buildSuccessful);
+        return !results.isEmpty() && results.stream().allMatch(ExecutionResult::buildSuccessful);
     }
 }
