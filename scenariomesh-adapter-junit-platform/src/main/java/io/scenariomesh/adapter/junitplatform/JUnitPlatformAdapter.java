@@ -7,8 +7,6 @@ import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
-import io.scenariomesh.core.SelectedTestClasses;
-import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.TestSource;
@@ -35,7 +33,6 @@ import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
 
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqueId;
 
@@ -47,11 +44,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     private final Map<String, Map<String, CachedOutcome>> scopedResults = new HashMap<>();
 
-    @Override
-    public String id() { return ID; }
-
-    @Override
-    public String framework() { return "junit-platform"; }
+    @Override public String id() { return ID; }
+    @Override public String framework() { return "junit-platform"; }
 
     @Override
     public boolean isAvailable(ClassLoader classLoader) {
@@ -68,20 +62,11 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         if (context.testRoots().isEmpty()) return List.of();
 
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
+                .selectors(selectClasspathRoots(new HashSet<>(context.testRoots())))
                 .filters(EngineFilter.excludeEngines("junit-vintage"));
-        if (context.discoverySelection().includeClassNameRegexes().isEmpty()
-                && context.discoverySelection().excludeClassNameRegexes().isEmpty()) {
-            builder.selectors(selectClasspathRoots(new HashSet<>(context.testRoots())));
-        } else {
-            List<String> selectedClasses = SelectedTestClasses.scan(context.testRoots(), context.discoverySelection());
-            if (selectedClasses.isEmpty()) {
-                builder.selectors(selectClasspathRoots(new HashSet<>(context.testRoots())));
-            } else {
-                List<DiscoverySelector> selectors = selectedClasses.stream()
-                        .map(className -> (DiscoverySelector) selectClass(className))
-                        .toList();
-                builder.selectors(selectors);
-            }
+        if (!context.discoverySelection().includeClassNameRegexes().isEmpty()
+                || !context.discoverySelection().excludeClassNameRegexes().isEmpty()) {
+            builder.filters(new MavenClassSelectionPostFilter(context.discoverySelection()));
         }
 
         Launcher launcher = LauncherFactory.create();
@@ -108,15 +93,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             metadata.put(META_SCOPE_SELECTOR, scope.selector());
             metadata.put(META_SCOPE_KIND, scope.kind());
             tasks.add(new ScenarioTask(
-                    ScenarioIds.from(ID, uniqueId),
-                    identifier.getDisplayName(),
-                    ID,
-                    framework,
-                    null,
-                    null,
-                    uniqueId,
-                    tags,
-                    metadata));
+                    ScenarioIds.from(ID, uniqueId), identifier.getDisplayName(), ID, framework,
+                    null, null, uniqueId, tags, metadata));
         }
         return List.copyOf(tasks);
     }
@@ -263,11 +241,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     private record ExecutionScope(String id, String selector, String kind) {}
 
     private record CachedOutcome(
-            ResultStatus status,
-            Instant started,
-            Instant finished,
-            String failureMessage,
-            String failureType) {
+            ResultStatus status, Instant started, Instant finished,
+            String failureMessage, String failureType) {
         ExecutionResult toResult(ScenarioTask task, ExecutionContext context) {
             return new ExecutionResult(
                     task.id(), task.displayName(), status,
