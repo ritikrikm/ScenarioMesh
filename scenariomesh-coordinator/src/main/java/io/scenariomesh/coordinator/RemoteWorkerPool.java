@@ -50,6 +50,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     private final LeasedResponseReader responseReader;
     private final RemoteWorkerDirectory directory;
     private final RemoteWorkerServer server;
+    private final boolean preparedOwnership;
     private final CopyOnWriteArrayList<RemoteWorkerSession> sessions = new CopyOnWriteArrayList<>();
     private final Map<ScenarioId, Integer> attempts = new ConcurrentHashMap<>();
     private final Object replacementLock = new Object();
@@ -57,6 +58,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     RemoteWorkerPool(RunRequest request, RunLogger logger) throws Exception {
         this.request = request;
         this.logger = logger;
+        this.preparedOwnership = false;
         DistributedConfig distributed = request.config().distributed();
         if (!distributed.remote()) throw new IllegalArgumentException("RemoteWorkerPool requires workers.mode=remote");
         this.workAuthority = new DistributedWorkAuthority(
@@ -76,6 +78,26 @@ final class RemoteWorkerPool implements AutoCloseable {
             close();
             throw exception;
         }
+    }
+
+    RemoteWorkerPool(RunRequest request, RunLogger logger, PreparedRemoteWorkers prepared) {
+        this.request = request;
+        this.logger = logger;
+        this.preparedOwnership = true;
+        if (!request.config().distributed().remote()) {
+            throw new IllegalArgumentException("Prepared remote workers require workers.mode=remote");
+        }
+        if (prepared == null) throw new IllegalArgumentException("prepared remote workers are required");
+        this.workAuthority = new DistributedWorkAuthority(
+                new LeaseRegistry(request.config().workerTaskTimeout().multipliedBy(2)));
+        this.responseReader = new LeasedResponseReader(workAuthority);
+        PreparedRemoteWorkers.PreparedState state = prepared.transfer();
+        this.directory = state.directory();
+        this.server = state.server();
+        this.sessions.addAll(state.sessions());
+        if (sessions.isEmpty()) throw new IllegalStateException("Prepared remote worker set is empty");
+        logger.progress("Using " + sessions.size()
+                + " authenticated remote worker process(es) proven during Maven preflight; no reconnect is required.");
     }
 
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
@@ -232,6 +254,11 @@ final class RemoteWorkerPool implements AutoCloseable {
         synchronized (replacementLock) {
             String oldId = oldSession.registration().workerId();
             retire(oldSession, reason);
+            if (preparedOwnership) {
+                logger.progress("Prepared worker " + oldId + " will not be replaced after native Maven suppression; "
+                        + "replacement capability has not been preflight-proven.");
+                return null;
+            }
             try {
                 RemoteWorkerSession replacement = server.accept(request.config().distributed().registrationTimeout());
                 sessions.add(replacement);
@@ -281,6 +308,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     }
 
     private String recycleReason(int tasksOnWorker, WorkerTelemetry telemetry) {
+        if (preparedOwnership) return null;
         if (request.config().taskCountRecyclingEnabled() && tasksOnWorker >= request.config().maxTasksPerWorker()) {
             return "task-count recycling after " + tasksOnWorker + " task(s)";
         }
