@@ -1,0 +1,38 @@
+name: p0-lifecycle-equivalence
+on: [push, pull_request]
+
+jobs:
+  lifecycle-equivalence:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and install ScenarioMesh
+        run: mvn -B clean install -DskipTests
+      - name: JUnit class lifecycle is executed once
+        working-directory: examples/junit5-example
+        run: |
+          rm -f target/junit-lifecycle.log
+          mvn -B clean test
+          test -f target/junit-lifecycle.log
+          test "$(grep -Fc 'BEFORE_ALL' target/junit-lifecycle.log)" -eq 1
+          test "$(grep -Fc 'AFTER_ALL' target/junit-lifecycle.log)" -eq 1
+          test -f target/scenariomesh-yaml/summary.json
+          grep -Fq '"passed" : 6' target/scenariomesh-yaml/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
+      - name: Cucumber global lifecycle is executed once
+        working-directory: examples/cucumber-junit-platform-example
+        run: |
+          rm -f target/cucumber-lifecycle.log
+          mvn -B clean test
+          test -f target/cucumber-lifecycle.log
+          test "$(grep -Fc 'BEFORE_ALL' target/cucumber-lifecycle.log)" -eq 1
+          test "$(grep -Fc 'AFTER_ALL' target/cucumber-lifecycle.log)" -eq 1
+          test -f target/scenariomesh/summary.json
