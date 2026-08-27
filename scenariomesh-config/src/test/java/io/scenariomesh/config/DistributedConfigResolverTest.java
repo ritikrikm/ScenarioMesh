@@ -33,11 +33,12 @@ class DistributedConfigResolverTest {
     @Test
     void explicitPropertyOverridesEnvironmentAndYaml() throws Exception {
         Files.writeString(project.resolve("scenariomesh.yml"), """
-                workers:
-                  mode: remote
-                distributed:
-                  bindPort: 41000
-                  token: yaml-token
+                scenariomesh:
+                  workers:
+                    mode: remote
+                  distributed:
+                    bindPort: 41000
+                    token: yaml-token
                 """);
         ScenarioMeshConfig config = new ConfigResolver().resolve(project, project.resolve("target"), Map.of(
                 "scenariomesh.workers.mode", "remote",
