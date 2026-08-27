@@ -17,6 +17,12 @@ scenariomesh:
     # Explicit adapter declarations are still validated against runtime evidence.
     adapterMismatchPolicy: fail
 
+  scheduling:
+    # history-lpt | fifo
+    # history-lpt is the default: longer historical estimates start first, with
+    # deterministic FIFO behavior for cold tasks. fifo ignores duration history.
+    strategy: history-lpt
+
   workers:
     # Number of isolated worker JVMs. Operational, not framework-specific.
     count: 4
