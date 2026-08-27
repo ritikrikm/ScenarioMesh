@@ -1,0 +1,80 @@
+package io.scenariomesh.coordinator;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.core.Domain.ExecutionResult;
+import io.scenariomesh.core.Domain.ResultStatus;
+import io.scenariomesh.core.Domain.ScenarioTask;
+import io.scenariomesh.workerruntime.JsonCodec;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/** Persistent, bounded-cost duration history keyed by stable ScenarioMesh task identity. */
+final class ExecutionHistoryStore {
+    static final String ESTIMATED_DURATION_MILLIS = "estimatedDurationMillis";
+    private static final String FILE_NAME = "execution-history.json";
+    private final ObjectMapper mapper = JsonCodec.create();
+
+    List<ScenarioTask> enrich(Path reportingDirectory, List<ScenarioTask> tasks) {
+        Map<String, Long> history = load(reportingDirectory);
+        if (history.isEmpty()) return tasks;
+        List<ScenarioTask> enriched = new ArrayList<>(tasks.size());
+        for (ScenarioTask task : tasks) {
+            Long estimate = history.get(task.id().value());
+            if (estimate == null || estimate <= 0) {
+                enriched.add(task);
+                continue;
+            }
+            Map<String, String> metadata = new LinkedHashMap<>(task.metadata());
+            metadata.put(ESTIMATED_DURATION_MILLIS, Long.toString(estimate));
+            enriched.add(new ScenarioTask(task.id(), task.displayName(), task.adapterId(), task.framework(),
+                    task.source(), task.line(), task.selector(), task.tags(), metadata));
+        }
+        return List.copyOf(enriched);
+    }
+
+    void update(Path reportingDirectory, List<ExecutionResult> results) {
+        try {
+            Files.createDirectories(reportingDirectory);
+            Map<String, Long> history = new LinkedHashMap<>(load(reportingDirectory));
+            for (ExecutionResult result : results) {
+                if (!isExecutionSignal(result.status())) continue;
+                long observed = Math.max(1L, result.duration().toMillis());
+                Long previous = history.get(result.scenarioId().value());
+                long estimate = previous == null ? observed : Math.max(1L, Math.round(previous * 0.75d + observed * 0.25d));
+                history.put(result.scenarioId().value(), estimate);
+            }
+            Path target = reportingDirectory.resolve(FILE_NAME);
+            Path temporary = reportingDirectory.resolve(FILE_NAME + ".tmp");
+            mapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), history);
+            try {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (Exception unsupportedAtomicMove) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (Exception ignored) {
+            // Scheduling history is an optimization only and must never change test outcomes.
+        }
+    }
+
+    private Map<String, Long> load(Path reportingDirectory) {
+        try {
+            Path path = reportingDirectory.resolve(FILE_NAME);
+            if (!Files.isRegularFile(path)) return Map.of();
+            Map<String, Long> value = mapper.readValue(path.toFile(), new TypeReference<Map<String, Long>>() {});
+            return value == null ? Map.of() : Map.copyOf(value);
+        } catch (Exception ignored) {
+            return Map.of();
+        }
+    }
+
+    private boolean isExecutionSignal(ResultStatus status) {
+        return status == ResultStatus.PASSED || status == ResultStatus.SKIPPED || status == ResultStatus.TEST_FAILURE;
+    }
+}
