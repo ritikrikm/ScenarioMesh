@@ -1,0 +1,93 @@
+name: p3-tls-security
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  tls-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: TLS configuration contracts
+        run: mvn -B -pl scenariomesh-config -am test -Dtest='*DistributedTlsConfigTest' -Dsurefire.failIfNoSpecifiedTests=false
+      - name: Build and install ScenarioMesh
+        run: mvn -B clean install -DskipTests
+      - name: Generate mutually trusted PKCS12 stores
+        run: |
+          set -euo pipefail
+          tls="$RUNNER_TEMP/scenariomesh-tls"
+          mkdir -p "$tls"
+          keytool -genkeypair -alias coordinator -keyalg RSA -keysize 2048 -storetype PKCS12 \
+            -keystore "$tls/server.p12" -storepass changeit -keypass changeit \
+            -dname 'CN=localhost' -ext 'SAN=dns:localhost,ip:127.0.0.1' -validity 2 -noprompt
+          keytool -exportcert -alias coordinator -keystore "$tls/server.p12" -storepass changeit \
+            -rfc -file "$tls/server.crt"
+          keytool -genkeypair -alias worker -keyalg RSA -keysize 2048 -storetype PKCS12 \
+            -keystore "$tls/client.p12" -storepass changeit -keypass changeit \
+            -dname 'CN=scenariomesh-worker' -validity 2 -noprompt
+          keytool -exportcert -alias worker -keystore "$tls/client.p12" -storepass changeit \
+            -rfc -file "$tls/client.crt"
+          keytool -importcert -alias worker -file "$tls/client.crt" -storetype PKCS12 \
+            -keystore "$tls/server-trust.p12" -storepass changeit -noprompt
+          keytool -importcert -alias coordinator -file "$tls/server.crt" -storetype PKCS12 \
+            -keystore "$tls/client-trust.p12" -storepass changeit -noprompt
+      - name: Non-loopback coordinator requires and completes mutual TLS
+        working-directory: examples/testng-example
+        env:
+          SCENARIOMESH_DISTRIBUTED_TOKEN: p3-tls-secret
+          SCENARIOMESH_DISTRIBUTED_TLS_ENABLED: 'true'
+          SCENARIOMESH_DISTRIBUTED_TLS_KEY_STORE_PASSWORD: changeit
+          SCENARIOMESH_DISTRIBUTED_TLS_TRUST_STORE_PASSWORD: changeit
+        run: |
+          set -euo pipefail
+          tls="$RUNNER_TEMP/scenariomesh-tls"
+          port=$((44000 + ${{ matrix.java }}))
+          rm -rf target/scenariomesh
+          set +e
+          SCENARIOMESH_DISTRIBUTED_TLS_KEY_STORE="$tls/server.p12" \
+          SCENARIOMESH_DISTRIBUTED_TLS_TRUST_STORE="$tls/server-trust.p12" \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+            -Dscenariomesh.workers.mode=remote \
+            -Dscenariomesh.workers.count=1 \
+            -Dscenariomesh.workers.minimumReady=1 \
+            -Dscenariomesh.distributed.bindHost=0.0.0.0 \
+            -Dscenariomesh.distributed.bindPort="$port" \
+            -Dscenariomesh.distributed.registrationTimeout=PT45S \
+            > tls-coordinator.log 2>&1 &
+          coordinator_pid=$!
+          set -e
+          for i in $(seq 1 90); do
+            if grep -Fq 'transport=tls' tls-coordinator.log 2>/dev/null; then break; fi
+            if ! kill -0 "$coordinator_pid" 2>/dev/null; then cat tls-coordinator.log; exit 1; fi
+            sleep 1
+          done
+          grep -Fq 'transport=tls' tls-coordinator.log
+          SCENARIOMESH_DISTRIBUTED_TLS_KEY_STORE="$tls/client.p12" \
+          SCENARIOMESH_DISTRIBUTED_TLS_TRUST_STORE="$tls/client-trust.p12" \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+            -Dscenariomesh.worker.host=localhost \
+            -Dscenariomesh.worker.port="$port" \
+            -Dscenariomesh.worker.id=tls-worker \
+            > tls-worker.log 2>&1 &
+          worker_pid=$!
+          wait "$coordinator_pid"
+          wait "$worker_pid"
+          cat tls-coordinator.log
+          cat tls-worker.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"passed" : 6' target/scenariomesh/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh/summary.json
+          if grep -Fq 'p3-tls-secret' tls-coordinator.log tls-worker.log; then
+            echo 'Authentication token leaked into logs'
+            exit 1
+          fi
