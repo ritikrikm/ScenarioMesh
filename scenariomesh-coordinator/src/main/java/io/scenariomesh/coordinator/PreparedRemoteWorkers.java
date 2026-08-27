@@ -16,19 +16,14 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 
-/**
- * Authenticated remote-worker sessions proven during Maven preflight and retained for the
- * subsequent ScenarioMesh execution phase. Keeping the exact sessions prevents a successful
- * readiness probe from being followed by an unproven reconnect after native Maven is suppressed.
- */
+/** Authenticated remote-worker sessions proven during Maven preflight and retained for execution. */
 public final class PreparedRemoteWorkers implements AutoCloseable {
     private final RemoteWorkerServer server;
     private final RemoteWorkerDirectory directory;
     private final List<RemoteWorkerSession> sessions;
     private boolean transferred;
 
-    private PreparedRemoteWorkers(RemoteWorkerServer server,
-                                  RemoteWorkerDirectory directory,
+    private PreparedRemoteWorkers(RemoteWorkerServer server, RemoteWorkerDirectory directory,
                                   List<RemoteWorkerSession> sessions) {
         this.server = server;
         this.directory = directory;
@@ -40,27 +35,24 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                                                 Set<String> requiredEngineIds,
                                                 Consumer<String> progress) throws Exception {
         Objects.requireNonNull(config, "config");
-        if (!config.distributed().remote()) {
-            throw new IllegalArgumentException("PreparedRemoteWorkers requires workers.mode=remote");
-        }
+        if (!config.distributed().remote()) throw new IllegalArgumentException("PreparedRemoteWorkers requires workers.mode=remote");
         Set<String> adapters = Set.copyOf(requiredAdapterIds == null ? Set.of() : requiredAdapterIds);
         Set<String> engines = Set.copyOf(requiredEngineIds == null ? Set.of() : requiredEngineIds);
         Consumer<String> log = progress == null ? ignored -> { } : progress;
         WorkerRegistrationValidator validator = new WorkerRegistrationValidator();
         RemoteWorkerDirectory directory = new RemoteWorkerDirectory(config.workerTaskTimeout().multipliedBy(2));
         RemoteWorkerServer server = new RemoteWorkerServer(
-                InetAddress.getByName(config.distributed().bindHost()),
-                config.distributed().bindPort(), config.distributed().token(), validator, directory);
+                InetAddress.getByName(config.distributed().bindHost()), config.distributed().bindPort(),
+                config.distributed().token(), validator, directory, config.distributed().tls());
         List<RemoteWorkerSession> sessions = new ArrayList<>();
         try {
             log.accept("ScenarioMesh remote preflight listening on " + config.distributed().bindHost() + ":"
-                    + server.address().getPort() + "; waiting for up to " + config.workerCount()
-                    + " authenticated worker process(es). Token is intentionally not logged.");
+                    + server.address().getPort() + " transport=" + (server.tlsEnabled() ? "tls" : "loopback-plain")
+                    + "; waiting for up to " + config.workerCount() + " authenticated worker process(es). Token is intentionally not logged.");
             while (sessions.size() < config.workerCount()) {
                 try {
                     RemoteWorkerSession session = server.accept(config.distributed().registrationTimeout());
-                    if (sessions.stream().anyMatch(existing -> existing.registration().workerId()
-                            .equals(session.registration().workerId()))) {
+                    if (sessions.stream().anyMatch(existing -> existing.registration().workerId().equals(session.registration().workerId()))) {
                         server.disconnected(session);
                         continue;
                     }
@@ -68,17 +60,13 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                     log.accept("ScenarioMesh remote preflight registered " + session.registration().workerId()
                             + " agent=" + session.registration().metadata().getOrDefault("agentId", "unknown")
                             + " java=" + session.registration().javaFeature());
-                } catch (SocketTimeoutException timeout) {
-                    break;
-                }
+                } catch (SocketTimeoutException timeout) { break; }
             }
-
             if (sessions.size() < config.minimumReadyWorkers()) {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + config.workerCount()
                         + " remote workers registered; minimum required is " + config.minimumReadyWorkers());
             }
-            verifyEveryWorkerCoverage(
-                    sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
+            verifyEveryWorkerCoverage(sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
             log.accept("ScenarioMesh remote preflight proved " + sessions.size() + " authenticated worker(s); each can execute adapters="
                     + adapters + ", engines=" + engines + ".");
             return new PreparedRemoteWorkers(server, directory, sessions);
@@ -105,9 +93,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         }
     }
 
-    public int workerCount() {
-        return sessions.size();
-    }
+    public int workerCount() { return sessions.size(); }
 
     synchronized PreparedState transfer() {
         if (transferred) throw new IllegalStateException("Prepared remote workers were already transferred");
@@ -115,8 +101,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         return new PreparedState(server, directory, List.copyOf(sessions));
     }
 
-    @Override
-    public synchronized void close() {
+    @Override public synchronized void close() {
         if (transferred) return;
         for (RemoteWorkerSession session : List.copyOf(sessions)) {
             try { server.disconnected(session); } catch (Exception ignored) { }
@@ -125,11 +110,8 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         try { server.close(); } catch (Exception ignored) { }
     }
 
-    record PreparedState(RemoteWorkerServer server,
-                         RemoteWorkerDirectory directory,
+    record PreparedState(RemoteWorkerServer server, RemoteWorkerDirectory directory,
                          List<RemoteWorkerSession> sessions) {
-        PreparedState {
-            sessions = List.copyOf(sessions);
-        }
+        PreparedState { sessions = List.copyOf(sessions); }
     }
 }
