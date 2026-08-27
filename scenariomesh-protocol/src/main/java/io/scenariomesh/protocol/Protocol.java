@@ -5,10 +5,11 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 public final class Protocol {
-    /** Version 6 adds distributed worker registration and authoritative work-lease identity. */
-    public static final int VERSION = 6;
+    /** Version 7 adds executable adapter/engine inventory to worker registration. */
+    public static final int VERSION = 7;
 
     private Protocol() {}
 
@@ -21,7 +22,9 @@ public final class Protocol {
             int javaFeature,
             String osName,
             String architecture,
-            String runtimeFingerprint) {
+            String runtimeFingerprint,
+            Set<String> adapterIds,
+            Set<String> engineIds) {
         public WorkerCapabilities {
             agentId = require(agentId, "agentId");
             if (slots < 1) throw new IllegalArgumentException("worker slots must be positive");
@@ -29,6 +32,20 @@ public final class Protocol {
             osName = require(osName, "osName");
             architecture = require(architecture, "architecture");
             runtimeFingerprint = require(runtimeFingerprint, "runtimeFingerprint");
+            adapterIds = Set.copyOf(adapterIds == null ? Set.of() : adapterIds);
+            engineIds = Set.copyOf(engineIds == null ? Set.of() : engineIds);
+            if (adapterIds.stream().anyMatch(id -> id == null || id.isBlank())) {
+                throw new IllegalArgumentException("adapterIds must not contain blank ids");
+            }
+            if (engineIds.stream().anyMatch(id -> id == null || id.isBlank())) {
+                throw new IllegalArgumentException("engineIds must not contain blank ids");
+            }
+        }
+
+        /** Source-compatibility constructor for callers that do not yet publish execution inventory. */
+        public WorkerCapabilities(String agentId, int slots, int javaFeature, String osName,
+                                  String architecture, String runtimeFingerprint) {
+            this(agentId, slots, javaFeature, osName, architecture, runtimeFingerprint, Set.of(), Set.of());
         }
     }
 
