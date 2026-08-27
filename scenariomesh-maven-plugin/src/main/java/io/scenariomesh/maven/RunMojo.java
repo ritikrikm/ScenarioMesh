@@ -15,10 +15,12 @@ import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
+import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.toolchain.ToolchainManager;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -34,6 +36,8 @@ public final class RunMojo extends AbstractMojo {
     private MavenSession session;
     @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true)
     private List<Artifact> pluginArtifacts;
+    @Component
+    private ToolchainManager toolchainManager;
 
     @Parameter
     private String invocationId;
@@ -70,9 +74,6 @@ public final class RunMojo extends AbstractMojo {
             getLog().info("ScenarioMesh: takeover enabled after runtime ownership preflight. "
                     + PreflightState.reason(project));
         } else {
-            // The normal extension-driven lifecycle always injects preflight first. Missing state is
-            // retained only for an explicit scenariomesh:run invocation, where the user directly
-            // requested this goal and there is no native executor suppression to undo.
             getLog().debug("ScenarioMesh preflight state is absent; proceeding as an explicit/direct ScenarioMesh run.");
         }
 
@@ -94,8 +95,11 @@ public final class RunMojo extends AbstractMojo {
                     includeClassNameRegexes == null ? List.of() : includeClassNameRegexes,
                     excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
 
+            Path testJava = new TestJvmResolver().resolve(
+                    project, session, toolchainManager, takeoverExecutor, null);
+
             if (config.showConfiguration()) {
-                logConfiguration(config, resolution);
+                logConfiguration(config, resolution, testJava);
             }
 
             RunRequest request = new RunRequest(
@@ -106,11 +110,9 @@ public final class RunMojo extends AbstractMojo {
                     config,
                     selection,
                     executorJvmArgs == null ? List.of() : executorJvmArgs,
-                    executorSystemProperties == null ? Map.of() : executorSystemProperties);
+                    executorSystemProperties == null ? Map.of() : executorSystemProperties,
+                    testJava);
 
-            // Once ScenarioMesh owns this invocation, stale top-level aliases must not
-            // survive a new run that crashes before report publication. Historical
-            // runs/<runId> artifacts are retained by the reporting layer.
             new LatestReportCleaner().clear(config.reportingDirectory());
 
             RunOutcome outcome = new ScenarioMeshRunner().run(request);
@@ -160,13 +162,14 @@ public final class RunMojo extends AbstractMojo {
         }
     }
 
-    private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution) {
+    private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution, Path testJava) {
         getLog().info("---------------- ScenarioMesh runtime ----------------");
         getLog().info("ScenarioMesh version       : 0.1.0-SNAPSHOT");
         getLog().info("Project                    : " + project.getArtifactId());
         getLog().info("Requested Maven goals      : " + String.join(" ", session.getRequest().getGoals()));
         getLog().info("Maven executor takeover    : " + takeoverExecutor);
         getLog().info("Execution phase ownership  : " + (deferFailureUntilVerify ? "integration-test/verify" : "test"));
+        getLog().info("Test JVM                   : " + testJava);
         getLog().info("Adapter intent             : " + config.executionAdapter());
         getLog().info("Adapter mismatch policy    : " + config.adapterMismatchPolicy().externalValue());
         getLog().info("Infrastructure retries     : " + config.infrastructureRetries()
@@ -183,26 +186,18 @@ public final class RunMojo extends AbstractMojo {
         getLog().info("------------------------------------------------------");
     }
 
-    private String enabled(boolean value) {
-        return value ? "enabled" : "disabled";
-    }
+    private String enabled(boolean value) { return value ? "enabled" : "disabled"; }
 
     private boolean effectiveSuccess(RunOutcome outcome) {
-        if (outcome.successful()) {
-            return true;
-        }
-        if (!testFailureIgnore) {
-            return false;
-        }
+        if (outcome.successful()) return true;
+        if (!testFailureIgnore) return false;
         return outcome.results().stream()
                 .allMatch(result -> result.buildSuccessful() || result.status() == ResultStatus.TEST_FAILURE);
     }
 
     private Map<String, String> stringProperties(java.util.Properties properties) {
         Map<String, String> values = new LinkedHashMap<>();
-        if (properties != null) {
-            properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        }
+        if (properties != null) properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
         return values;
     }
 }
