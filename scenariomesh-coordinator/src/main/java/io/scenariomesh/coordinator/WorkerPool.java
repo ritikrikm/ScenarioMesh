@@ -416,7 +416,8 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private void destroyProcessTree(Process process, boolean force) {
-        List<ProcessHandle> descendants = process.toHandle().descendants().toList();
+        ProcessHandle root = process.toHandle();
+        List<ProcessHandle> descendants = root.descendants().toList();
         for (int index = descendants.size() - 1; index >= 0; index--) {
             ProcessHandle descendant = descendants.get(index);
             if (descendant.isAlive()) {
@@ -425,6 +426,27 @@ final class WorkerPool implements AutoCloseable {
         }
         if (process.isAlive()) {
             if (force) process.destroyForcibly(); else process.destroy();
+        }
+        if (force) awaitProcessTreeTermination(root, descendants, request.config().workerShutdownTimeout());
+    }
+
+    private void awaitProcessTreeTermination(ProcessHandle root, List<ProcessHandle> descendants, Duration timeout) {
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
+        List<ProcessHandle> handles = new ArrayList<>(descendants.size() + 1);
+        handles.addAll(descendants);
+        handles.add(root);
+        for (ProcessHandle handle : handles) {
+            if (!handle.isAlive()) continue;
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) return;
+            try {
+                handle.onExit().get(remainingNanos, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception ignored) {
+                return;
+            }
         }
     }
 
