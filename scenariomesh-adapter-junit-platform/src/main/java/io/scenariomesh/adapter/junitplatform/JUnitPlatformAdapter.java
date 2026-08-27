@@ -9,9 +9,9 @@ import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
 import io.scenariomesh.core.SelectedTestClasses;
 import org.junit.platform.engine.DiscoverySelector;
+import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.TestSource;
-import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestTag;
 import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.launcher.EngineFilter;
@@ -79,11 +79,19 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             builder.selectors(selectClasspathRoots(new HashSet<>(context.testRoots())));
         } else {
             List<String> selectedClasses = SelectedTestClasses.scan(context.testRoots(), context.discoverySelection());
-            if (selectedClasses.isEmpty()) return List.of();
-            List<DiscoverySelector> selectors = selectedClasses.stream()
-                    .map(className -> (DiscoverySelector) selectClass(className))
-                    .toList();
-            builder.selectors(selectors);
+            if (selectedClasses.isEmpty()) {
+                // JUnit Platform engines are not necessarily class-driven. Cucumber,
+                // for example, can discover feature resources directly from classpath
+                // roots even when Maven's class-name selection resolves to no class.
+                // Unknown engines are still rejected by runtime backend ownership
+                // preflight, so root discovery here does not grant takeover by itself.
+                builder.selectors(selectClasspathRoots(new HashSet<>(context.testRoots())));
+            } else {
+                List<DiscoverySelector> selectors = selectedClasses.stream()
+                        .map(className -> (DiscoverySelector) selectClass(className))
+                        .toList();
+                builder.selectors(selectors);
+            }
         }
 
         Launcher launcher = LauncherFactory.create();
@@ -158,9 +166,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     }
 
     private ExecutionScope executionScope(TestPlan plan, TestIdentifier leaf) {
-        // A class/suite ClassSource is the smallest generally safe Jupiter/Suite
-        // lifecycle boundary: @BeforeAll/@AfterAll, PER_CLASS state, extensions,
-        // and method ordering all stay inside one Launcher execution.
         TestIdentifier current = leaf;
         while (true) {
             Optional<TestIdentifier> parent = plan.getParent(current);
@@ -171,8 +176,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             }
         }
 
-        // Cucumber feature/scenario nodes normally have no ClassSource. Its global
-        // hooks are run-scoped, so use the TestPlan root for direct Cucumber runs.
+        // Resource-driven engines such as Cucumber normally have no ClassSource.
+        // Their global lifecycle belongs to the engine/run scope.
         TestIdentifier root = rootOf(plan, leaf);
         return new ExecutionScope(root.getUniqueId(), root.getUniqueId(), "engine-run");
     }
