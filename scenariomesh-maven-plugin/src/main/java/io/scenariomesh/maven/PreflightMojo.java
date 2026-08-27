@@ -54,6 +54,11 @@ public final class PreflightMojo extends AbstractMojo {
         }
 
         try {
+            if (new ModulePathCompatibility().nativeExecutorUsesModulePath(project, session, normalizedExecutor())) {
+                passThrough("JPMS module-path execution is active; ScenarioMesh currently launches target tests on the classpath and will not change native module semantics");
+                return;
+            }
+
             List<Path> runtimeClasspath = new RuntimeClasspathResolver().resolve(project, pluginArtifacts);
             List<Path> testRoots = new TestRootResolver().resolve(project);
             Map<String, String> properties = effectiveProperties();
