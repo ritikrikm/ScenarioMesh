@@ -28,6 +28,11 @@ public record RemoteWorkerRegistration(
         labels = Map.copyOf(labels == null ? Map.of() : labels);
     }
 
+    /** Compatibility/readability alias for non-capability registration attributes. */
+    public Map<String, String> metadata() {
+        return labels;
+    }
+
     public boolean canRun(String requiredFingerprint, String adapterId, String engineId) {
         if (!runtimeFingerprint.equals(requiredFingerprint)) return false;
         if (adapterId != null && !adapterId.isBlank()
