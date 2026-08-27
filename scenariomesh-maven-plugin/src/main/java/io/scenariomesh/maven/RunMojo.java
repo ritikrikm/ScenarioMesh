@@ -3,6 +3,7 @@ package io.scenariomesh.maven;
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ConfigResolver.ConfigResolution;
 import io.scenariomesh.config.ScenarioMeshConfig;
+import io.scenariomesh.coordinator.PreparedRemoteWorkers;
 import io.scenariomesh.coordinator.RunOutcome;
 import io.scenariomesh.coordinator.RunRequest;
 import io.scenariomesh.coordinator.ScenarioMeshRunner;
@@ -61,12 +62,14 @@ public final class RunMojo extends AbstractMojo {
     public void execute() throws MojoExecutionException, MojoFailureException {
         if ("true".equalsIgnoreCase(session.getUserProperties().getProperty("skipTests"))
                 || "true".equalsIgnoreCase(session.getUserProperties().getProperty("maven.test.skip"))) {
+            RemotePreflightState.clear(getPluginContext());
             getLog().info("ScenarioMesh: tests were explicitly skipped by the Maven command.");
             return;
         }
 
         PreflightState.State preflight = PreflightState.read(project);
         if (preflight == PreflightState.State.PASS_THROUGH) {
+            RemotePreflightState.clear(getPluginContext());
             getLog().info("ScenarioMesh: runtime preflight selected native Maven pass-through; ScenarioMesh run is inactive. "
                     + PreflightState.reason(project));
             return;
@@ -79,6 +82,7 @@ public final class RunMojo extends AbstractMojo {
         }
 
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
+        PreparedRemoteWorkers preparedRemoteWorkers = null;
         try {
             Map<String, String> userProperties = stringProperties(session.getUserProperties());
             Map<String, String> configProperties = stringProperties(session.getSystemProperties());
@@ -88,6 +92,7 @@ public final class RunMojo extends AbstractMojo {
                     projectDirectory, buildDirectory, configProperties, System.getenv());
             ScenarioMeshConfig config = resolution.config();
             if (!config.enabled()) {
+                RemotePreflightState.clear(getPluginContext());
                 getLog().info("ScenarioMesh disabled; normal Maven test execution remains active.");
                 return;
             }
@@ -114,9 +119,19 @@ public final class RunMojo extends AbstractMojo {
                     executorSystemProperties == null ? Map.of() : executorSystemProperties,
                     testJava);
 
+            if (config.distributed().remote()) {
+                preparedRemoteWorkers = RemotePreflightState.take(getPluginContext());
+                if (preflight == PreflightState.State.OWNED && preparedRemoteWorkers == null) {
+                    throw new IllegalStateException("Remote Maven takeover was marked owned without the exact preflight-authenticated worker sessions");
+                }
+            } else {
+                RemotePreflightState.clear(getPluginContext());
+            }
+
             new LatestReportCleaner().clear(config.reportingDirectory());
 
-            RunOutcome outcome = new ScenarioMeshRunner().run(request);
+            RunOutcome outcome = new ScenarioMeshRunner().run(request, preparedRemoteWorkers);
+            preparedRemoteWorkers = null;
             ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
             ReportExporters.export(outcome, config.reportingDirectory(), reports);
             long passed = outcome.results().stream().filter(result -> result.passed()).count();
@@ -161,6 +176,9 @@ public final class RunMojo extends AbstractMojo {
                 }
             }
             throw new MojoExecutionException("ScenarioMesh infrastructure failure: " + exception.getMessage(), exception);
+        } finally {
+            if (preparedRemoteWorkers != null) preparedRemoteWorkers.close();
+            RemotePreflightState.clear(getPluginContext());
         }
     }
 
