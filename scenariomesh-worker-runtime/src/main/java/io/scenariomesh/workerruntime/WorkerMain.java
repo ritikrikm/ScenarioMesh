@@ -41,6 +41,8 @@ public final class WorkerMain {
 
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
+        Map<String, String> environment = System.getenv();
+        String token = RemoteWorkerTransport.authenticationToken(environment);
         ObjectMapper mapper = JsonCodec.create();
         AdapterRegistry adapters = new AdapterRegistry();
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
@@ -49,11 +51,10 @@ public final class WorkerMain {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
 
-        try (Socket socket = new Socket(InetAddress.getByName(parsed.host), parsed.port);
+        try (Socket socket = RemoteWorkerTransport.connect(parsed.host, parsed.port, environment);
              BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
-            write(mapper, writer, Envelope.hello(parsed.workerId, parsed.token,
-                    capabilities(adapters, classLoader)));
+            write(mapper, writer, Envelope.hello(parsed.workerId, token, capabilities(adapters, classLoader)));
             for (String line; (line = reader.readLine()) != null;) {
                 Envelope envelope = mapper.readValue(line, Envelope.class);
                 validate(envelope);
@@ -94,29 +95,22 @@ public final class WorkerMain {
         String architecture = System.getProperty("os.arch", "unknown");
         int javaFeature = Runtime.version().feature();
         Set<String> adapterIds = adapters.available(classLoader).stream()
-                .map(adapter -> adapter.id())
-                .collect(Collectors.toUnmodifiableSet());
+                .map(adapter -> adapter.id()).collect(Collectors.toUnmodifiableSet());
         Set<String> engineIds = ServiceLoader.load(TestEngine.class, classLoader).stream()
-                .map(ServiceLoader.Provider::get)
-                .map(TestEngine::getId)
-                .filter(id -> id != null && !id.isBlank())
-                .collect(Collectors.toUnmodifiableSet());
+                .map(ServiceLoader.Provider::get).map(TestEngine::getId)
+                .filter(id -> id != null && !id.isBlank()).collect(Collectors.toUnmodifiableSet());
         String fingerprintInput = String.join("\n",
-                Integer.toString(Protocol.VERSION),
-                Integer.toString(javaFeature),
-                System.getProperty("java.vendor", "unknown"),
-                System.getProperty("java.version", "unknown"),
-                os,
-                architecture,
-                System.getProperty("java.class.path", ""));
+                Integer.toString(Protocol.VERSION), Integer.toString(javaFeature),
+                System.getProperty("java.vendor", "unknown"), System.getProperty("java.version", "unknown"),
+                os, architecture, System.getProperty("java.class.path", ""));
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
                 HexFormat.of().formatHex(digest), adapterIds, engineIds);
     }
 
-    private static WorkUnitExecution executeWorkUnit(
-            AdapterRegistry adapters, List<ScenarioTask> tasks, ExecutionContext context) {
+    private static WorkUnitExecution executeWorkUnit(AdapterRegistry adapters, List<ScenarioTask> tasks,
+                                                     ExecutionContext context) {
         String adapterId = tasks.get(0).adapterId();
         for (ScenarioTask task : tasks) {
             if (!adapterId.equals(task.adapterId())) {
@@ -125,8 +119,7 @@ public final class WorkerMain {
             }
         }
         try {
-            return Objects.requireNonNull(
-                    adapters.required(adapterId).executeWorkUnit(tasks, context),
+            return Objects.requireNonNull(adapters.required(adapterId).executeWorkUnit(tasks, context),
                     "Adapter returned null work-unit execution");
         } catch (Exception exception) {
             return new WorkUnitExecution(tasks, failures(tasks, context,
@@ -134,9 +127,8 @@ public final class WorkerMain {
         }
     }
 
-    private static List<ExecutionResult> runCleanupHooks(
-            List<WorkerTaskCleanup> hooks, List<ScenarioTask> tasks,
-            ExecutionContext context, List<ExecutionResult> results) {
+    private static List<ExecutionResult> runCleanupHooks(List<WorkerTaskCleanup> hooks, List<ScenarioTask> tasks,
+                                                         ExecutionContext context, List<ExecutionResult> results) {
         Map<String, ExecutionResult> byId = new HashMap<>();
         for (ExecutionResult result : results) byId.put(result.scenarioId().value(), result);
         List<ExecutionResult> cleaned = new ArrayList<>(tasks.size());
@@ -149,14 +141,11 @@ public final class WorkerMain {
         return List.copyOf(cleaned);
     }
 
-    static ExecutionResult runCleanupHooks(List<WorkerTaskCleanup> hooks,
-                                           ScenarioTask task,
-                                           ExecutionContext context,
-                                           ExecutionResult result) {
+    static ExecutionResult runCleanupHooks(List<WorkerTaskCleanup> hooks, ScenarioTask task,
+                                           ExecutionContext context, ExecutionResult result) {
         for (WorkerTaskCleanup hook : hooks) {
-            try {
-                hook.afterTask(task, context, result);
-            } catch (Exception exception) {
+            try { hook.afterTask(task, context, result); }
+            catch (Exception exception) {
                 Instant finished = Instant.now();
                 return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                         Duration.between(result.startedAt(), finished), context.workerId(), context.attempt(),
@@ -172,8 +161,7 @@ public final class WorkerMain {
         return tasks.stream().map(task -> failure(task, context, message, type)).toList();
     }
 
-    private static ExecutionResult failure(ScenarioTask task, ExecutionContext context,
-                                           String message, String type) {
+    private static ExecutionResult failure(ScenarioTask task, ExecutionContext context, String message, String type) {
         Instant now = Instant.now();
         return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                 Duration.ZERO, context.workerId(), context.attempt(), now, now, message, type);
@@ -181,13 +169,9 @@ public final class WorkerMain {
 
     private static String cleanupFailureMessage(WorkerTaskCleanup hook, Exception cleanupFailure,
                                                 ExecutionResult originalResult) {
-        StringBuilder message = new StringBuilder()
-                .append("Worker cleanup hook ")
-                .append(hook.getClass().getName())
-                .append(" failed: ")
-                .append(safeMessage(cleanupFailure))
-                .append(". Original task outcome: status=")
-                .append(originalResult.status());
+        StringBuilder message = new StringBuilder().append("Worker cleanup hook ")
+                .append(hook.getClass().getName()).append(" failed: ").append(safeMessage(cleanupFailure))
+                .append(". Original task outcome: status=").append(originalResult.status());
         if (originalResult.failureType() != null && !originalResult.failureType().isBlank()) {
             message.append(", failureType=").append(originalResult.failureType());
         }
@@ -221,9 +205,9 @@ public final class WorkerMain {
         }
     }
 
-    private record Arguments(String host, int port, String token, String workerId) {
+    private record Arguments(String host, int port, String workerId) {
         private static Arguments parse(String[] args) {
-            String host = null, token = null, workerId = null;
+            String host = null, workerId = null;
             Integer port = null;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
@@ -232,15 +216,14 @@ public final class WorkerMain {
                 switch (key) {
                     case "--host" -> host = value;
                     case "--port" -> port = Integer.parseInt(value);
-                    case "--token" -> token = value;
                     case "--worker-id" -> workerId = value;
                     default -> throw new IllegalArgumentException("Unknown worker argument: " + key);
                 }
             }
-            if (host == null || port == null || token == null || workerId == null) {
-                throw new IllegalArgumentException("--host, --port, --token and --worker-id are required");
+            if (host == null || port == null || workerId == null) {
+                throw new IllegalArgumentException("--host, --port and --worker-id are required; authentication is provided through environment variables");
             }
-            return new Arguments(host, port, token, workerId);
+            return new Arguments(host, port, workerId);
         }
     }
 }
