@@ -6,6 +6,7 @@
   <artifactId>scenariomesh-cli</artifactId>
   <dependencies>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-config</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-protocol</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
   </dependencies>
   <build>
