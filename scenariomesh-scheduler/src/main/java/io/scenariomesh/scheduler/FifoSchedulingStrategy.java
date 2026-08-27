@@ -13,11 +13,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
 /**
- * Backward-compatible scheduler name with product scheduling semantics.
+ * Backward-compatible scheduler name with selectable product scheduling semantics.
  *
- * <p>With no execution history, ordering is exactly FIFO. When tasks carry an
- * {@code estimatedDurationMillis} learned from prior runs, longer tasks are started first
- * (LPT) to reduce tail latency. Lifecycle-scope affinity is always enforced.</p>
+ * <p>By default, when tasks carry an {@code estimatedDurationMillis} learned from prior runs,
+ * longer tasks are started first (LPT) to reduce tail latency. With history awareness disabled,
+ * ordering is strict FIFO. Lifecycle-scope affinity is always enforced.</p>
  */
 public final class FifoSchedulingStrategy implements SchedulingStrategy {
     private static final String EXECUTION_SCOPE_ID = "executionScopeId";
@@ -26,7 +26,16 @@ public final class FifoSchedulingStrategy implements SchedulingStrategy {
     private final Object lock = new Object();
     private final List<Entry> queue = new ArrayList<>();
     private final Map<String, Long> laneByScope = new ConcurrentHashMap<>();
+    private final boolean historyAware;
     private long sequence;
+
+    public FifoSchedulingStrategy() {
+        this(true);
+    }
+
+    public FifoSchedulingStrategy(boolean historyAware) {
+        this.historyAware = historyAware;
+    }
 
     @Override
     public void load(Collection<ScenarioTask> tasks) {
@@ -69,11 +78,14 @@ public final class FifoSchedulingStrategy implements SchedulingStrategy {
     }
 
     private void order() {
-        queue.sort(Comparator.comparingLong(Entry::estimatedMillis).reversed()
-                .thenComparingLong(Entry::sequence));
+        Comparator<Entry> comparator = historyAware
+                ? Comparator.comparingLong(Entry::estimatedMillis).reversed().thenComparingLong(Entry::sequence)
+                : Comparator.comparingLong(Entry::sequence);
+        queue.sort(comparator);
     }
 
     private long estimate(ScenarioTask task) {
+        if (!historyAware) return 0L;
         String value = task.metadata().get(ESTIMATED_DURATION_MILLIS);
         if (value == null || value.isBlank()) return 0L;
         try { return Math.max(0L, Long.parseLong(value)); }
