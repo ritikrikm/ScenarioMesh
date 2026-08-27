@@ -36,7 +36,8 @@ jobs:
         working-directory: examples/junit5-jpms-example
         run: |
           mvn -B clean test -Dtest.module.path=true | tee jpms-native.log
-          grep -Fq 'ScenarioMesh preflight: native Maven pass-through - JPMS module-path execution is active' jpms-native.log
+          grep -Fq 'ScenarioMesh: pass-through for junit5-jpms-example' jpms-native.log
+          grep -Fq '<useModulePath>' jpms-native.log
           test ! -f target/scenariomesh/summary.json
           test -f target/surefire-reports/TEST-example.ModularTest.xml
       - name: Modular project with useModulePath false can be accelerated
