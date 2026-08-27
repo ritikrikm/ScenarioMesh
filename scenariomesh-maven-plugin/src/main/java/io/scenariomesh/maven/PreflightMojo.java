@@ -1,6 +1,7 @@
 package io.scenariomesh.maven;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
 import org.apache.maven.artifact.Artifact;
@@ -54,6 +55,11 @@ public final class PreflightMojo extends AbstractMojo {
         }
 
         try {
+            if (remoteDistributedOwnershipRequested()) {
+                passThrough("remote distributed execution is configured, but transparent takeover cannot yet prove the registered remote worker set before native Maven suppression; use native Maven or an explicit/direct ScenarioMesh remote run until two-phase distributed ownership is available");
+                return;
+            }
+
             if (new ModulePathCompatibility().nativeExecutorUsesModulePath(project, session, normalizedExecutor())) {
                 passThrough("JPMS module-path execution is active; ScenarioMesh currently launches target tests on the classpath and will not change native module semantics");
                 return;
@@ -87,6 +93,14 @@ public final class PreflightMojo extends AbstractMojo {
         } catch (Exception | LinkageError exception) {
             passThrough("preflight could not prove complete runtime ownership: " + message(exception));
         }
+    }
+
+    private boolean remoteDistributedOwnershipRequested() throws Exception {
+        Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
+        Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
+        return new ConfigResolver().resolveDetailed(
+                projectDirectory, buildDirectory, effectiveProperties(), System.getenv())
+                .config().distributed().remote();
     }
 
     private PreflightProbeMain.ProbeResult probe(Path javaExecutable,
