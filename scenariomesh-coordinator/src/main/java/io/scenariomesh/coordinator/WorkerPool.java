@@ -3,6 +3,7 @@ package io.scenariomesh.coordinator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.coordinator.distributed.DistributedWorkAuthority;
 import io.scenariomesh.coordinator.distributed.LeaseRegistry;
+import io.scenariomesh.coordinator.distributed.LeasedResponseReader;
 import io.scenariomesh.coordinator.distributed.RemoteWorkerRegistration;
 import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator;
 import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator.CapabilityMismatchException;
@@ -66,6 +67,7 @@ final class WorkerPool implements AutoCloseable {
     private final Object replacementLock = new Object();
     private final RunLogger logger;
     private final DistributedWorkAuthority workAuthority;
+    private final LeasedResponseReader responseReader;
 
     WorkerPool(RunRequest request, Path dir, RunLogger logger) throws Exception {
         this.request = request;
@@ -73,6 +75,7 @@ final class WorkerPool implements AutoCloseable {
         this.logger = logger;
         this.workAuthority = new DistributedWorkAuthority(
                 new LeaseRegistry(request.config().workerTaskTimeout().multipliedBy(2)));
+        this.responseReader = new LeasedResponseReader(workAuthority);
         this.server = new ServerSocket();
         server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
         server.setSoTimeout(Math.toIntExact(request.config().workerStartupTimeout().toMillis()));
@@ -133,7 +136,8 @@ final class WorkerPool implements AutoCloseable {
                 Envelope run = workAuthority.issueRun(
                         representative.id().value(), connection.workerId, attempt, unit.tasks(), started);
                 connection.write(run);
-                Envelope response = connection.read(request.config().workerTaskTimeout());
+                Envelope response = responseReader.readTerminal(
+                        connection.workerId, request.config().workerTaskTimeout(), connection::read);
                 if (response == null) {
                     unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
                             "Worker disconnected before returning a work-unit result");
