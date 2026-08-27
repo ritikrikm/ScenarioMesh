@@ -6,6 +6,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
+import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
 import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
@@ -25,6 +26,7 @@ import org.junit.platform.launcher.core.LauncherFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -42,8 +44,9 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String META_SCOPE_ID = "executionScopeId";
     public static final String META_SCOPE_SELECTOR = "executionScopeSelector";
     public static final String META_SCOPE_KIND = "executionScopeKind";
-
-    private final Map<String, Map<String, CachedOutcome>> scopedResults = new HashMap<>();
+    public static final String META_RUNTIME_MATERIALIZER = "runtimeMaterializer";
+    public static final String META_PARENT_MATERIALIZER_ID = "parentMaterializerId";
+    public static final String META_PARENT_MATERIALIZER_SELECTOR = "parentMaterializerSelector";
 
     @Override public String id() { return ID; }
     @Override public String framework() { return "junit-platform"; }
@@ -61,7 +64,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     @Override
     public List<ScenarioTask> discover(AdapterContext context) {
         if (context.testRoots().isEmpty()) return List.of();
-
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
                 .selectors(selectClasspathRoots(new HashSet<>(context.testRoots())))
                 .filters(EngineFilter.excludeEngines("junit-vintage"));
@@ -70,105 +72,140 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             builder.filters(new MavenClassSelectionPostFilter(context.discoverySelection()));
         }
 
-        Launcher launcher = LauncherFactory.create();
-        TestPlan plan = launcher.discover(builder.build());
-        List<TestIdentifier> discoveredLeaves = new ArrayList<>();
+        TestPlan plan = LauncherFactory.create().discover(builder.build());
+        List<TestIdentifier> candidates = new ArrayList<>();
         for (TestIdentifier root : plan.getRoots()) {
             for (TestIdentifier identifier : plan.getDescendants(root)) {
-                if (identifier.isTest() && plan.getChildren(identifier).isEmpty()) discoveredLeaves.add(identifier);
+                if ((identifier.isTest() && plan.getChildren(identifier).isEmpty()) || isRuntimeMaterializer(identifier)) {
+                    candidates.add(identifier);
+                }
             }
         }
 
         List<ScenarioTask> tasks = new ArrayList<>();
-        for (TestIdentifier identifier : discoveredLeaves) {
-            String uniqueId = identifier.getUniqueId();
-            Set<String> tags = new HashSet<>();
-            for (TestTag tag : identifier.getTags()) tags.add(tag.getName());
-            String framework = uniqueId.contains("[engine:cucumber]")
-                    ? "cucumber-junit-platform"
-                    : "junit5";
+        for (TestIdentifier identifier : candidates) {
             ExecutionScope scope = executionScope(plan, identifier);
-            Map<String, String> metadata = new LinkedHashMap<>();
-            metadata.put("uniqueId", uniqueId);
-            metadata.put(META_SCOPE_ID, scope.id());
-            metadata.put(META_SCOPE_SELECTOR, scope.selector());
-            metadata.put(META_SCOPE_KIND, scope.kind());
-            tasks.add(new ScenarioTask(
-                    ScenarioIds.from(ID, uniqueId), identifier.getDisplayName(), ID, framework,
-                    null, null, uniqueId, tags, metadata));
+            tasks.add(taskFor(identifier, scope, null));
         }
         return List.copyOf(tasks);
     }
 
     @Override
     public ExecutionResult execute(ScenarioTask task, ExecutionContext context) {
-        return executeBatch(List.of(task), context).get(0);
+        WorkUnitExecution execution = executeWorkUnit(List.of(task), context);
+        return execution.results().get(0);
     }
 
     @Override
     public List<ExecutionResult> executeBatch(List<ScenarioTask> tasks, ExecutionContext context) {
-        if (tasks == null || tasks.isEmpty()) {
-            throw new IllegalArgumentException("JUnitPlatformAdapter requires at least one task");
+        return executeWorkUnit(tasks, context).results();
+    }
+
+    @Override
+    public WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) {
+        validateScope(tasks);
+        ScopeExecution execution = executeScope(tasks);
+        List<ScenarioTask> concreteTasks = new ArrayList<>();
+        List<ExecutionResult> concreteResults = new ArrayList<>();
+
+        for (ScenarioTask task : tasks) {
+            if (!isMaterializer(task)) {
+                concreteTasks.add(task);
+                concreteResults.add(resultFor(task, execution.outcomes().get(task.selector()), context));
+                continue;
+            }
+
+            List<TestIdentifier> children = execution.identifiers().values().stream()
+                    .filter(TestIdentifier::isTest)
+                    .filter(identifier -> identifier.getUniqueId().startsWith(task.selector() + "/"))
+                    .filter(identifier -> execution.outcomes().containsKey(identifier.getUniqueId()))
+                    .sorted(Comparator.comparing(TestIdentifier::getUniqueId))
+                    .toList();
+            if (children.isEmpty()) {
+                concreteTasks.add(task);
+                concreteResults.add(resultFor(task, null, context));
+                continue;
+            }
+            for (TestIdentifier child : children) {
+                ScenarioTask materialized = materializedTask(task, child);
+                concreteTasks.add(materialized);
+                concreteResults.add(resultFor(materialized, execution.outcomes().get(child.getUniqueId()), context));
+            }
         }
+        return new WorkUnitExecution(concreteTasks, concreteResults);
+    }
+
+    private void validateScope(List<ScenarioTask> tasks) {
+        if (tasks == null || tasks.isEmpty()) throw new IllegalArgumentException("JUnitPlatformAdapter requires at least one task");
         String scopeId = scopeId(tasks.get(0));
         String scopeSelector = scopeSelector(tasks.get(0));
         for (ScenarioTask task : tasks) {
             if (!scopeId.equals(scopeId(task)) || !scopeSelector.equals(scopeSelector(task))) {
-                throw new IllegalArgumentException(
-                        "JUnit Platform batch mixes lifecycle scopes; expected scope=" + scopeId
-                                + " but received task " + task.id().value() + " scope=" + scopeId(task));
+                throw new IllegalArgumentException("JUnit Platform batch mixes lifecycle scopes; expected scope=" + scopeId
+                        + " but received task " + task.id().value() + " scope=" + scopeId(task));
             }
         }
-
-        /*
-         * Re-select every already-discovered leaf in one Launcher request instead
-         * of trying to rediscover the scope from its container/root UniqueId.
-         * Resource-driven engines such as Cucumber do not necessarily reconstruct
-         * their feature selection from an engine-root UniqueId, while a single
-         * multi-selector request still preserves one class/suite/run lifecycle.
-         */
-        Map<String, CachedOutcome> outcomes = scopedResults.computeIfAbsent(
-                scopeId, ignored -> executeScope(tasks));
-        List<ExecutionResult> results = new ArrayList<>(tasks.size());
-        for (ScenarioTask task : tasks) {
-            CachedOutcome outcome = outcomes.get(task.selector());
-            if (outcome == null) {
-                Instant now = Instant.now();
-                results.add(new ExecutionResult(
-                        task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
-                        Duration.ZERO, context.workerId(), context.attempt(), now, now,
-                        "JUnit Platform lifecycle scope '" + scopeSelector
-                                + "' did not produce the discovered leaf " + task.selector(),
-                        "ScopedSelectionFailure"));
-            } else {
-                results.add(outcome.toResult(task, context));
-            }
-        }
-        return List.copyOf(results);
     }
 
-    private String scopeId(ScenarioTask task) {
-        return task.metadata().getOrDefault(META_SCOPE_ID, task.selector());
-    }
-
-    private String scopeSelector(ScenarioTask task) {
-        return task.metadata().getOrDefault(META_SCOPE_SELECTOR, task.selector());
-    }
-
-    private Map<String, CachedOutcome> executeScope(List<ScenarioTask> tasks) {
+    private ScopeExecution executeScope(List<ScenarioTask> tasks) {
         ScopedResultListener listener = new ScopedResultListener();
         List<DiscoverySelector> selectors = tasks.stream()
-                .map(task -> (DiscoverySelector) selectUniqueId(task.selector()))
-                .toList();
+                .map(task -> (DiscoverySelector) selectUniqueId(task.selector())).toList();
         LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectors)
-                .filters(EngineFilter.excludeEngines("junit-vintage"))
-                .build();
+                .selectors(selectors).filters(EngineFilter.excludeEngines("junit-vintage")).build();
         Launcher launcher = LauncherFactory.create();
         launcher.registerTestExecutionListeners(listener);
         launcher.execute(request);
-        return listener.outcomes();
+        return new ScopeExecution(listener.identifiers(), listener.outcomes());
     }
+
+    private ScenarioTask taskFor(TestIdentifier identifier, ExecutionScope scope, ScenarioTask parentMaterializer) {
+        String uniqueId = identifier.getUniqueId();
+        Set<String> tags = new HashSet<>();
+        for (TestTag tag : identifier.getTags()) tags.add(tag.getName());
+        String framework = uniqueId.contains("[engine:cucumber]") ? "cucumber-junit-platform" : "junit5";
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("uniqueId", uniqueId);
+        metadata.put(META_SCOPE_ID, scope.id());
+        metadata.put(META_SCOPE_SELECTOR, scope.selector());
+        metadata.put(META_SCOPE_KIND, scope.kind());
+        if (isRuntimeMaterializer(identifier)) metadata.put(META_RUNTIME_MATERIALIZER, "true");
+        if (parentMaterializer != null) {
+            metadata.put(META_PARENT_MATERIALIZER_ID, parentMaterializer.id().value());
+            metadata.put(META_PARENT_MATERIALIZER_SELECTOR, parentMaterializer.selector());
+        }
+        return new ScenarioTask(ScenarioIds.from(ID, uniqueId), identifier.getDisplayName(), ID, framework,
+                null, null, uniqueId, tags, metadata);
+    }
+
+    private ScenarioTask materializedTask(ScenarioTask parent, TestIdentifier child) {
+        ExecutionScope scope = new ExecutionScope(scopeId(parent), scopeSelector(parent),
+                parent.metadata().getOrDefault(META_SCOPE_KIND, "class-or-suite"));
+        return taskFor(child, scope, parent);
+    }
+
+    private ExecutionResult resultFor(ScenarioTask task, CachedOutcome outcome, ExecutionContext context) {
+        if (outcome == null) {
+            Instant now = Instant.now();
+            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+                    Duration.ZERO, context.workerId(), context.attempt(), now, now,
+                    "JUnit Platform lifecycle scope did not produce the selected/materialized test " + task.selector(),
+                    "ScopedSelectionFailure");
+        }
+        return outcome.toResult(task, context);
+    }
+
+    private static boolean isRuntimeMaterializer(TestIdentifier identifier) {
+        String id = identifier.getUniqueId();
+        return id.contains("[test-template:") || id.contains("[test-factory:");
+    }
+
+    private static boolean isMaterializer(ScenarioTask task) {
+        return Boolean.parseBoolean(task.metadata().getOrDefault(META_RUNTIME_MATERIALIZER, "false"));
+    }
+
+    private String scopeId(ScenarioTask task) { return task.metadata().getOrDefault(META_SCOPE_ID, task.selector()); }
+    private String scopeSelector(ScenarioTask task) { return task.metadata().getOrDefault(META_SCOPE_SELECTOR, task.selector()); }
 
     private ExecutionScope executionScope(TestPlan plan, TestIdentifier leaf) {
         TestIdentifier current = leaf;
@@ -176,9 +213,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             Optional<TestIdentifier> parent = plan.getParent(current);
             if (parent.isEmpty()) break;
             current = parent.get();
-            if (hasClassSource(current)) {
-                return new ExecutionScope(current.getUniqueId(), current.getUniqueId(), "class-or-suite");
-            }
+            if (hasClassSource(current)) return new ExecutionScope(current.getUniqueId(), current.getUniqueId(), "class-or-suite");
         }
         TestIdentifier root = rootOf(plan, leaf);
         return new ExecutionScope(root.getUniqueId(), root.getUniqueId(), "engine-run");
@@ -200,68 +235,51 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     private static final class ScopedResultListener implements TestExecutionListener {
         private final Map<String, Instant> starts = new HashMap<>();
+        private final Map<String, TestIdentifier> identifiers = new LinkedHashMap<>();
         private final Map<String, CachedOutcome> outcomes = new LinkedHashMap<>();
 
-        @Override
-        public void executionStarted(TestIdentifier testIdentifier) {
-            if (testIdentifier.isTest()) starts.put(testIdentifier.getUniqueId(), Instant.now());
+        @Override public void dynamicTestRegistered(TestIdentifier identifier) { identifiers.put(identifier.getUniqueId(), identifier); }
+        @Override public void executionStarted(TestIdentifier identifier) {
+            identifiers.put(identifier.getUniqueId(), identifier);
+            if (identifier.isTest()) starts.put(identifier.getUniqueId(), Instant.now());
         }
-
-        @Override
-        public void executionSkipped(TestIdentifier testIdentifier, String reason) {
-            if (!testIdentifier.isTest()) return;
+        @Override public void executionSkipped(TestIdentifier identifier, String reason) {
+            identifiers.put(identifier.getUniqueId(), identifier);
+            if (!identifier.isTest()) return;
             Instant now = Instant.now();
-            outcomes.put(testIdentifier.getUniqueId(), new CachedOutcome(
-                    ResultStatus.SKIPPED, now, now,
-                    reason == null || reason.isBlank() ? "JUnit Platform skipped the selected test" : reason,
-                    "JUnitSkipped"));
+            outcomes.put(identifier.getUniqueId(), new CachedOutcome(ResultStatus.SKIPPED, now, now,
+                    reason == null || reason.isBlank() ? "JUnit Platform skipped the selected test" : reason, "JUnitSkipped"));
         }
-
-        @Override
-        public void executionFinished(TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
-            if (!testIdentifier.isTest()) return;
+        @Override public void executionFinished(TestIdentifier identifier, TestExecutionResult executionResult) {
+            identifiers.put(identifier.getUniqueId(), identifier);
+            if (!identifier.isTest()) return;
             Instant finished = Instant.now();
-            Instant started = starts.remove(testIdentifier.getUniqueId());
+            Instant started = starts.remove(identifier.getUniqueId());
             if (started == null) started = finished;
             ResultStatus status;
-            String message = null;
-            String type = null;
-            switch (testExecutionResult.getStatus()) {
+            String message = null, type = null;
+            switch (executionResult.getStatus()) {
                 case SUCCESSFUL -> status = ResultStatus.PASSED;
-                case ABORTED -> {
-                    status = ResultStatus.SKIPPED;
-                    message = testExecutionResult.getThrowable()
-                            .map(JUnitPlatformAdapter::safeThrowableMessage)
-                            .orElse("JUnit Platform aborted the selected test");
-                    type = "JUnitAborted";
-                }
-                case FAILED -> {
-                    status = ResultStatus.TEST_FAILURE;
-                    Throwable failure = testExecutionResult.getThrowable().orElse(null);
-                    message = failure == null ? "Test failed" : safeThrowableMessage(failure);
-                    type = failure == null ? null : failure.getClass().getName();
-                }
-                default -> throw new IllegalStateException("Unknown JUnit Platform execution status: " + testExecutionResult.getStatus());
+                case ABORTED -> { status = ResultStatus.SKIPPED; message = executionResult.getThrowable()
+                        .map(JUnitPlatformAdapter::safeThrowableMessage).orElse("JUnit Platform aborted the selected test"); type = "JUnitAborted"; }
+                case FAILED -> { status = ResultStatus.TEST_FAILURE; Throwable failure = executionResult.getThrowable().orElse(null);
+                    message = failure == null ? "Test failed" : safeThrowableMessage(failure); type = failure == null ? null : failure.getClass().getName(); }
+                default -> throw new IllegalStateException("Unknown JUnit Platform execution status: " + executionResult.getStatus());
             }
-            outcomes.put(testIdentifier.getUniqueId(), new CachedOutcome(status, started, finished, message, type));
+            outcomes.put(identifier.getUniqueId(), new CachedOutcome(status, started, finished, message, type));
         }
-
+        Map<String, TestIdentifier> identifiers() { return Map.copyOf(identifiers); }
         Map<String, CachedOutcome> outcomes() { return Map.copyOf(outcomes); }
     }
 
+    private record ScopeExecution(Map<String, TestIdentifier> identifiers, Map<String, CachedOutcome> outcomes) {}
     private record ExecutionScope(String id, String selector, String kind) {}
-
-    private record CachedOutcome(
-            ResultStatus status, Instant started, Instant finished,
-            String failureMessage, String failureType) {
+    private record CachedOutcome(ResultStatus status, Instant started, Instant finished, String failureMessage, String failureType) {
         ExecutionResult toResult(ScenarioTask task, ExecutionContext context) {
-            return new ExecutionResult(
-                    task.id(), task.displayName(), status,
-                    Duration.between(started, finished), context.workerId(), context.attempt(),
-                    started, finished, failureMessage, failureType);
+            return new ExecutionResult(task.id(), task.displayName(), status, Duration.between(started, finished),
+                    context.workerId(), context.attempt(), started, finished, failureMessage, failureType);
         }
     }
-
     private static String safeThrowableMessage(Throwable throwable) {
         String message = throwable.getMessage();
         return message == null || message.isBlank() ? throwable.getClass().getName() : message;
