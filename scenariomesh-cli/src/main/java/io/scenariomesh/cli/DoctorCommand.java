@@ -73,9 +73,11 @@ final class DoctorCommand {
         Process process = new ProcessBuilder(new ArrayList<>(command))
                 .directory(root.toFile()).redirectErrorStream(true).start();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        Thread reader = Thread.ofPlatform().daemon().start(() -> {
+        Thread reader = new Thread(() -> {
             try { process.getInputStream().transferTo(output); } catch (Exception ignored) { }
-        });
+        }, "scenariomesh-doctor-output");
+        reader.setDaemon(true);
+        reader.start();
         if (!process.waitFor(COMMAND_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
             process.destroyForcibly();
             reader.join(1000);
