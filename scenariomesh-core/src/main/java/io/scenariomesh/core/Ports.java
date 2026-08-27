@@ -9,23 +9,34 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 
 public final class Ports {
     private Ports() {}
 
-    /**
-     * Atomic worker-side execution output. Most adapters return the dispatched tasks
-     * unchanged. Engines that materialize executable children at runtime (for example
-     * JUnit parameterized or dynamic tests) may replace a materializer placeholder with
-     * the concrete child tasks that actually executed.
-     */
     public record WorkUnitExecution(List<ScenarioTask> tasks, List<ExecutionResult> results) {
         public WorkUnitExecution {
             tasks = List.copyOf(tasks == null ? List.of() : tasks);
             results = List.copyOf(results == null ? List.of() : results);
             if (tasks.isEmpty()) throw new IllegalArgumentException("WorkUnitExecution requires at least one task");
             if (results.isEmpty()) throw new IllegalArgumentException("WorkUnitExecution requires at least one result");
+        }
+    }
+
+    /**
+     * Machine-verifiable ownership declaration for an adapter SPI provider.
+     * Empty sets are deliberately conservative: loading an adapter never grants ownership by itself.
+     */
+    public record AdapterCapabilities(Set<String> executableFamilies,
+                                      Set<String> junitPlatformEngineIds,
+                                      boolean retrySafeAfterUncertainFailure) {
+        public AdapterCapabilities {
+            executableFamilies = Set.copyOf(executableFamilies == null ? Set.of() : executableFamilies);
+            junitPlatformEngineIds = Set.copyOf(junitPlatformEngineIds == null ? Set.of() : junitPlatformEngineIds);
+        }
+        public static AdapterCapabilities conservative() {
+            return new AdapterCapabilities(Set.of(), Set.of(), false);
         }
     }
 
@@ -36,6 +47,10 @@ public final class Ports {
         List<ScenarioTask> discover(AdapterContext context) throws Exception;
         ExecutionResult execute(ScenarioTask task, ExecutionContext context) throws Exception;
 
+        default AdapterCapabilities capabilities() {
+            return AdapterCapabilities.conservative();
+        }
+
         default List<ExecutionResult> executeBatch(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
             if (tasks == null || tasks.isEmpty()) {
                 throw new IllegalArgumentException("ScenarioAdapter.executeBatch requires at least one task");
@@ -45,11 +60,6 @@ public final class Ports {
             return List.copyOf(results);
         }
 
-        /**
-         * Product-level work-unit contract. Runtime-materializing engines override this
-         * method so the worker can return the concrete tasks that came into existence
-         * during execution. Existing leaf-oriented adapters inherit exact prior behavior.
-         */
         default WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
             return new WorkUnitExecution(tasks, executeBatch(tasks, context));
         }
