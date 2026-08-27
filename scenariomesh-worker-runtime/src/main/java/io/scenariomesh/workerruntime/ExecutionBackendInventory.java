@@ -25,13 +25,8 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
 
 /** Runtime inventory of executable test backends and their proven ScenarioMesh ownership granularity. */
 public final class ExecutionBackendInventory {
-    /*
-     * P0 deliberately starts empty. JUnit Jupiter has class/container lifecycle,
-     * Cucumber has run-scoped global hooks, and the Suite engine has suite-scoped
-     * lifecycle. Detection alone is therefore insufficient proof for one-leaf-per-JVM takeover.
-     */
     private static final Set<String> PROVEN_LEAF_OWNABLE_ENGINES = Set.of();
-    private static final Set<String> KNOWN_CONTAINER_OR_RUN_SCOPED_ENGINES = Set.of(
+    private static final Set<String> PROVEN_SCOPED_OWNABLE_ENGINES = Set.of(
             "junit-jupiter", "cucumber", "junit-platform-suite");
 
     private ExecutionBackendInventory() {}
@@ -85,23 +80,30 @@ public final class ExecutionBackendInventory {
                         .filter(TestIdentifier::isTest)
                         .filter(identifier -> plan.getChildren(identifier).isEmpty())
                         .count();
+
                 boolean leafOwnable = PROVEN_LEAF_OWNABLE_ENGINES.contains(engineId);
+                boolean scopedOwnable = PROVEN_SCOPED_OWNABLE_ENGINES.contains(engineId);
+                boolean ownable = leafOwnable || scopedOwnable;
                 ExecutionGranularity granularity = leafOwnable
                         ? ExecutionGranularity.LEAF
-                        : KNOWN_CONTAINER_OR_RUN_SCOPED_ENGINES.contains(engineId)
+                        : scopedOwnable
                             ? ExecutionGranularity.CONTAINER_OR_RUN
                             : ExecutionGranularity.UNKNOWN;
-                BackendOwnership backendOwnership = leafOwnable
+                BackendOwnership backendOwnership = ownable
                         ? BackendOwnership.OWNABLE
                         : BackendOwnership.DETECTED_NOT_OWNABLE;
                 Set<Capability> capabilities = leafOwnable
                         ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
                                 Capability.ISOLATED_LEAF_EXECUTION, Capability.FILTER_EQUIVALENCE)
-                        : Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY);
+                        : scopedOwnable
+                            ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
+                                    Capability.LIFECYCLE_SCOPED_EXECUTION, Capability.FILTER_EQUIVALENCE)
+                            : Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY);
+
                 backends.add(new Backend(engineId, "junit-platform", executableLeaves,
                         backendOwnership, granularity, capabilities));
                 if (executableLeaves > 0) {
-                    if (leafOwnable) hasOwnableExecutable = true;
+                    if (ownable) hasOwnableExecutable = true;
                     else hasUnownedExecutable = true;
                 }
             }
@@ -110,11 +112,11 @@ public final class ExecutionBackendInventory {
                 return new Inventory(
                         Ownership.DETECTED_NOT_OWNABLE,
                         List.copyOf(backends),
-                        "one or more engines expose executable leaves but independent leaf-JVM execution has not been proven equivalent to their native container/run lifecycle");
+                        "one or more engines expose executable leaves but ScenarioMesh has no proven execution contract for their lifecycle granularity");
             }
             if (hasOwnableExecutable) {
                 return new Inventory(Ownership.OWNABLE, List.copyOf(backends),
-                        "all executable JUnit Platform engines have a proven ScenarioMesh leaf-execution contract");
+                        "all executable JUnit Platform engines have a proven leaf or lifecycle-scoped ScenarioMesh execution contract");
             }
             return new Inventory(Ownership.NOT_DETECTED, List.copyOf(backends),
                     "JUnit Platform engines were loaded but none exposed executable leaves for this Maven selection");
@@ -161,6 +163,7 @@ public final class ExecutionBackendInventory {
         DISCOVERY,
         STABLE_LEAF_IDENTITY,
         ISOLATED_LEAF_EXECUTION,
+        LIFECYCLE_SCOPED_EXECUTION,
         FILTER_EQUIVALENCE,
         REPORT_EQUIVALENCE,
         RETRY_SAFE
