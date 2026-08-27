@@ -22,6 +22,9 @@ jobs:
         run: mvn -B -pl scenariomesh-config -am test -Dtest='*DistributedTlsConfigTest' -Dsurefire.failIfNoSpecifiedTests=false
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
+      - name: Compile distributed target
+        working-directory: examples/testng-example
+        run: mvn -B clean test-compile
       - name: Generate mutually trusted PKCS12 stores
         run: |
           set -euo pipefail
@@ -30,13 +33,11 @@ jobs:
           keytool -genkeypair -alias coordinator -keyalg RSA -keysize 2048 -storetype PKCS12 \
             -keystore "$tls/server.p12" -storepass changeit -keypass changeit \
             -dname 'CN=localhost' -ext 'SAN=dns:localhost,ip:127.0.0.1' -validity 2 -noprompt
-          keytool -exportcert -alias coordinator -keystore "$tls/server.p12" -storepass changeit \
-            -rfc -file "$tls/server.crt"
+          keytool -exportcert -alias coordinator -keystore "$tls/server.p12" -storepass changeit -rfc -file "$tls/server.crt"
           keytool -genkeypair -alias worker -keyalg RSA -keysize 2048 -storetype PKCS12 \
             -keystore "$tls/client.p12" -storepass changeit -keypass changeit \
             -dname 'CN=scenariomesh-worker' -validity 2 -noprompt
-          keytool -exportcert -alias worker -keystore "$tls/client.p12" -storepass changeit \
-            -rfc -file "$tls/client.crt"
+          keytool -exportcert -alias worker -keystore "$tls/client.p12" -storepass changeit -rfc -file "$tls/client.crt"
           keytool -importcert -alias worker -file "$tls/client.crt" -storetype PKCS12 \
             -keystore "$tls/server-trust.p12" -storepass changeit -noprompt
           keytool -importcert -alias coordinator -file "$tls/server.crt" -storetype PKCS12 \
