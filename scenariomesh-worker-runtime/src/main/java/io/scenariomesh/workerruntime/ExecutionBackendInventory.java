@@ -61,12 +61,17 @@ public final class ExecutionBackendInventory {
             } else {
                 List<String> selectedClasses = SelectedTestClasses.scan(testRoots, selection);
                 if (selectedClasses.isEmpty()) {
-                    return new Inventory(Ownership.NOT_DETECTED, List.of(), "Maven class selection resolved to zero compiled test classes");
+                    // Some JUnit Platform engines are resource-driven rather than class-driven.
+                    // Cucumber is the important example: it can discover feature resources even
+                    // when Maven's default test-class patterns match no compiled class. Probe the
+                    // real TestPlan from classpath roots; unknown engines still fail ownership below.
+                    request.selectors(selectClasspathRoots(new HashSet<>(testRoots)));
+                } else {
+                    List<DiscoverySelector> selectors = selectedClasses.stream()
+                            .map(className -> (DiscoverySelector) selectClass(className))
+                            .toList();
+                    request.selectors(selectors);
                 }
-                List<DiscoverySelector> selectors = selectedClasses.stream()
-                        .map(className -> (DiscoverySelector) selectClass(className))
-                        .toList();
-                request.selectors(selectors);
             }
 
             TestPlan plan = launcher.discover(request.build());
@@ -86,12 +91,9 @@ public final class ExecutionBackendInventory {
                 boolean ownable = leafOwnable || scopedOwnable;
                 ExecutionGranularity granularity = leafOwnable
                         ? ExecutionGranularity.LEAF
-                        : scopedOwnable
-                            ? ExecutionGranularity.CONTAINER_OR_RUN
-                            : ExecutionGranularity.UNKNOWN;
+                        : scopedOwnable ? ExecutionGranularity.CONTAINER_OR_RUN : ExecutionGranularity.UNKNOWN;
                 BackendOwnership backendOwnership = ownable
-                        ? BackendOwnership.OWNABLE
-                        : BackendOwnership.DETECTED_NOT_OWNABLE;
+                        ? BackendOwnership.OWNABLE : BackendOwnership.DETECTED_NOT_OWNABLE;
                 Set<Capability> capabilities = leafOwnable
                         ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
                                 Capability.ISOLATED_LEAF_EXECUTION, Capability.FILTER_EQUIVALENCE)
@@ -109,9 +111,7 @@ public final class ExecutionBackendInventory {
             }
 
             if (hasUnownedExecutable) {
-                return new Inventory(
-                        Ownership.DETECTED_NOT_OWNABLE,
-                        List.copyOf(backends),
+                return new Inventory(Ownership.DETECTED_NOT_OWNABLE, List.copyOf(backends),
                         "one or more engines expose executable leaves but ScenarioMesh has no proven execution contract for their lifecycle granularity");
             }
             if (hasOwnableExecutable) {
@@ -169,13 +169,9 @@ public final class ExecutionBackendInventory {
         RETRY_SAFE
     }
 
-    public record Backend(
-            String id,
-            String provider,
-            long executableLeaves,
-            BackendOwnership ownership,
-            ExecutionGranularity granularity,
-            Set<Capability> capabilities) {
+    public record Backend(String id, String provider, long executableLeaves,
+                          BackendOwnership ownership, ExecutionGranularity granularity,
+                          Set<Capability> capabilities) {
         public Backend {
             capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);
         }
