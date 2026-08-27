@@ -142,7 +142,6 @@ final class WorkerPool implements AutoCloseable {
                     unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
                             "Worker disconnected before returning a work-unit result");
                 } else {
-                    // Authority must be proven before any structurally-valid payload can count.
                     workAuthority.acceptResult(connection.workerId, response, Instant.now());
                     unitResults = resultValidator.validateBatchOrFailures(
                             unit.tasks(), connection.workerId, attempt, started, response);
@@ -219,9 +218,6 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private boolean retryableUnit(WorkUnit unit, List<ExecutionResult> results) {
-        // A scoped work unit may have executed setup/global hooks or external side effects
-        // before a transport/JVM failure. Re-running it would change native semantics.
-        // Only singleton unscoped units retain the legacy infrastructure retry policy.
         return !unit.scoped()
                 && unit.tasks().size() == 1
                 && results.size() == 1
@@ -302,7 +298,6 @@ final class WorkerPool implements AutoCloseable {
         try {
             connection.close();
         } catch (Exception ignored) {
-            // A failed worker connection may already be closed.
         }
         logger.progress(connection.workerId + " RETIRED after " + reason + ".");
         retireProcess(connection.workerId);
@@ -334,15 +329,15 @@ final class WorkerPool implements AutoCloseable {
         List<String> args = List.of(
                 "--host", host,
                 "--port", Integer.toString(port),
-                "--token", token,
                 "--worker-id", id);
         List<String> command = JavaProcessSupport.command(
                 request.runtimeClasspath(), request.effectiveJvmArgs(), request.effectiveSystemProperties(),
                 WorkerMain.class.getName(), args);
-        Process process = new ProcessBuilder(command)
+        ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile())
-                .redirectErrorStream(true)
-                .start();
+                .redirectErrorStream(true);
+        builder.environment().put("SCENARIOMESH_REMOTE_TOKEN", token);
+        Process process = builder.start();
         processes.put(id, process);
 
         Thread pump = new Thread(
@@ -436,7 +431,6 @@ final class WorkerPool implements AutoCloseable {
             try {
                 connection.socket.setSoTimeout(originalTimeout);
             } catch (Exception ignored) {
-                // Socket may already be closed.
             }
         }
     }
@@ -482,7 +476,6 @@ final class WorkerPool implements AutoCloseable {
             try {
                 connection.close();
             } catch (Exception ignored) {
-                // Continue closing remaining workers.
             }
         }
 
@@ -519,7 +512,6 @@ final class WorkerPool implements AutoCloseable {
         try {
             server.close();
         } catch (Exception ignored) {
-            // Nothing else to clean up.
         }
     }
 
@@ -608,7 +600,6 @@ final class WorkerPool implements AutoCloseable {
                 try {
                     socket.setSoTimeout(originalTimeout);
                 } catch (Exception ignored) {
-                    // Worker may have disconnected while the task was running.
                 }
             }
         }
