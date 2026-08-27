@@ -158,7 +158,8 @@ jobs:
           mvn -B clean test > process-tree-cleanup.log 2>&1
           cat process-tree-cleanup.log
           grep -Fq 'worker-2 REPLACED worker-1 after task-count recycling after 1 task(s)' process-tree-cleanup.log
-          grep -Fq 'worker-2 PASSED b_recycledWorkerKilledChild()' process-tree-cleanup.log
+          test "$(grep -Fc 'PASSED firstIndependentScope()' process-tree-cleanup.log)" -eq 1
+          test "$(grep -Fc 'PASSED secondIndependentScope()' process-tree-cleanup.log)" -eq 1
       - name: Custom Surefire selection remains normal Maven execution
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
