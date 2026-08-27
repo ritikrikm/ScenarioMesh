@@ -49,6 +49,7 @@ class ExecutionResultValidatorTest {
         ExecutionResult result = result(task, "worker-1", 1, dispatched, dispatched.plusMillis(10));
         Envelope wrongEnvelope = new Envelope(
                 Protocol.VERSION, Protocol.Type.RESULT, "worker-2", null,
+                null, null, null, null,
                 List.of(), List.of(), 9, List.of(result), null, null);
         ExecutionResult validated = validator.validateOrFailure(task, "worker-1", 1, dispatched, wrongEnvelope);
         assertProtocolFailure(validated, "envelope worker id");
@@ -61,6 +62,7 @@ class ExecutionResultValidatorTest {
         ExecutionResult result = result(task, "worker-1", 1, dispatched, dispatched.plusMillis(10));
         Envelope wrongVersion = new Envelope(
                 Protocol.VERSION + 1, Protocol.Type.RESULT, "worker-1", null,
+                null, null, null, null,
                 List.of(), List.of(), 1, List.of(result), null, null);
         ExecutionResult validated = validator.validateOrFailure(task, "worker-1", 1, dispatched, wrongVersion);
         assertProtocolFailure(validated, "protocol version");
