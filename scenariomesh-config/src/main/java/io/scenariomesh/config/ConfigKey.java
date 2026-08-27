@@ -28,6 +28,12 @@ enum ConfigKey {
     DISTRIBUTED_BIND_PORT("scenariomesh.distributed.bindPort"),
     DISTRIBUTED_TOKEN("scenariomesh.distributed.token"),
     DISTRIBUTED_REGISTRATION_TIMEOUT("scenariomesh.distributed.registrationTimeout"),
+    DISTRIBUTED_TLS_ENABLED("scenariomesh.distributed.tls.enabled"),
+    DISTRIBUTED_TLS_REQUIRE_CLIENT_AUTH("scenariomesh.distributed.tls.requireClientAuth"),
+    DISTRIBUTED_TLS_KEY_STORE("scenariomesh.distributed.tls.keyStore"),
+    DISTRIBUTED_TLS_KEY_STORE_PASSWORD("scenariomesh.distributed.tls.keyStorePassword"),
+    DISTRIBUTED_TLS_TRUST_STORE("scenariomesh.distributed.tls.trustStore"),
+    DISTRIBUTED_TLS_TRUST_STORE_PASSWORD("scenariomesh.distributed.tls.trustStorePassword"),
     DISCOVERY_TIMEOUT("scenariomesh.discovery.timeout"),
     REPORTING_DIRECTORY("scenariomesh.reporting.directory"),
     LOGGING_LIVE_CONSOLE("scenariomesh.logging.liveConsole"),
@@ -43,14 +49,10 @@ enum ConfigKey {
         this.aliases = List.of(aliases);
     }
 
-    String canonical() {
-        return canonical;
-    }
+    String canonical() { return canonical; }
 
     List<String> propertyNames() {
-        if (aliases.isEmpty()) {
-            return List.of(canonical);
-        }
+        if (aliases.isEmpty()) return List.of(canonical);
         java.util.ArrayList<String> names = new java.util.ArrayList<>();
         names.add(canonical);
         names.addAll(aliases);
