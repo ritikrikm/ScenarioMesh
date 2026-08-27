@@ -3,6 +3,9 @@ package io.scenariomesh.coordinator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.coordinator.distributed.DistributedWorkAuthority;
 import io.scenariomesh.coordinator.distributed.LeaseRegistry;
+import io.scenariomesh.coordinator.distributed.RemoteWorkerRegistration;
+import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator;
+import io.scenariomesh.coordinator.distributed.WorkerRegistrationValidator.CapabilityMismatchException;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.ScenarioId;
@@ -50,6 +53,7 @@ final class WorkerPool implements AutoCloseable {
 
     private final ObjectMapper mapper = JsonCodec.create();
     private final ExecutionResultValidator resultValidator = new ExecutionResultValidator();
+    private final WorkerRegistrationValidator registrationValidator = new WorkerRegistrationValidator();
     private final RunRequest request;
     private final Path dir;
     private final String token = UUID.randomUUID().toString();
@@ -125,6 +129,7 @@ final class WorkerPool implements AutoCloseable {
             List<ExecutionResult> unitResults;
             WorkerTelemetry telemetry = null;
             try {
+                registrationValidator.requireCanRun(connection.registration, representative.adapterId(), null);
                 Envelope run = workAuthority.issueRun(
                         representative.id().value(), connection.workerId, attempt, unit.tasks(), started);
                 connection.write(run);
@@ -141,6 +146,9 @@ final class WorkerPool implements AutoCloseable {
                         telemetry = response.telemetry();
                     }
                 }
+            } catch (CapabilityMismatchException exception) {
+                unitResults = protocolFailures(unit.tasks(), connection.workerId, attempt, started,
+                        "Worker capability mismatch: " + safeMessage(exception));
             } catch (LeaseRegistry.StaleLeaseException exception) {
                 unitResults = protocolFailures(unit.tasks(), connection.workerId, attempt, started,
                         "Rejected stale or non-authoritative worker result: " + safeMessage(exception));
@@ -374,19 +382,33 @@ final class WorkerPool implements AutoCloseable {
             Socket socket = server.accept();
             WorkerConnection connection = new WorkerConnection(socket);
             Envelope hello = connection.read();
-            boolean valid = hello != null
-                    && hello.protocolVersion() == Protocol.VERSION
-                    && hello.type() == Protocol.Type.HELLO
-                    && token.equals(hello.token())
+            boolean ownedProcess = hello != null
+                    && hello.workerId() != null
                     && processes.containsKey(hello.workerId())
                     && (expectedWorkerId == null || expectedWorkerId.equals(hello.workerId()))
                     && connections.stream().noneMatch(existing -> hello.workerId().equals(existing.workerId));
-            if (!valid) {
+            if (!ownedProcess) {
                 connection.close();
                 continue;
             }
-            connection.workerId = hello.workerId();
-            logger.progress(connection.workerId + " READY");
+
+            RemoteWorkerRegistration registration;
+            try {
+                registration = registrationValidator.requireRegistration(hello, token);
+            } catch (RuntimeException invalidRegistration) {
+                logger.progress("Rejected " + hello.workerId() + " registration: " + safeMessage(invalidRegistration));
+                connection.close();
+                retireProcess(hello.workerId());
+                continue;
+            }
+
+            connection.workerId = registration.workerId();
+            connection.registration = registration;
+            logger.progress(connection.workerId + " READY"
+                    + " agent=" + registration.labels().get("agentId")
+                    + " slots=" + registration.slots()
+                    + " java=" + registration.javaFeature()
+                    + " adapters=" + String.join(",", registration.adapterIds()));
             return connection;
         }
     }
@@ -560,6 +582,7 @@ final class WorkerPool implements AutoCloseable {
         private final BufferedReader reader;
         private final BufferedWriter writer;
         private String workerId;
+        private RemoteWorkerRegistration registration;
 
         private WorkerConnection(Socket socket) throws Exception {
             this.socket = socket;
