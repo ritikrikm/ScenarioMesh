@@ -22,6 +22,10 @@ public final class ScenarioMeshRunner {
     private final ExecutionHistoryStore history = new ExecutionHistoryStore();
 
     public RunOutcome run(RunRequest request) throws Exception {
+        return run(request, null);
+    }
+
+    public RunOutcome run(RunRequest request, PreparedRemoteWorkers preparedRemoteWorkers) throws Exception {
         RunId runId = RunId.create();
         Path directory = request.config().reportingDirectory().resolve("runs").resolve(runId.value());
         Files.createDirectories(directory);
@@ -37,10 +41,16 @@ public final class ScenarioMeshRunner {
 
         List<ExecutionResult> results;
         if (request.config().distributed().remote()) {
-            try (RemoteWorkerPool workers = new RemoteWorkerPool(request, logger)) {
+            try (RemoteWorkerPool workers = preparedRemoteWorkers == null
+                    ? new RemoteWorkerPool(request, logger)
+                    : new RemoteWorkerPool(request, logger, preparedRemoteWorkers)) {
                 results = workers.execute(scheduledTasks);
             }
         } else {
+            if (preparedRemoteWorkers != null) {
+                preparedRemoteWorkers.close();
+                throw new IllegalArgumentException("Prepared remote workers were supplied for a local ScenarioMesh run");
+            }
             try (WorkerPool workers = new WorkerPool(request, directory, logger)) {
                 results = workers.execute(scheduledTasks);
             }
