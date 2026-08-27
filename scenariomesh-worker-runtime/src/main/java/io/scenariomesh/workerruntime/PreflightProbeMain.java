@@ -3,13 +3,16 @@ package io.scenariomesh.workerruntime;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Ports.AdapterContext;
+import io.scenariomesh.core.Ports.ScenarioAdapter;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Runs Maven ownership preflight inside the exact JVM selected for target tests. */
 public final class PreflightProbeMain {
@@ -22,10 +25,15 @@ public final class PreflightProbeMain {
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
         DiscoverySelection selection = new DiscoverySelection(parsed.includes, parsed.excludes);
         AdapterContext context = new AdapterContext(loader, parsed.testRoots, properties, selection);
+        AdapterRegistry registry = new AdapterRegistry(loader);
 
         new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
+        Set<String> adapterOwnedEngines = new LinkedHashSet<>();
+        for (ScenarioAdapter adapter : registry.available(loader)) {
+            adapterOwnedEngines.addAll(adapter.capabilities().junitPlatformEngineIds());
+        }
         ExecutionBackendInventory.Inventory inventory = ExecutionBackendInventory.inspect(
-                loader, parsed.testRoots, parsed.includes, parsed.excludes);
+                loader, parsed.testRoots, parsed.includes, parsed.excludes, adapterOwnedEngines);
 
         Files.createDirectories(parsed.output.getParent());
         ObjectMapper mapper = JsonCodec.create();
