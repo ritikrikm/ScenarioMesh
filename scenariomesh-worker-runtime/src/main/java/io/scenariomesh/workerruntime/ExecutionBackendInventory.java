@@ -1,8 +1,7 @@
 package io.scenariomesh.workerruntime;
 
+import io.scenariomesh.adapter.junitplatform.MavenClassSelectionPostFilter;
 import io.scenariomesh.core.DiscoverySelection;
-import io.scenariomesh.core.SelectedTestClasses;
-import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.Launcher;
@@ -20,7 +19,6 @@ import java.util.List;
 import java.util.ServiceLoader;
 import java.util.Set;
 
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
 
 /** Runtime inventory of executable test backends and their proven ScenarioMesh ownership granularity. */
@@ -55,23 +53,10 @@ public final class ExecutionBackendInventory {
             Launcher launcher = LauncherFactory.create(config);
 
             DiscoverySelection selection = new DiscoverySelection(includeClassNameRegexes, excludeClassNameRegexes);
-            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request();
-            if (selection.includeClassNameRegexes().isEmpty() && selection.excludeClassNameRegexes().isEmpty()) {
-                request.selectors(selectClasspathRoots(new HashSet<>(testRoots)));
-            } else {
-                List<String> selectedClasses = SelectedTestClasses.scan(testRoots, selection);
-                if (selectedClasses.isEmpty()) {
-                    // Some JUnit Platform engines are resource-driven rather than class-driven.
-                    // Cucumber is the important example: it can discover feature resources even
-                    // when Maven's default test-class patterns match no compiled class. Probe the
-                    // real TestPlan from classpath roots; unknown engines still fail ownership below.
-                    request.selectors(selectClasspathRoots(new HashSet<>(testRoots)));
-                } else {
-                    List<DiscoverySelector> selectors = selectedClasses.stream()
-                            .map(className -> (DiscoverySelector) selectClass(className))
-                            .toList();
-                    request.selectors(selectors);
-                }
+            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request()
+                    .selectors(selectClasspathRoots(new HashSet<>(testRoots)));
+            if (!selection.includeClassNameRegexes().isEmpty() || !selection.excludeClassNameRegexes().isEmpty()) {
+                request.filters(new MavenClassSelectionPostFilter(selection));
             }
 
             TestPlan plan = launcher.discover(request.build());
