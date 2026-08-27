@@ -26,6 +26,7 @@ final class JavaProcessSupport {
         command.add("-ea");
         command.addAll(jvmArgs);
         properties.entrySet().stream()
+                .filter(entry -> !RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY.equals(entry.getKey()))
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
         command.add("-cp");
@@ -43,7 +44,11 @@ final class JavaProcessSupport {
                                 Map<String, String> properties,
                                 String mainClass,
                                 List<String> args) {
-        return command(defaultJavaExecutable(), classpath, jvmArgs, properties, mainClass, args);
+        String selected = properties.get(RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY);
+        Path javaExecutable = selected == null || selected.isBlank()
+                ? defaultJavaExecutable()
+                : Path.of(selected).toAbsolutePath().normalize();
+        return command(javaExecutable, classpath, jvmArgs, properties, mainClass, args);
     }
 
     static void terminateProcessTree(Process process, Duration gracefulWait) {
