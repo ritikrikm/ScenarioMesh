@@ -15,6 +15,7 @@ enum ConfigKey {
     EXECUTION_ADAPTER("scenariomesh.execution.adapter"),
     ADAPTER_MISMATCH_POLICY("scenariomesh.execution.adapterMismatchPolicy"),
     INFRASTRUCTURE_RETRIES("scenariomesh.execution.infrastructureRetries"),
+    SCHEDULING_STRATEGY("scenariomesh.scheduling.strategy"),
     WORKER_COUNT("scenariomesh.workers.count", "scenariomesh.workers"),
     WORKER_MINIMUM_READY("scenariomesh.workers.minimumReady"),
     WORKER_MODE("scenariomesh.workers.mode"),
