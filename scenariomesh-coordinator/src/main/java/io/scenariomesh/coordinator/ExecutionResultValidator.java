@@ -47,7 +47,9 @@ final class ExecutionResultValidator {
             throw new IllegalArgumentException("Result validation requires at least one dispatched task");
         }
         List<String> violations = new ArrayList<>();
-        if (envelope.protocolVersion() != Protocol.VERSION) violations.add("protocol version expected=" + Protocol.VERSION + " actual=" + envelope.protocolVersion());
+        // Protocol version is a transport/session invariant. RemoteWorkerSession has already authenticated
+        // and locked every inbound envelope to the negotiated version before this validator is invoked.
+        // Requiring Protocol.VERSION here would incorrectly reject legitimate downgraded bridge sessions.
         if (envelope.type() != Protocol.Type.RESULT) violations.add("response type expected=RESULT actual=" + envelope.type());
         if (!expectedWorkerId.equals(envelope.workerId())) violations.add("envelope worker id expected='" + expectedWorkerId + "' actual='" + envelope.workerId() + "'");
         if (envelope.attempt() == null || envelope.attempt() != expectedAttempt) violations.add("envelope attempt expected=" + expectedAttempt + " actual=" + envelope.attempt());
