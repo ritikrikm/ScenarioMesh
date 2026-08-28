@@ -54,32 +54,51 @@ public final class WorkerMain {
         try (Socket socket = RemoteWorkerTransport.connect(parsed.host, parsed.port, environment);
              BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
-            write(mapper, writer, Envelope.hello(parsed.workerId, token, capabilities(adapters, classLoader)));
+            write(mapper, writer, Envelope.hello(parsed.workerId, token, capabilities(adapters, classLoader)),
+                    Protocol.BOOTSTRAP_VERSION);
+
+            String firstLine = reader.readLine();
+            if (firstLine == null) return;
+            Envelope first = mapper.readValue(firstLine, Envelope.class);
+            int sessionProtocol = requireSupportedProtocol(first.protocolVersion());
+            boolean negotiationAck = first.type() == Protocol.Type.ACK;
+
             try (PresenceHeartbeatEmitter presence = PresenceHeartbeatEmitter.start(
                     parsed.workerId, WorkerMain::telemetry,
-                    heartbeat -> write(mapper, writer, heartbeat))) {
+                    heartbeat -> write(mapper, writer, heartbeat, sessionProtocol))) {
                 boolean draining = false;
-                for (String line; (line = reader.readLine()) != null;) {
-                    Envelope envelope = mapper.readValue(line, Envelope.class);
-                    validate(envelope);
+                Envelope envelope = negotiationAck ? null : first;
+                while (true) {
+                    if (envelope == null) {
+                        String line = reader.readLine();
+                        if (line == null) break;
+                        envelope = mapper.readValue(line, Envelope.class);
+                    }
+                    validate(envelope, sessionProtocol);
+                    if (envelope.type() == Protocol.Type.ACK) {
+                        throw new IllegalArgumentException("Unexpected protocol ACK after session negotiation");
+                    }
                     if (envelope.type() == Protocol.Type.DRAIN) {
                         draining = true;
-                        write(mapper, writer, Envelope.ack(parsed.workerId));
+                        write(mapper, writer, Envelope.ack(parsed.workerId), sessionProtocol);
+                        envelope = null;
                         continue;
                     }
                     if (envelope.type() == Protocol.Type.STOP) {
-                        write(mapper, writer, Envelope.ack(parsed.workerId));
+                        write(mapper, writer, Envelope.ack(parsed.workerId), sessionProtocol);
                         return;
                     }
                     if (draining && envelope.type() == Protocol.Type.RUN) {
                         write(mapper, writer, Envelope.error(parsed.workerId,
-                                "Worker is draining and will not accept new work"));
+                                "Worker is draining and will not accept new work"), sessionProtocol);
+                        envelope = null;
                         continue;
                     }
                     if (envelope.type() != Protocol.Type.RUN || envelope.tasks().isEmpty()
                             || envelope.attempt() == null || envelope.attempt() < 1) {
                         write(mapper, writer, Envelope.error(parsed.workerId,
-                                "Expected RUN command with at least one task and a positive attempt"));
+                                "Expected RUN command with at least one task and a positive attempt"), sessionProtocol);
+                        envelope = null;
                         continue;
                     }
 
@@ -90,13 +109,15 @@ public final class WorkerMain {
                     List<ExecutionResult> cleaned;
                     try (LeaseHeartbeatEmitter heartbeat = LeaseHeartbeatEmitter.start(
                             parsed.workerId, envelope, WorkerMain::telemetry,
-                            heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope))) {
+                            heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope, sessionProtocol))) {
                         execution = executeWorkUnit(adapters, dispatched, context);
                         cleaned = runCleanupHooks(cleanupHooks, execution.tasks(), context, execution.results());
                         heartbeat.throwIfFailed();
                     }
                     write(mapper, writer, Envelope.resultBatch(parsed.workerId,
-                            envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()));
+                            envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()),
+                            sessionProtocol);
+                    envelope = null;
                 }
             }
         }
@@ -121,7 +142,8 @@ public final class WorkerMain {
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
-                HexFormat.of().formatHex(digest), adapterIds, engineIds);
+                HexFormat.of().formatHex(digest), adapterIds, engineIds,
+                Protocol.MIN_SUPPORTED_VERSION, Protocol.VERSION);
     }
 
     private static WorkUnitExecution executeWorkUnit(AdapterRegistry adapters, List<ScenarioTask> tasks,
@@ -206,15 +228,24 @@ public final class WorkerMain {
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
-    private static void validate(Envelope envelope) {
-        if (envelope.protocolVersion() != Protocol.VERSION) {
-            throw new IllegalArgumentException("Unsupported ScenarioMesh protocol version: " + envelope.protocolVersion());
+    private static int requireSupportedProtocol(int version) {
+        if (version < Protocol.MIN_SUPPORTED_VERSION || version > Protocol.VERSION) {
+            throw new IllegalArgumentException("Unsupported ScenarioMesh protocol version: " + version);
+        }
+        return version;
+    }
+
+    private static void validate(Envelope envelope, int sessionProtocol) {
+        if (envelope.protocolVersion() != sessionProtocol) {
+            throw new IllegalArgumentException("ScenarioMesh coordinator changed negotiated protocol version from "
+                    + sessionProtocol + " to " + envelope.protocolVersion());
         }
     }
 
-    private static void write(ObjectMapper mapper, BufferedWriter writer, Envelope envelope) throws Exception {
+    private static void write(ObjectMapper mapper, BufferedWriter writer, Envelope envelope,
+                              int protocolVersion) throws Exception {
         synchronized (writer) {
-            writer.write(mapper.writeValueAsString(envelope));
+            writer.write(mapper.writeValueAsString(envelope.withProtocolVersion(protocolVersion)));
             writer.newLine();
             writer.flush();
         }
