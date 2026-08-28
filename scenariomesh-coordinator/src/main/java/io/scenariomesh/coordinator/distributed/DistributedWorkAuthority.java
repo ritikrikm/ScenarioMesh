@@ -33,11 +33,7 @@ public final class DistributedWorkAuthority {
     }
 
     public WorkLease heartbeat(String workerId, Envelope heartbeat, Instant now) {
-        return heartbeat(workerId, heartbeat, now, Protocol.VERSION);
-    }
-
-    public WorkLease heartbeat(String workerId, Envelope heartbeat, Instant now, int expectedProtocolVersion) {
-        requireEnvelope(heartbeat, Protocol.Type.HEARTBEAT, workerId, expectedProtocolVersion);
+        requireEnvelope(heartbeat, Protocol.Type.HEARTBEAT, workerId);
         requireLeaseIdentity(heartbeat);
         return leases.heartbeat(heartbeat.workUnitId(), heartbeat.leaseId(), workerId, now);
     }
@@ -45,13 +41,12 @@ public final class DistributedWorkAuthority {
     /**
      * Atomically proves that a result still owns the current work attempt and consumes
      * that authority. Callers may then validate the result payload itself.
+     * Protocol-version locking is enforced by RemoteWorkerSession before envelopes reach
+     * this lease authority, so negotiated bridge sessions are not incorrectly forced to
+     * the coordinator's newest protocol version here.
      */
     public WorkLease acceptResult(String workerId, Envelope result, Instant now) {
-        return acceptResult(workerId, result, now, Protocol.VERSION);
-    }
-
-    public WorkLease acceptResult(String workerId, Envelope result, Instant now, int expectedProtocolVersion) {
-        requireEnvelope(result, Protocol.Type.RESULT, workerId, expectedProtocolVersion);
+        requireEnvelope(result, Protocol.Type.RESULT, workerId);
         requireLeaseIdentity(result);
         WorkLease lease = leases.acceptResult(result.workUnitId(), result.leaseId(), workerId, now);
         if (result.attempt() == null || result.attempt() != lease.attempt()) {
@@ -66,12 +61,8 @@ public final class DistributedWorkAuthority {
         return Envelope.heartbeat(workerId, workUnitId, leaseId, telemetry);
     }
 
-    private void requireEnvelope(Envelope envelope, Protocol.Type type, String workerId, int expectedProtocolVersion) {
+    private void requireEnvelope(Envelope envelope, Protocol.Type type, String workerId) {
         Objects.requireNonNull(envelope, "envelope");
-        if (envelope.protocolVersion() != expectedProtocolVersion) {
-            throw new LeaseRegistry.StaleLeaseException("protocol version " + envelope.protocolVersion()
-                    + " does not match negotiated session version " + expectedProtocolVersion);
-        }
         if (envelope.type() != type) {
             throw new LeaseRegistry.StaleLeaseException("expected " + type + " but received " + envelope.type());
         }
