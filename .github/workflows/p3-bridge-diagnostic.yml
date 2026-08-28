@@ -1,0 +1,72 @@
+name: p3-bridge-diagnostic
+on: [push]
+
+jobs:
+  bridge-v8-worker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build current runtime
+        run: mvn -B clean install -DskipTests
+      - name: Checkout preserved bridge-v8 runtime
+        uses: actions/checkout@v4
+        with:
+          repository: ritikrikm/ScenarioMesh
+          ref: fcb904adb3aacc39973c70283b18ae6e9caedccd
+          path: bridge-v8
+      - name: Build bridge-v8 runtime in isolated Maven repository
+        working-directory: bridge-v8
+        run: mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" clean install -DskipTests
+      - name: Compile target
+        working-directory: examples/testng-example
+        run: mvn -B clean test-compile
+      - name: Diagnose current v9 coordinator with bridge-v8 worker
+        working-directory: examples/testng-example
+        run: |
+          token="p3-bridge-diagnostic-${{ github.run_id }}-${{ matrix.java }}"
+          port=$((46000 + ${{ matrix.java }}))
+          rm -rf target/scenariomesh
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+            -Dscenariomesh.workers.mode=remote \
+            -Dscenariomesh.workers.count=1 \
+            -Dscenariomesh.workers.minimumReady=1 \
+            -Dscenariomesh.distributed.bindHost=127.0.0.1 \
+            -Dscenariomesh.distributed.bindPort="$port" \
+            -Dscenariomesh.distributed.token="$token" \
+            -Dscenariomesh.distributed.registrationTimeout=PT20S \
+            > coordinator.log 2>&1 &
+          coordinator_pid=$!
+          for i in $(seq 1 60); do
+            grep -Fq 'Remote worker coordinator listening on' coordinator.log 2>/dev/null && break
+            kill -0 "$coordinator_pid" 2>/dev/null || break
+            sleep 1
+          done
+          mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
+            io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+            -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
+            -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker \
+            > worker.log 2>&1 &
+          worker_pid=$!
+          set +e
+          wait "$coordinator_pid"; coordinator_status=$?
+          wait "$worker_pid"; worker_status=$?
+          set -e
+          echo '===== coordinator ====='
+          cat coordinator.log || true
+          echo '===== bridge-v8 worker ====='
+          cat worker.log || true
+          echo "coordinator_status=$coordinator_status worker_status=$worker_status"
+          test "$coordinator_status" -eq 0
+          test "$worker_status" -eq 0
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"passed" : 6' target/scenariomesh/summary.json
+          grep -Fq '"skipped" : 2' target/scenariomesh/summary.json
+          grep -Fq 'bridge-v8-worker REMOTE READY' coordinator.log
