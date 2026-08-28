@@ -86,8 +86,12 @@ public final class RemoteWorkerServer implements AutoCloseable {
                 }
                 Envelope hello = readHello(socket, Duration.ofNanos(remainingNanos));
                 RemoteWorkerRegistration registration = validator.requireRegistration(hello, token);
+                RemoteWorkerSession session = new RemoteWorkerSession(mapper, socket, registration);
+                if (WorkerRegistrationValidator.negotiationAware(registration)) {
+                    session.write(Envelope.ack(registration.workerId()));
+                }
                 directory.register(registration, Instant.now());
-                return new RemoteWorkerSession(mapper, socket, registration);
+                return session;
             } catch (RuntimeException invalidRegistration) {
                 closeQuietly(socket);
             } catch (Exception transportFailure) {
