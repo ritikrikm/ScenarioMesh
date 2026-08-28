@@ -19,19 +19,23 @@ public final class RemoteWorkerSession implements AutoCloseable {
     private final BufferedReader reader;
     private final BufferedWriter writer;
     private final RemoteWorkerRegistration registration;
+    private final int protocolVersion;
 
     RemoteWorkerSession(ObjectMapper mapper, Socket socket, RemoteWorkerRegistration registration) throws Exception {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.socket = Objects.requireNonNull(socket, "socket");
         this.registration = Objects.requireNonNull(registration, "registration");
+        this.protocolVersion = WorkerRegistrationValidator.negotiatedProtocolVersion(registration);
         this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
     }
 
     public RemoteWorkerRegistration registration() { return registration; }
+    public int protocolVersion() { return protocolVersion; }
 
     public synchronized void write(Envelope envelope) throws Exception {
-        writer.write(mapper.writeValueAsString(Objects.requireNonNull(envelope, "envelope")));
+        Envelope versioned = Objects.requireNonNull(envelope, "envelope").withProtocolVersion(protocolVersion);
+        writer.write(mapper.writeValueAsString(versioned));
         writer.newLine();
         writer.flush();
     }
@@ -43,7 +47,7 @@ public final class RemoteWorkerSession implements AutoCloseable {
         try {
             socket.setSoTimeout(Math.toIntExact(Math.max(1L, timeout.toMillis())));
             String line = reader.readLine();
-            return line == null ? null : mapper.readValue(line, Envelope.class);
+            return line == null ? null : requireSessionVersion(mapper.readValue(line, Envelope.class));
         } finally {
             try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
         }
@@ -53,7 +57,15 @@ public final class RemoteWorkerSession implements AutoCloseable {
     public Envelope readAvailable() throws Exception {
         if (!reader.ready()) return null;
         String line = reader.readLine();
-        return line == null ? null : mapper.readValue(line, Envelope.class);
+        return line == null ? null : requireSessionVersion(mapper.readValue(line, Envelope.class));
+    }
+
+    private Envelope requireSessionVersion(Envelope envelope) {
+        if (envelope.protocolVersion() != protocolVersion) {
+            throw new IllegalArgumentException("remote worker changed negotiated protocol version from "
+                    + protocolVersion + " to " + envelope.protocolVersion());
+        }
+        return envelope;
     }
 
     public boolean connected() { return socket.isConnected() && !socket.isClosed(); }
