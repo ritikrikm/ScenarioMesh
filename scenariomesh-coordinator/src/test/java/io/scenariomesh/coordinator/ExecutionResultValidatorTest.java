@@ -57,15 +57,12 @@ class ExecutionResultValidatorTest {
     }
 
     @Test
-    void wrongProtocolVersionIsNeverAccepted() {
+    void negotiatedProtocolVersionIsOwnedByTransportSessionNotResultValidator() {
         Instant dispatched = Instant.now();
         ExecutionResult result = result(task, "worker-1", 1, dispatched, dispatched.plusMillis(10));
-        Envelope wrongVersion = new Envelope(
-                Protocol.VERSION + 1, Protocol.Type.RESULT, "worker-1", null,
-                null, null, null, null,
-                List.of(), List.of(), 1, List.of(result), null, null);
-        ExecutionResult validated = validator.validateOrFailure(task, "worker-1", 1, dispatched, wrongVersion);
-        assertProtocolFailure(validated, "protocol version");
+        Envelope bridgeV8Result = Envelope.result("worker-1", result, null)
+                .withProtocolVersion(Protocol.BOOTSTRAP_VERSION);
+        assertSame(result, validator.validateOrFailure(task, "worker-1", 1, dispatched, bridgeV8Result));
     }
 
     @Test
