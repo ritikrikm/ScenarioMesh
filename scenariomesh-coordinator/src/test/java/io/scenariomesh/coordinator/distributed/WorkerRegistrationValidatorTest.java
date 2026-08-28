@@ -1,5 +1,6 @@
 package io.scenariomesh.coordinator.distributed;
 
+import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import org.junit.jupiter.api.Test;
@@ -26,8 +27,46 @@ class WorkerRegistrationValidatorTest {
         assertEquals(3, registration.slots());
         assertEquals(Set.of("junit-platform", "testng"), registration.adapterIds());
         assertEquals("jenkins-linux-a", registration.labels().get("agentId"));
+        assertEquals(Protocol.BOOTSTRAP_VERSION,
+                WorkerRegistrationValidator.negotiatedProtocolVersion(registration));
+        assertFalse(WorkerRegistrationValidator.negotiationAware(registration));
         validator.requireCanRun(registration, "junit-platform", "junit-jupiter");
         assertTrue(validator.canRun(registration, "junit-platform", "junit-jupiter"));
+    }
+
+    @Test
+    void negotiatesHighestMutuallySupportedVersion() {
+        WorkerCapabilities capabilities = new WorkerCapabilities(
+                "agent", 1, 21, "Linux", "amd64", "fp",
+                Set.of("junit-platform"), Set.of("junit-jupiter"),
+                Protocol.MIN_SUPPORTED_VERSION, Protocol.VERSION);
+
+        RemoteWorkerRegistration registration = validator.requireRegistration(
+                Envelope.hello("worker-new", "secret", capabilities), "secret");
+
+        assertEquals(Protocol.VERSION,
+                WorkerRegistrationValidator.negotiatedProtocolVersion(registration));
+        assertTrue(WorkerRegistrationValidator.negotiationAware(registration));
+    }
+
+    @Test
+    void negotiatesDownToVersionEightWhenWorkerMaximumIsEight() {
+        WorkerCapabilities capabilities = new WorkerCapabilities(
+                "agent", 1, 21, "Linux", "amd64", "fp",
+                Set.of("junit-platform"), Set.of("junit-jupiter"), 8, 8);
+
+        RemoteWorkerRegistration registration = validator.requireRegistration(
+                Envelope.hello("worker-bridge", "secret", capabilities), "secret");
+
+        assertEquals(8, WorkerRegistrationValidator.negotiatedProtocolVersion(registration));
+        assertTrue(WorkerRegistrationValidator.negotiationAware(registration));
+    }
+
+    @Test
+    void rejectsAdvertisedRangeWithoutCoordinatorOverlap() {
+        assertThrows(IllegalArgumentException.class, () -> new WorkerCapabilities(
+                "agent", 1, 21, "Linux", "amd64", "fp",
+                Set.of("junit-platform"), Set.of("junit-jupiter"), 6, 7));
     }
 
     @Test
