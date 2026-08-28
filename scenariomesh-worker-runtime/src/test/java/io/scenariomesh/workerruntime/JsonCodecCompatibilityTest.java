@@ -21,7 +21,7 @@ class JsonCodecCompatibilityTest {
 
         Envelope envelope = JsonCodec.create().readValue(json, Envelope.class);
 
-        assertEquals(Protocol.VERSION, envelope.protocolVersion());
+        assertEquals(Protocol.BOOTSTRAP_VERSION, envelope.protocolVersion());
         assertEquals(Protocol.Type.ACK, envelope.type());
         assertEquals("worker-a", envelope.workerId());
     }
