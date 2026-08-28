@@ -9,6 +9,7 @@ jobs:
   distributed-contract:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         java: ['17', '21']
     steps:
@@ -19,7 +20,7 @@ jobs:
           java-version: ${{ matrix.java }}
           cache: maven
       - name: Distributed correctness contracts
-        run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest,*DistributedWorkAuthorityTest,*WorkerRegistrationValidatorTest,*RemoteWorkerCapabilityRoutingTest,*PreparedRemoteWorkersTest,*LeasedResponseReaderTest,*LeaseHeartbeatEmitterTest,*WorkerCapabilitiesTest,*JsonCodecCompatibilityTest' -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B -pl scenariomesh-coordinator -am test -Dtest='*LeaseRegistryTest,*RemoteWorkerDirectoryTest,*DistributedWorkAuthorityTest,*WorkerRegistrationValidatorTest,*RemoteWorkerCapabilityRoutingTest,*PreparedRemoteWorkersTest,*LeasedResponseReaderTest,*LeaseHeartbeatEmitterTest,*WorkerCapabilitiesTest,*JsonCodecCompatibilityTest,*RemoteWorkerHandshakeBufferTest' -Dsurefire.failIfNoSpecifiedTests=false
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
       - name: Checkout preserved bridge-v8 runtime
@@ -189,10 +190,25 @@ jobs:
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker \
             > bridge-v8-worker.log 2>&1 &
           worker_pid=$!
-          wait "$coordinator_pid"
-          wait "$worker_pid"
-          cat v9-coordinator-v8-worker.log
-          cat bridge-v8-worker.log
+          set +e
+          wait "$coordinator_pid"; coordinator_status=$?
+          wait "$worker_pid"; worker_status=$?
+          set -e
+          echo '===== v9 coordinator -> bridge-v8 worker coordinator log ====='
+          cat v9-coordinator-v8-worker.log || true
+          echo '===== bridge-v8 worker log ====='
+          cat bridge-v8-worker.log || true
+          echo "coordinator_status=$coordinator_status worker_status=$worker_status"
+          if test -f target/scenariomesh/summary.json; then
+            echo '===== summary.json ====='
+            cat target/scenariomesh/summary.json
+          fi
+          if test -f target/scenariomesh/events.jsonl; then
+            echo '===== events.jsonl ====='
+            cat target/scenariomesh/events.jsonl
+          fi
+          test "$coordinator_status" -eq 0
+          test "$worker_status" -eq 0
           test -f target/scenariomesh/summary.json
           grep -Fq '"passed" : 6' target/scenariomesh/summary.json
           grep -Fq '"skipped" : 2' target/scenariomesh/summary.json
@@ -227,11 +243,39 @@ jobs:
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=current-v9-worker \
             > current-v9-worker.log 2>&1 &
           worker_pid=$!
-          wait "$coordinator_pid"
-          wait "$worker_pid"
-          cat v8-coordinator-v9-worker.log
-          cat current-v9-worker.log
+          set +e
+          wait "$coordinator_pid"; coordinator_status=$?
+          wait "$worker_pid"; worker_status=$?
+          set -e
+          echo '===== bridge-v8 coordinator -> current v9 worker coordinator log ====='
+          cat v8-coordinator-v9-worker.log || true
+          echo '===== current v9 worker log ====='
+          cat current-v9-worker.log || true
+          echo "coordinator_status=$coordinator_status worker_status=$worker_status"
+          if test -f target/scenariomesh/summary.json; then
+            echo '===== summary.json ====='
+            cat target/scenariomesh/summary.json
+          fi
+          if test -f target/scenariomesh/events.jsonl; then
+            echo '===== events.jsonl ====='
+            cat target/scenariomesh/events.jsonl
+          fi
+          test "$coordinator_status" -eq 0
+          test "$worker_status" -eq 0
           test -f target/scenariomesh/summary.json
           grep -Fq '"passed" : 6' target/scenariomesh/summary.json
           grep -Fq '"skipped" : 2' target/scenariomesh/summary.json
           grep -Fq 'current-v9-worker REMOTE READY' v8-coordinator-v9-worker.log
+      - name: Upload mixed-version diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p3-mixed-version-java-${{ matrix.java }}
+          if-no-files-found: ignore
+          path: |
+            examples/testng-example/v9-coordinator-v8-worker.log
+            examples/testng-example/bridge-v8-worker.log
+            examples/testng-example/v8-coordinator-v9-worker.log
+            examples/testng-example/current-v9-worker.log
+            examples/testng-example/target/scenariomesh/summary.json
+            examples/testng-example/target/scenariomesh/events.jsonl
