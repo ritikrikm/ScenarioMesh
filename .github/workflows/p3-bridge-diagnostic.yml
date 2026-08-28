@@ -5,6 +5,7 @@ jobs:
   bridge-v8-worker:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         java: ['17', '21']
     steps:
@@ -33,33 +34,9 @@ jobs:
         run: |
           token="p3-bridge-diagnostic-${{ github.run_id }}-${{ matrix.java }}"
           port=$((46000 + ${{ matrix.java }}))
-          rm -rf target/scenariomesh coordinator.log worker.log
-
-          dump_diagnostics() {
-            echo '===== PROCESS STATUS ====='
-            echo "coordinator_status=${coordinator_status:-not-finished} worker_status=${worker_status:-not-finished}"
-            echo '===== COORDINATOR TRACE ONLY ====='
-            grep -E '\[ScenarioMesh\]\[(REMOTE TRACE|REMOTE HANDSHAKE)\]' coordinator.log 2>/dev/null || true
-            echo '===== COORDINATOR FULL LOG ====='
-            cat coordinator.log 2>/dev/null || true
-            echo '===== BRIDGE-V8 WORKER FULL LOG ====='
-            cat worker.log 2>/dev/null || true
-            echo '===== SCENARIOMESH FILE INVENTORY ====='
-            find target/scenariomesh -maxdepth 4 -type f -print 2>/dev/null | sort || true
-            echo '===== SUMMARY.JSON ====='
-            cat target/scenariomesh/summary.json 2>/dev/null || true
-            echo '===== EVENTS.JSONL ====='
-            cat target/scenariomesh/events.jsonl 2>/dev/null || true
-            echo '===== WORKER LOG FILES ====='
-            find target/scenariomesh -type f -path '*worker*' -print -exec sh -c 'echo "----- $1 -----"; cat "$1"' _ {} \; 2>/dev/null || true
-            echo '===== SUREFIRE FILE INVENTORY ====='
-            find target/surefire-reports -maxdepth 2 -type f -print 2>/dev/null | sort || true
-          }
-
-          trap dump_diagnostics EXIT
-
-          echo "Starting current coordinator on loopback port $port for Java ${{ matrix.java }}"
-          mvn -B -e io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+          rm -rf target/scenariomesh
+          rm -f coordinator.log worker.log diagnostic.txt
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=1 \
             -Dscenariomesh.workers.minimumReady=1 \
@@ -69,46 +46,52 @@ jobs:
             -Dscenariomesh.distributed.registrationTimeout=PT20S \
             > coordinator.log 2>&1 &
           coordinator_pid=$!
-          echo "coordinator_pid=$coordinator_pid"
-
           for i in $(seq 1 60); do
-            if grep -Fq 'Remote worker coordinator listening on' coordinator.log 2>/dev/null; then
-              echo "Coordinator listener observed after poll=$i"
-              break
-            fi
-            if ! kill -0 "$coordinator_pid" 2>/dev/null; then
-              echo "Coordinator exited before listener was observed at poll=$i"
-              break
-            fi
+            grep -Fq 'Remote worker coordinator listening on' coordinator.log 2>/dev/null && break
+            kill -0 "$coordinator_pid" 2>/dev/null || break
             sleep 1
           done
-
-          echo '===== COORDINATOR LOG BEFORE WORKER START ====='
-          cat coordinator.log 2>/dev/null || true
-          grep -Fq 'Remote worker coordinator listening on' coordinator.log
-
-          echo 'Starting preserved bridge-v8 worker'
-          mvn -B -e -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
+          mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
             io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker \
             > worker.log 2>&1 &
           worker_pid=$!
-          echo "worker_pid=$worker_pid"
-
           set +e
           wait "$coordinator_pid"; coordinator_status=$?
-          echo "Coordinator process completed with status=$coordinator_status"
           wait "$worker_pid"; worker_status=$?
-          echo "Bridge-v8 worker Maven process completed with status=$worker_status"
           set -e
-
-          dump_diagnostics
-          trap - EXIT
-
+          {
+            echo "java=${{ matrix.java }}"
+            echo "coordinator_status=$coordinator_status"
+            echo "worker_status=$worker_status"
+            echo '===== coordinator error/protocol highlights ====='
+            grep -nEi 'Exception|ERROR|FAIL|protocol|HELLO|SESSION|REMOTE|RUN|RESULT|LEASE|ACK|PRESENCE|EOF|capab' coordinator.log || true
+            echo '===== coordinator tail ====='
+            tail -n 250 coordinator.log || true
+            echo '===== worker tail ====='
+            tail -n 250 worker.log || true
+            echo '===== summary ====='
+            cat target/scenariomesh/summary.json 2>/dev/null || true
+            echo '===== events tail ====='
+            tail -n 250 target/scenariomesh/events.jsonl 2>/dev/null || true
+          } > diagnostic.txt
+          cat diagnostic.txt
           test "$coordinator_status" -eq 0
           test "$worker_status" -eq 0
           test -f target/scenariomesh/summary.json
           grep -Fq '"passed" : 6' target/scenariomesh/summary.json
           grep -Fq '"skipped" : 2' target/scenariomesh/summary.json
           grep -Fq 'bridge-v8-worker REMOTE READY' coordinator.log
+      - name: Upload bridge diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-v8-java-${{ matrix.java }}-diagnostics
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            examples/testng-example/diagnostic.txt
+            examples/testng-example/coordinator.log
+            examples/testng-example/worker.log
+            examples/testng-example/target/scenariomesh/**
