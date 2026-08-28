@@ -33,7 +33,11 @@ public final class DistributedWorkAuthority {
     }
 
     public WorkLease heartbeat(String workerId, Envelope heartbeat, Instant now) {
-        requireEnvelope(heartbeat, Protocol.Type.HEARTBEAT, workerId);
+        return heartbeat(workerId, heartbeat, now, Protocol.VERSION);
+    }
+
+    public WorkLease heartbeat(String workerId, Envelope heartbeat, Instant now, int expectedProtocolVersion) {
+        requireEnvelope(heartbeat, Protocol.Type.HEARTBEAT, workerId, expectedProtocolVersion);
         requireLeaseIdentity(heartbeat);
         return leases.heartbeat(heartbeat.workUnitId(), heartbeat.leaseId(), workerId, now);
     }
@@ -43,7 +47,11 @@ public final class DistributedWorkAuthority {
      * that authority. Callers may then validate the result payload itself.
      */
     public WorkLease acceptResult(String workerId, Envelope result, Instant now) {
-        requireEnvelope(result, Protocol.Type.RESULT, workerId);
+        return acceptResult(workerId, result, now, Protocol.VERSION);
+    }
+
+    public WorkLease acceptResult(String workerId, Envelope result, Instant now, int expectedProtocolVersion) {
+        requireEnvelope(result, Protocol.Type.RESULT, workerId, expectedProtocolVersion);
         requireLeaseIdentity(result);
         WorkLease lease = leases.acceptResult(result.workUnitId(), result.leaseId(), workerId, now);
         if (result.attempt() == null || result.attempt() != lease.attempt()) {
@@ -58,11 +66,11 @@ public final class DistributedWorkAuthority {
         return Envelope.heartbeat(workerId, workUnitId, leaseId, telemetry);
     }
 
-    private void requireEnvelope(Envelope envelope, Protocol.Type type, String workerId) {
+    private void requireEnvelope(Envelope envelope, Protocol.Type type, String workerId, int expectedProtocolVersion) {
         Objects.requireNonNull(envelope, "envelope");
-        if (envelope.protocolVersion() != Protocol.VERSION) {
+        if (envelope.protocolVersion() != expectedProtocolVersion) {
             throw new LeaseRegistry.StaleLeaseException("protocol version " + envelope.protocolVersion()
-                    + " does not match coordinator version " + Protocol.VERSION);
+                    + " does not match negotiated session version " + expectedProtocolVersion);
         }
         if (envelope.type() != type) {
             throw new LeaseRegistry.StaleLeaseException("expected " + type + " but received " + envelope.type());
