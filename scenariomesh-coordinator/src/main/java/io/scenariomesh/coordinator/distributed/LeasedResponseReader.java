@@ -22,12 +22,7 @@ public final class LeasedResponseReader {
     }
 
     public Envelope readTerminal(String workerId, Duration timeout, TimedEnvelopeReader reader) throws Exception {
-        return readTerminal(workerId, timeout, reader, Protocol.VERSION, ignored -> { });
-    }
-
-    public Envelope readTerminal(String workerId, Duration timeout, TimedEnvelopeReader reader,
-                                 Consumer<Instant> livenessObserver) throws Exception {
-        return readTerminal(workerId, timeout, reader, Protocol.VERSION, livenessObserver);
+        return readTerminal(workerId, timeout, reader, ignored -> { });
     }
 
     /**
@@ -35,7 +30,7 @@ public final class LeasedResponseReader {
      * work ownership. Both refresh the worker directory only after worker identity validation.
      */
     public Envelope readTerminal(String workerId, Duration timeout, TimedEnvelopeReader reader,
-                                 int expectedProtocolVersion, Consumer<Instant> livenessObserver) throws Exception {
+                                 Consumer<Instant> livenessObserver) throws Exception {
         Objects.requireNonNull(timeout, "timeout");
         Objects.requireNonNull(reader, "reader");
         Objects.requireNonNull(livenessObserver, "livenessObserver");
@@ -57,7 +52,7 @@ public final class LeasedResponseReader {
                 continue;
             }
             if (envelope.type() == Protocol.Type.HEARTBEAT) {
-                authority.heartbeat(workerId, envelope, heartbeatAt, expectedProtocolVersion);
+                authority.heartbeat(workerId, envelope, heartbeatAt);
                 livenessObserver.accept(heartbeatAt);
                 continue;
             }
