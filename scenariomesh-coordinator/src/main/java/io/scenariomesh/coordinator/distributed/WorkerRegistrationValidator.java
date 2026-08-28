@@ -4,15 +4,19 @@ import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
 /** Validates protocol-level worker registration without coupling it to a transport. */
 public final class WorkerRegistrationValidator {
+    static final String PROTOCOL_VERSION_LABEL = "protocolVersion";
+    static final String PROTOCOL_NEGOTIATED_LABEL = "protocolNegotiated";
+
     public RemoteWorkerRegistration requireRegistration(Envelope hello, String expectedToken) {
         Objects.requireNonNull(hello, "hello");
-        if (hello.protocolVersion() != Protocol.VERSION) {
-            throw new IllegalArgumentException("unsupported worker protocol version " + hello.protocolVersion());
+        if (hello.protocolVersion() != Protocol.BOOTSTRAP_VERSION) {
+            throw new IllegalArgumentException("unsupported worker bootstrap protocol version " + hello.protocolVersion());
         }
         if (hello.type() != Protocol.Type.HELLO) {
             throw new IllegalArgumentException("worker registration must use HELLO");
@@ -31,10 +35,48 @@ public final class WorkerRegistrationValidator {
         if (capabilities.adapterIds().isEmpty()) {
             throw new IllegalArgumentException("worker registration must advertise at least one executable adapter");
         }
+
+        int negotiatedProtocol = negotiateProtocol(capabilities);
+        Map<String, String> labels = new HashMap<>();
+        labels.put("agentId", capabilities.agentId());
+        labels.put(PROTOCOL_VERSION_LABEL, Integer.toString(negotiatedProtocol));
+        labels.put(PROTOCOL_NEGOTIATED_LABEL, Boolean.toString(capabilities.advertisesProtocolRange()));
+
         return new RemoteWorkerRegistration(
                 hello.workerId(), capabilities.runtimeFingerprint(), capabilities.slots(),
                 capabilities.javaFeature(), capabilities.osName(), capabilities.architecture(),
-                capabilities.adapterIds(), capabilities.engineIds(), Map.of("agentId", capabilities.agentId()));
+                capabilities.adapterIds(), capabilities.engineIds(), Map.copyOf(labels));
+    }
+
+    static int negotiatedProtocolVersion(RemoteWorkerRegistration registration) {
+        Objects.requireNonNull(registration, "registration");
+        String value = registration.labels().get(PROTOCOL_VERSION_LABEL);
+        if (value == null) return Protocol.BOOTSTRAP_VERSION;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException invalid) {
+            throw new IllegalStateException("remote worker registration contains invalid negotiated protocol version", invalid);
+        }
+    }
+
+    static boolean negotiationAware(RemoteWorkerRegistration registration) {
+        Objects.requireNonNull(registration, "registration");
+        return Boolean.parseBoolean(registration.labels().getOrDefault(PROTOCOL_NEGOTIATED_LABEL, "false"));
+    }
+
+    private static int negotiateProtocol(WorkerCapabilities capabilities) {
+        if (!capabilities.advertisesProtocolRange()) {
+            // A legacy v8 worker did not advertise a range. Never assume it understands v9.
+            return Protocol.BOOTSTRAP_VERSION;
+        }
+        int lower = Math.max(Protocol.MIN_SUPPORTED_VERSION, capabilities.minProtocolVersion());
+        int upper = Math.min(Protocol.VERSION, capabilities.maxProtocolVersion());
+        if (lower > upper) {
+            throw new IllegalArgumentException("worker protocol range [" + capabilities.minProtocolVersion() + ","
+                    + capabilities.maxProtocolVersion() + "] has no overlap with coordinator range ["
+                    + Protocol.MIN_SUPPORTED_VERSION + "," + Protocol.VERSION + "]");
+        }
+        return upper;
     }
 
     public void requireCanRun(RemoteWorkerRegistration registration, String adapterId, String engineId) {
