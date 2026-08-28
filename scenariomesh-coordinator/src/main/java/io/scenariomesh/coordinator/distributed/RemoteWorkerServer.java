@@ -84,9 +84,9 @@ public final class RemoteWorkerServer implements AutoCloseable {
                     sslSocket.setSoTimeout(Math.toIntExact(Math.max(1L, Duration.ofNanos(remainingNanos).toMillis())));
                     sslSocket.startHandshake();
                 }
-                Envelope hello = readHello(socket, Duration.ofNanos(remainingNanos));
-                RemoteWorkerRegistration registration = validator.requireRegistration(hello, token);
-                RemoteWorkerSession session = new RemoteWorkerSession(mapper, socket, registration);
+                Handshake handshake = readHello(socket, Duration.ofNanos(remainingNanos));
+                RemoteWorkerRegistration registration = validator.requireRegistration(handshake.hello(), token);
+                RemoteWorkerSession session = new RemoteWorkerSession(mapper, socket, registration, handshake.reader());
                 if (WorkerRegistrationValidator.negotiationAware(registration)) {
                     session.write(Envelope.ack(registration.workerId()));
                 }
@@ -107,18 +107,20 @@ public final class RemoteWorkerServer implements AutoCloseable {
         try { session.close(); } catch (Exception ignored) { }
     }
 
-    private Envelope readHello(Socket socket, Duration timeout) throws Exception {
+    private Handshake readHello(Socket socket, Duration timeout) throws Exception {
         int originalTimeout = socket.getSoTimeout();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         try {
             socket.setSoTimeout(Math.toIntExact(Math.max(1L, timeout.toMillis())));
-            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
             String line = reader.readLine();
             if (line == null) throw new IllegalArgumentException("remote worker disconnected before HELLO");
-            return mapper.readValue(line, Envelope.class);
+            return new Handshake(mapper.readValue(line, Envelope.class), reader);
         } finally {
             try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
         }
     }
+
+    private record Handshake(Envelope hello, BufferedReader reader) { }
 
     private static void closeQuietly(Socket socket) {
         try { socket.close(); } catch (Exception ignored) { }
