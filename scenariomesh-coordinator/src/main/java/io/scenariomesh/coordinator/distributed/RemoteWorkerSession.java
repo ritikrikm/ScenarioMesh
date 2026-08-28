@@ -22,11 +22,17 @@ public final class RemoteWorkerSession implements AutoCloseable {
     private final int protocolVersion;
 
     RemoteWorkerSession(ObjectMapper mapper, Socket socket, RemoteWorkerRegistration registration) throws Exception {
+        this(mapper, socket, registration,
+                new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)));
+    }
+
+    RemoteWorkerSession(ObjectMapper mapper, Socket socket, RemoteWorkerRegistration registration,
+                        BufferedReader reader) throws Exception {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.socket = Objects.requireNonNull(socket, "socket");
         this.registration = Objects.requireNonNull(registration, "registration");
         this.protocolVersion = WorkerRegistrationValidator.negotiatedProtocolVersion(registration);
-        this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        this.reader = Objects.requireNonNull(reader, "reader");
         this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
     }
 
