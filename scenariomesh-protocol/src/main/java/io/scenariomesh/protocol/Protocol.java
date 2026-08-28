@@ -8,8 +8,13 @@ import java.util.List;
 import java.util.Set;
 
 public final class Protocol {
-    /** Version 8 adds idle worker presence heartbeats and graceful draining. */
-    public static final int VERSION = 8;
+    /**
+     * Version 9 adds explicit supported-version range negotiation. HELLO deliberately remains
+     * encoded as the v8 bootstrap protocol so bridge-v8 peers can parse and authenticate it.
+     */
+    public static final int VERSION = 9;
+    public static final int MIN_SUPPORTED_VERSION = 8;
+    public static final int BOOTSTRAP_VERSION = 8;
 
     private Protocol() {}
 
@@ -23,7 +28,9 @@ public final class Protocol {
             String architecture,
             String runtimeFingerprint,
             Set<String> adapterIds,
-            Set<String> engineIds) {
+            Set<String> engineIds,
+            Integer minProtocolVersion,
+            Integer maxProtocolVersion) {
         public WorkerCapabilities {
             agentId = require(agentId, "agentId");
             if (slots < 1) throw new IllegalArgumentException("worker slots must be positive");
@@ -39,11 +46,35 @@ public final class Protocol {
             if (engineIds.stream().anyMatch(id -> id == null || id.isBlank())) {
                 throw new IllegalArgumentException("engineIds must not contain blank ids");
             }
+            if ((minProtocolVersion == null) != (maxProtocolVersion == null)) {
+                throw new IllegalArgumentException("protocol range requires both minProtocolVersion and maxProtocolVersion");
+            }
+            if (minProtocolVersion != null) {
+                if (minProtocolVersion < 1 || maxProtocolVersion < minProtocolVersion) {
+                    throw new IllegalArgumentException("invalid supported protocol range");
+                }
+                if (minProtocolVersion > BOOTSTRAP_VERSION || maxProtocolVersion < BOOTSTRAP_VERSION) {
+                    throw new IllegalArgumentException("supported protocol range must include bootstrap version " + BOOTSTRAP_VERSION);
+                }
+            }
+        }
+
+        /** Legacy constructor retained for v8 fixtures and callers that do not advertise negotiation support. */
+        public WorkerCapabilities(String agentId, int slots, int javaFeature, String osName,
+                                  String architecture, String runtimeFingerprint,
+                                  Set<String> adapterIds, Set<String> engineIds) {
+            this(agentId, slots, javaFeature, osName, architecture, runtimeFingerprint,
+                    adapterIds, engineIds, null, null);
         }
 
         public WorkerCapabilities(String agentId, int slots, int javaFeature, String osName,
                                   String architecture, String runtimeFingerprint) {
-            this(agentId, slots, javaFeature, osName, architecture, runtimeFingerprint, Set.of(), Set.of());
+            this(agentId, slots, javaFeature, osName, architecture, runtimeFingerprint,
+                    Set.of(), Set.of(), null, null);
+        }
+
+        public boolean advertisesProtocolRange() {
+            return minProtocolVersion != null && maxProtocolVersion != null;
         }
     }
 
@@ -79,7 +110,7 @@ public final class Protocol {
 
         public static Envelope hello(String workerId, String token) { return hello(workerId, token, null); }
         public static Envelope hello(String workerId, String token, WorkerCapabilities capabilities) {
-            return new Envelope(VERSION, Type.HELLO, workerId, token, capabilities,
+            return new Envelope(BOOTSTRAP_VERSION, Type.HELLO, workerId, token, capabilities,
                     null, null, null, List.of(), List.of(), null, List.of(), null, null);
         }
 
@@ -147,6 +178,13 @@ public final class Protocol {
         public static Envelope error(String workerId, String error) {
             return new Envelope(VERSION, Type.ERROR, workerId, null, null,
                     null, null, null, List.of(), List.of(), null, List.of(), null, error);
+        }
+
+        /** Re-encodes an otherwise identical envelope for a negotiated session protocol. */
+        public Envelope withProtocolVersion(int version) {
+            if (version < 1) throw new IllegalArgumentException("protocol version must be positive");
+            return new Envelope(version, type, workerId, token, capabilities, workUnitId, leaseId,
+                    leaseExpiresAt, tasks, materializedTasks, attempt, results, telemetry, error);
         }
     }
 
