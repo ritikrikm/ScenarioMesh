@@ -49,13 +49,9 @@ public final class Protocol {
             if ((minProtocolVersion == null) != (maxProtocolVersion == null)) {
                 throw new IllegalArgumentException("protocol range requires both minProtocolVersion and maxProtocolVersion");
             }
-            if (minProtocolVersion != null) {
-                if (minProtocolVersion < 1 || maxProtocolVersion < minProtocolVersion) {
-                    throw new IllegalArgumentException("invalid supported protocol range");
-                }
-                if (minProtocolVersion > BOOTSTRAP_VERSION || maxProtocolVersion < BOOTSTRAP_VERSION) {
-                    throw new IllegalArgumentException("supported protocol range must include bootstrap version " + BOOTSTRAP_VERSION);
-                }
+            if (minProtocolVersion != null
+                    && (minProtocolVersion < 1 || maxProtocolVersion < minProtocolVersion)) {
+                throw new IllegalArgumentException("invalid supported protocol range");
             }
         }
 
