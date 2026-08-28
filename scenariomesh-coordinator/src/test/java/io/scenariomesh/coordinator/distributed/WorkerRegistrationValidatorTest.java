@@ -64,9 +64,13 @@ class WorkerRegistrationValidatorTest {
 
     @Test
     void rejectsAdvertisedRangeWithoutCoordinatorOverlap() {
-        assertThrows(IllegalArgumentException.class, () -> new WorkerCapabilities(
+        WorkerCapabilities futureOnly = new WorkerCapabilities(
                 "agent", 1, 21, "Linux", "amd64", "fp",
-                Set.of("junit-platform"), Set.of("junit-jupiter"), 6, 7));
+                Set.of("junit-platform"), Set.of("junit-jupiter"), 10, 11);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> validator.requireRegistration(
+                        Envelope.hello("worker-future", "secret", futureOnly), "secret"));
     }
 
     @Test
