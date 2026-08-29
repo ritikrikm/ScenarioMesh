@@ -20,7 +20,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -64,7 +63,7 @@ public final class PreflightMojo extends AbstractMojo {
 
             List<Path> runtimeClasspath = new RuntimeClasspathResolver().resolve(project, pluginArtifacts);
             List<Path> testRoots = new TestRootResolver().resolve(project);
-            Map<String, String> properties = effectiveProperties();
+            Map<String, String> properties = EffectiveMavenProperties.configuration(project, session);
             List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
             List<String> excludes = excludeClassNameRegexes == null ? List.of() : List.copyOf(excludeClassNameRegexes);
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
@@ -189,14 +188,6 @@ public final class PreflightMojo extends AbstractMojo {
         String value = session.getUserProperties().getProperty(key);
         if (value == null) value = session.getSystemProperties().getProperty(key);
         return value != null && Boolean.parseBoolean(value.trim());
-    }
-
-    private Map<String, String> effectiveProperties() {
-        Map<String, String> values = new LinkedHashMap<>();
-        project.getProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        session.getSystemProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        session.getUserProperties().forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        return values;
     }
 
     private String message(Throwable throwable) {
