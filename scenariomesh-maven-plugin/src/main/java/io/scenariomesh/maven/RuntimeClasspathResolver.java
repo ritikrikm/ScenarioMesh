@@ -11,19 +11,39 @@ import java.util.Set;
 
 /** Shared runtime/test classpath assembly used by preflight and execution. */
 final class RuntimeClasspathResolver {
-    List<Path> resolve(MavenProject project, List<Artifact> pluginArtifacts) throws Exception {
-        Set<Path> paths = new LinkedHashSet<>();
-        for (String element : project.getTestClasspathElements()) {
-            paths.add(Path.of(element).toAbsolutePath().normalize());
-        }
+    RuntimeClasspaths resolveSplit(MavenProject project, List<Artifact> pluginArtifacts) throws Exception {
+        Set<Path> plugin = new LinkedHashSet<>();
         if (pluginArtifacts != null) {
             for (Artifact artifact : pluginArtifacts) {
                 File file = artifact.getFile();
-                if (file != null && file.exists()) {
-                    paths.add(file.toPath().toAbsolutePath().normalize());
-                }
+                if (file != null && file.exists()) plugin.add(file.toPath().toAbsolutePath().normalize());
             }
         }
-        return List.copyOf(paths);
+        if (plugin.isEmpty()) {
+            throw new IllegalStateException("ScenarioMesh plugin runtime artifacts are unavailable; cannot construct isolated worker control classpath");
+        }
+
+        Set<Path> target = new LinkedHashSet<>();
+        for (String element : project.getTestClasspathElements()) {
+            target.add(Path.of(element).toAbsolutePath().normalize());
+        }
+        // Adapter implementation jars and optional third-party SPI providers are plugin artifacts,
+        // but they must be visible inside the target execution realm as well as to the control JVM.
+        target.addAll(plugin);
+        return new RuntimeClasspaths(List.copyOf(plugin), List.copyOf(target));
+    }
+
+    /** Backward-compatible mixed classpath for bootstrap paths that have not yet moved to split launch. */
+    List<Path> resolve(MavenProject project, List<Artifact> pluginArtifacts) throws Exception {
+        return resolveSplit(project, pluginArtifacts).targetClasspath();
+    }
+
+    record RuntimeClasspaths(List<Path> controlClasspath, List<Path> targetClasspath) {
+        RuntimeClasspaths {
+            controlClasspath = List.copyOf(controlClasspath);
+            targetClasspath = List.copyOf(targetClasspath);
+            if (controlClasspath.isEmpty()) throw new IllegalArgumentException("control classpath must not be empty");
+            if (targetClasspath.isEmpty()) throw new IllegalArgumentException("target classpath must not be empty");
+        }
     }
 }
