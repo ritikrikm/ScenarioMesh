@@ -1,0 +1,13 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="ScenarioMesh suite group contract">
+  <test name="suite selected group">
+    <groups>
+      <run>
+        <include name="regression"/>
+      </run>
+    </groups>
+    <classes>
+      <class name="io.scenariomesh.adapter.testng.TestNgSimpleClassFixture"/>
+    </classes>
+  </test>
+</suite>
