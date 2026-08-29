@@ -4,6 +4,7 @@ import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.coordinator.PreparedRemoteWorkers;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
+import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
@@ -30,22 +31,14 @@ import java.util.concurrent.TimeUnit;
 public final class PreflightMojo extends AbstractMojo {
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(60);
 
-    @Parameter(defaultValue = "${project}", readonly = true, required = true)
-    private MavenProject project;
-    @Parameter(defaultValue = "${session}", readonly = true, required = true)
-    private MavenSession session;
-    @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true)
-    private List<Artifact> pluginArtifacts;
-    @Component
-    private ToolchainManager toolchainManager;
-    @Parameter(defaultValue = "surefire")
-    private String takeoverExecutor;
-    @Parameter(defaultValue = "false")
-    private boolean knownModelFramework;
-    @Parameter
-    private List<String> includeClassNameRegexes;
-    @Parameter
-    private List<String> excludeClassNameRegexes;
+    @Parameter(defaultValue = "${project}", readonly = true, required = true) private MavenProject project;
+    @Parameter(defaultValue = "${session}", readonly = true, required = true) private MavenSession session;
+    @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true) private List<Artifact> pluginArtifacts;
+    @Component private ToolchainManager toolchainManager;
+    @Parameter(defaultValue = "surefire") private String takeoverExecutor;
+    @Parameter(defaultValue = "false") private boolean knownModelFramework;
+    @Parameter private List<String> includeClassNameRegexes;
+    @Parameter private List<String> excludeClassNameRegexes;
 
     @Override
     public void execute() {
@@ -61,7 +54,8 @@ public final class PreflightMojo extends AbstractMojo {
                 return;
             }
 
-            List<Path> runtimeClasspath = new RuntimeClasspathResolver().resolve(project, pluginArtifacts);
+            RuntimeClasspathResolver.RuntimeClasspaths classpaths =
+                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
             List<Path> testRoots = new TestRootResolver().resolve(project);
             Map<String, String> properties = EffectiveMavenProperties.configuration(project, session);
             List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
@@ -69,7 +63,8 @@ public final class PreflightMojo extends AbstractMojo {
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
 
             PreflightProbeMain.ProbeResult probe = probe(
-                    javaExecutable, runtimeClasspath, testRoots, properties, includes, excludes);
+                    javaExecutable, classpaths.controlClasspath(), classpaths.targetClasspath(),
+                    testRoots, properties, includes, excludes);
 
             if ("DETECTED_NOT_OWNABLE".equals(probe.ownership())) {
                 passThrough("runtime backend is detected but not safely ownable: " + probe.summary());
@@ -112,7 +107,8 @@ public final class PreflightMojo extends AbstractMojo {
     }
 
     private PreflightProbeMain.ProbeResult probe(Path javaExecutable,
-                                                  List<Path> runtimeClasspath,
+                                                  List<Path> controlClasspath,
+                                                  List<Path> targetClasspath,
                                                   List<Path> testRoots,
                                                   Map<String, String> properties,
                                                   List<String> includes,
@@ -128,8 +124,10 @@ public final class PreflightMojo extends AbstractMojo {
         command.add("-ea");
         properties.entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
+        command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "="
+                + TargetClasspathDescriptor.encodeInline(targetClasspath));
         command.add("-cp");
-        command.add(runtimeClasspath.stream().map(Path::toString)
+        command.add(controlClasspath.stream().map(Path::toString)
                 .reduce((left, right) -> left + File.pathSeparator + right).orElse(""));
         command.add(PreflightProbeMain.class.getName());
         command.add("--output");
