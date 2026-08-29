@@ -2,6 +2,7 @@ package io.scenariomesh.coordinator;
 
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -59,6 +60,12 @@ public record RunRequest(Path projectDirectory,
                 discoverySelection, executorJvmArgs, executorSystemProperties, null);
     }
 
+    /** Control-plane subprocesses launch from this classpath. */
+    @Override public List<Path> runtimeClasspath() { return controlClasspath; }
+
+    /** Target tests and framework adapters resolve from this child execution realm. */
+    public List<Path> targetRuntimeClasspath() { return this.runtimeClasspath; }
+
     List<String> effectiveJvmArgs(){
         List<String> result=new ArrayList<>(config.workerJvmArgs());
         result.addAll(executorJvmArgs);
@@ -66,12 +73,11 @@ public record RunRequest(Path projectDirectory,
     }
 
     Map<String,String> effectiveSystemProperties(){
-        // Surefire/Failsafe calculate provider properties from executor configuration first and
-        // then promote MavenSession user properties (-D...) later, so user properties win on key
-        // collisions. ScenarioMesh must preserve that precedence exactly.
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
         result.putAll(userProperties);
         result.put(INTERNAL_JAVA_EXECUTABLE_PROPERTY, javaExecutable.toString());
+        result.put(TargetClasspathDescriptor.SYSTEM_PROPERTY,
+                TargetClasspathDescriptor.encodeInline(targetRuntimeClasspath()));
         return Map.copyOf(result);
     }
 
