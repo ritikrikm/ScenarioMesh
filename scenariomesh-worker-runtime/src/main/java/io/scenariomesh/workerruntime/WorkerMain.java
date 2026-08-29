@@ -47,9 +47,12 @@ public final class WorkerMain {
         Arguments parsed = Arguments.parse(args);
         Thread thread = Thread.currentThread();
         ClassLoader controlLoader = WorkerMain.class.getClassLoader();
-        List<Path> targetClasspath = parsed.targetClasspathFile == null
-                ? currentClasspath()
-                : TargetClasspathDescriptor.read(parsed.targetClasspathFile);
+        String inlineClasspath = System.getProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY);
+        List<Path> targetClasspath = parsed.targetClasspathFile != null
+                ? TargetClasspathDescriptor.read(parsed.targetClasspathFile)
+                : inlineClasspath != null && !inlineClasspath.isBlank()
+                    ? TargetClasspathDescriptor.decodeInline(inlineClasspath)
+                    : currentClasspath();
         try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
             ClassLoader previous = thread.getContextClassLoader();
             thread.setContextClassLoader(targetLoader);
@@ -69,6 +72,7 @@ public final class WorkerMain {
                 .stream().map(ServiceLoader.Provider::get).toList();
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
+        properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
         WorkerCapabilities capabilities = capabilities(adapters, classLoader);
 
         trace("START worker=" + parsed.workerId + " target=" + parsed.host + ":" + parsed.port
