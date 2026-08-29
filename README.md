@@ -130,11 +130,11 @@ See [`docs/jenkins-distributed.md`](docs/jenkins-distributed.md) and [`docs/secu
 
 ScenarioMesh worker control uses versioned JSON messages independent of target-project stdout/stderr.
 
-Current protocol v8 includes authenticated registration, work-unit IDs, lease IDs, lease heartbeats, authority-free presence heartbeats, results, graceful drain, and stop/ack lifecycle.
+Current session protocol is v9. Bootstrap HELLO remains v8 so current workers can register with preserved bridge-v8 binaries, then negotiate the highest mutually supported session version.
 
 A result is accepted only for the active authoritative lease. Late, duplicate, stale, or replaced-lease results are rejected.
 
-Protocol v8 is an **exact-version** contract. Mixed coordinator/worker versions fail closed. Rolling cross-version negotiation is intentionally not claimed because v8 predates a negotiation handshake/extension point; a future protocol major must introduce that explicitly.
+Supported rolling interoperability is currently tested between a v9 coordinator/worker and the preserved bridge-v8 baseline. Mixed sessions fail closed when no compatible negotiated version exists. Historical arbitrary strict-v8 binaries are not claimed compatible.
 
 ## Reports and reporting integrations
 

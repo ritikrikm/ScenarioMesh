@@ -1,8 +1,8 @@
 # ScenarioMesh architecture
 
-## Current MVP boundary
+## Current product boundary
 
-The MVP is a complete vertical slice, not the final platform. It deliberately implements the pieces required to prove transparent Maven execution through report generation while leaving persistent daemon, historical scheduling, shared-resource leases, remote workers, build fingerprint recycling, and advanced crash recovery for later milestones.
+The original MVP slice has grown into the current product surface. ScenarioMesh now includes transparent Maven execution, distributed worker ownership, negotiated protocol compatibility, history-aware scheduling, reporting, diagnostics, and CLI tooling. The remaining roadmap still covers daemonization, deeper recycling policies, advanced orchestration targets, and broader framework coverage.
 
 ## Dependency direction
 

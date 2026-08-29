@@ -62,4 +62,4 @@ Transparent Maven takeover retains the exact remote sessions proven during prefl
 
 ## Protocol compatibility boundary
 
-Protocol v8 remains an exact-version contract. Mixed protocol versions fail closed. The v8 wire format predates an explicit negotiation extension point and registration acknowledgement, so ScenarioMesh does not encode upgrade metadata into unrelated engine IDs, runtime fingerprints, or other capability fields. A future protocol major must introduce negotiation as a first-class wire concept before rolling cross-version operation can be claimed.
+The current runtime uses a v8 bootstrap HELLO and negotiates v9 sessions when both sides support them. The preserved bridge-v8 baseline remains compatible through that bootstrap path, while mixed sessions still fail closed when no mutually supported version exists. ScenarioMesh does not encode upgrade metadata into unrelated engine IDs, runtime fingerprints, or other capability fields.

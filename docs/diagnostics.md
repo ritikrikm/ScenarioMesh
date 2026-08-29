@@ -30,4 +30,4 @@ The manifest records product/runtime facts useful for support such as ScenarioMe
 
 ## Protocol troubleshooting
 
-Protocol v8 is an exact-version contract. Mixed protocol versions fail closed. The diagnostics manifest records the local protocol version so coordinator/worker version mismatches can be identified without exposing authentication material.
+Diagnostics records the local protocol version and negotiated session metadata so coordinator/worker version mismatches can be identified without exposing authentication material. The current runtime negotiates v9 sessions while remaining compatible with the preserved bridge-v8 baseline through the v8 bootstrap handshake.

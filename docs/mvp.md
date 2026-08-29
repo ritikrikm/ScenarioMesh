@@ -1,4 +1,4 @@
-# MVP scope
+# Current product scope
 
 ## In scope
 
@@ -13,18 +13,20 @@
 - JSON, JUnit XML, and HTML reports
 - correct Maven failure on test or infrastructure failures
 - explicit opt-out
+- duration-aware/LPT history scheduling with FIFO fallback
+- shared distributed leases, heartbeats, and stale-lease rejection
+- remote authenticated worker execution
+- worker crash retry/requeue for safe leaf work
+- CLI `init`, `doctor`, and `diagnostics`
 
 ## Explicitly deferred
 
 - persistent daemon and worker reuse between Maven runs
-- build-fingerprint stale-worker recycling
-- duration history/LPT scheduling
-- shared-resource capacities/leases
-- worker crash retry/requeue
-- remote/Docker/Kubernetes workers
+- build-fingerprint stale-worker recycling beyond the current recycling gates
+- remote/Docker/Kubernetes worker orchestration
 - Selenium Grid-aware scheduling
 - report merging with every framework-specific third-party reporter
 - generic non-Cucumber JUnit 4
 - advanced TestNG XML/factory discovery
 
-The deferred features have extension seams in the core design but are not claimed to work in the MVP.
+The deferred features have extension seams in the current design but are not all claimed to be production-ready or generally supported yet.
