@@ -333,8 +333,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     }
 
     private boolean retryableUnit(WorkUnit unit, List<ExecutionResult> results) {
-        return !unit.scoped() && unit.tasks().size() == 1 && results.size() == 1
-                && (results.get(0).status() == ResultStatus.WORKER_FAILURE || results.get(0).status() == ResultStatus.INFRASTRUCTURE_FAILURE);
+        return InfrastructureRetryPolicy.retryable(unit.tasks().size(), results);
     }
     private boolean requiresWorkerRetirement(ExecutionResult result) { return result.status() == ResultStatus.WORKER_FAILURE || isProtocolValidationFailure(result); }
     private boolean isProtocolValidationFailure(ExecutionResult result) { return ExecutionResultValidator.FAILURE_TYPE.equals(result.failureType()); }
