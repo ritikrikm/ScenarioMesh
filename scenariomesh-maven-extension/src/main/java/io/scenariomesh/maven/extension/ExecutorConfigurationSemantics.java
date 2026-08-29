@@ -16,12 +16,14 @@ final class ExecutorConfigurationSemantics {
         static Classification unknown() { return new Classification(Kind.UNKNOWN, null); }
     }
 
-    private static final Set<String> CONCURRENCY_OR_LAUNCH_OWNED = Set.of(
+    private static final Set<String> SCENARIOMESH_OWNED = Set.of(
             "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
             "jvm", "jdkToolchain",
-            "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory");
+            "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory",
+            "additionalClasspathElements", "additionalClasspathDependencies",
+            "classpathDependencyExcludes", "classpathDependencyScopeExclude");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
@@ -40,21 +42,17 @@ final class ExecutorConfigurationSemantics {
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
             Map.entry("groups", "framework-group-selection"),
             Map.entry("excludedGroups", "framework-group-selection"),
-            Map.entry("dependenciesToScan", "dependency-test-scanning"),
-            Map.entry("additionalClasspathElements", "executor-classpath-extension"),
-            Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),
-            Map.entry("classpathDependencyExcludes", "executor-classpath-filtering"),
-            Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"));
+            Map.entry("dependenciesToScan", "dependency-test-scanning"));
 
     static Classification forSurefire(String name) {
-        if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
+        if (SCENARIOMESH_OWNED.contains(name)) return Classification.replaced();
         if (COMMON_PRESERVED.contains(name) || SUREFIRE_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);
     }
 
     static Classification forFailsafe(String name) {
-        if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
+        if (SCENARIOMESH_OWNED.contains(name)) return Classification.replaced();
         if (COMMON_PRESERVED.contains(name) || FAILSAFE_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);
