@@ -4,41 +4,47 @@ import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
-/**
- * Framework-neutral discovery boundary supplied by an outer build integration.
- *
- * <p>Class selection is normalized to regular expressions before crossing this boundary.
- * The optional test-list expression is deliberately opaque to core: integrations may attach
- * a richer class+method expression and adapters that understand that expression can apply it
- * without core reinterpreting build-tool syntax.</p>
- */
+/** Framework-neutral discovery boundary supplied by an outer build integration. */
 public record DiscoverySelection(List<String> includeClassNameRegexes,
                                  List<String> excludeClassNameRegexes,
-                                 String testListExpression) {
+                                 String testListExpression,
+                                 List<String> includedTestPatterns,
+                                 List<String> excludedTestPatterns) {
 
     public DiscoverySelection(List<String> includeClassNameRegexes,
                               List<String> excludeClassNameRegexes) {
-        this(includeClassNameRegexes, excludeClassNameRegexes, null);
+        this(includeClassNameRegexes, excludeClassNameRegexes, null, List.of(), List.of());
+    }
+
+    public DiscoverySelection(List<String> includeClassNameRegexes,
+                              List<String> excludeClassNameRegexes,
+                              String testListExpression) {
+        this(includeClassNameRegexes, excludeClassNameRegexes, testListExpression, List.of(), List.of());
     }
 
     public DiscoverySelection {
         includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
         excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
+        includedTestPatterns = List.copyOf(includedTestPatterns == null ? List.of() : includedTestPatterns);
+        excludedTestPatterns = List.copyOf(excludedTestPatterns == null ? List.of() : excludedTestPatterns);
         includeClassNameRegexes.forEach(DiscoverySelection::validateRegex);
         excludeClassNameRegexes.forEach(DiscoverySelection::validateRegex);
         if (testListExpression != null) {
             testListExpression = testListExpression.trim();
             if (testListExpression.isEmpty()) testListExpression = null;
         }
+        if (testListExpression != null && (!includedTestPatterns.isEmpty() || !excludedTestPatterns.isEmpty())) {
+            throw new IllegalArgumentException("Maven command test-list expression and configured pattern collections are mutually exclusive");
+        }
     }
 
     public static DiscoverySelection all() {
-        return new DiscoverySelection(List.of(), List.of(), null);
+        return new DiscoverySelection(List.of(), List.of());
     }
 
-    public boolean hasTestListExpression() {
-        return testListExpression != null;
-    }
+    public boolean hasTestListExpression() { return testListExpression != null; }
+    public boolean hasConfiguredTestPatterns() { return !includedTestPatterns.isEmpty() || !excludedTestPatterns.isEmpty(); }
+    public boolean hasMavenTestSelection() { return hasTestListExpression() || hasConfiguredTestPatterns(); }
 
     public boolean matchesClassName(String className) {
         Objects.requireNonNull(className, "className");
