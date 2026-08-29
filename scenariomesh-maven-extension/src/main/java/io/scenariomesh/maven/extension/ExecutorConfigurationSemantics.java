@@ -31,17 +31,17 @@ final class ExecutorConfigurationSemantics {
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
             "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
+            "groups", "excludedGroups",
             "systemPropertyVariables", "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
+            "groups", "excludedGroups",
             "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount",
             "suiteXmlFiles");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
-            Map.entry("groups", "framework-group-selection"),
-            Map.entry("excludedGroups", "framework-group-selection"),
             Map.entry("dependenciesToScan", "dependency-test-scanning"));
 
     static Classification forSurefire(String name) {
