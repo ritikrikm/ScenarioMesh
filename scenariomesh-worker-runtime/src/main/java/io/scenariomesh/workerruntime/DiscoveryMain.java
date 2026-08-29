@@ -21,8 +21,18 @@ public final class DiscoveryMain {
 
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-        AdapterRegistry registry = new AdapterRegistry();
+        Thread thread = Thread.currentThread();
+        ClassLoader controlLoader = thread.getContextClassLoader();
+        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromCurrentClasspath(controlLoader)) {
+            thread.setContextClassLoader(targetLoader);
+            discover(parsed, targetLoader);
+        } finally {
+            thread.setContextClassLoader(controlLoader);
+        }
+    }
+
+    private static void discover(Arguments parsed, ClassLoader classLoader) throws Exception {
+        AdapterRegistry registry = new AdapterRegistry(classLoader);
         Map<String, String> properties = systemProperties();
         AdapterContext context = new AdapterContext(
                 classLoader,
