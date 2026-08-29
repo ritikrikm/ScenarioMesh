@@ -18,7 +18,7 @@
     <maven.compiler.release>17</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.17.3</jackson.version><snakeyaml.version>2.3</snakeyaml.version><junit.jupiter.version>5.10.5</junit.jupiter.version><junit.platform.version>1.10.5</junit.platform.version>
     <junit4.version>4.13.2</junit4.version><testng.version>7.10.2</testng.version><slf4j.version>2.0.16</slf4j.version><opentelemetry.version>1.64.0</opentelemetry.version>
-    <maven.version>3.9.9</maven.version><maven.plugin.annotations.version>3.13.1</maven.plugin.annotations.version><surefire.api.version>3.5.2</surefire.api.version>
+    <maven.version>3.9.9</maven.version><maven.plugin.annotations.version>3.13.1</maven.plugin.annotations.version><maven.common.artifact.filters.version>3.4.0</maven.common.artifact.filters.version><surefire.api.version>3.5.2</surefire.api.version>
   </properties>
   <dependencyManagement><dependencies>
     <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>${jackson.version}</version></dependency>
