@@ -9,6 +9,7 @@ import java.util.List;
 
 /** JDK-only handoff for the target execution classpath. */
 public final class TargetClasspathDescriptor {
+    public static final String SYSTEM_PROPERTY = "scenariomesh.internal.targetClasspath";
     private static final String INLINE_SEPARATOR = ".";
 
     private TargetClasspathDescriptor() {}
@@ -30,10 +31,7 @@ public final class TargetClasspathDescriptor {
         return decodeEntries(Files.readAllLines(file, StandardCharsets.UTF_8), "descriptor " + file);
     }
 
-    /**
-     * Encodes a classpath into one internal JVM-property value. URL-safe Base64 never contains the
-     * dot separator, so this remains independent of the host operating system path separator.
-     */
+    /** Encodes a classpath into one internal JVM-property value. */
     public static String encodeInline(List<Path> classpath) {
         Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
         return normalize(classpath).stream().map(Path::toString)
