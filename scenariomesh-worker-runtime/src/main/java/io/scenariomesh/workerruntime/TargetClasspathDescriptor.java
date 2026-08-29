@@ -7,15 +7,10 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
-/**
- * JDK-only handoff for the target execution classpath.
- *
- * <p>The selected worker JVM must start from ScenarioMesh's control classpath only. Target test
- * classes, framework jars and adapter implementation jars are supplied separately through this
- * descriptor and loaded by {@link TargetRuntimeClassLoader}. Base64 keeps the descriptor robust
- * for spaces, separators and other ordinary path characters without depending on a JSON library.</p>
- */
+/** JDK-only handoff for the target execution classpath. */
 public final class TargetClasspathDescriptor {
+    private static final String INLINE_SEPARATOR = ".";
+
     private TargetClasspathDescriptor() {}
 
     public static void write(Path file, List<Path> classpath) throws Exception {
@@ -23,10 +18,8 @@ public final class TargetClasspathDescriptor {
         List<Path> normalized = normalize(classpath);
         if (file.getParent() != null) Files.createDirectories(file.getParent());
         Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
-        List<String> lines = normalized.stream()
-                .map(Path::toString)
-                .map(value -> encoder.encodeToString(value.getBytes(StandardCharsets.UTF_8)))
-                .toList();
+        List<String> lines = normalized.stream().map(Path::toString)
+                .map(value -> encoder.encodeToString(value.getBytes(StandardCharsets.UTF_8))).toList();
         Files.write(file, lines, StandardCharsets.UTF_8);
     }
 
@@ -34,20 +27,41 @@ public final class TargetClasspathDescriptor {
         if (file == null || !Files.isRegularFile(file)) {
             throw new IllegalArgumentException("target classpath descriptor does not exist: " + file);
         }
+        return decodeEntries(Files.readAllLines(file, StandardCharsets.UTF_8), "descriptor " + file);
+    }
+
+    /**
+     * Encodes a classpath into one internal JVM-property value. URL-safe Base64 never contains the
+     * dot separator, so this remains independent of the host operating system path separator.
+     */
+    public static String encodeInline(List<Path> classpath) {
+        Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
+        return normalize(classpath).stream().map(Path::toString)
+                .map(value -> encoder.encodeToString(value.getBytes(StandardCharsets.UTF_8)))
+                .collect(java.util.stream.Collectors.joining(INLINE_SEPARATOR));
+    }
+
+    public static List<Path> decodeInline(String encoded) {
+        if (encoded == null || encoded.isBlank()) throw new IllegalArgumentException("encoded target classpath is empty");
+        return decodeEntries(List.of(encoded.split(java.util.regex.Pattern.quote(INLINE_SEPARATOR), -1)), "inline target classpath");
+    }
+
+    private static List<Path> decodeEntries(List<String> entries, String source) {
         Base64.Decoder decoder = Base64.getUrlDecoder();
         List<Path> paths = new ArrayList<>();
-        int lineNumber = 0;
-        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-            lineNumber++;
-            if (line == null || line.isBlank()) continue;
+        int index = 0;
+        for (String entry : entries) {
+            index++;
+            if (entry == null || entry.isBlank()) continue;
             try {
-                String decoded = new String(decoder.decode(line.trim()), StandardCharsets.UTF_8);
-                paths.add(Path.of(decoded).toAbsolutePath().normalize());
+                String decoded = new String(decoder.decode(entry.trim()), StandardCharsets.UTF_8);
+                Path path = Path.of(decoded).toAbsolutePath().normalize();
+                if (!paths.contains(path)) paths.add(path);
             } catch (RuntimeException invalid) {
-                throw new IllegalArgumentException("invalid target classpath descriptor entry at line " + lineNumber, invalid);
+                throw new IllegalArgumentException("invalid " + source + " entry " + index, invalid);
             }
         }
-        if (paths.isEmpty()) throw new IllegalArgumentException("target classpath descriptor is empty: " + file);
+        if (paths.isEmpty()) throw new IllegalArgumentException(source + " is empty");
         return List.copyOf(paths);
     }
 
