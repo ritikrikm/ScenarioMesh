@@ -86,6 +86,23 @@ class WorkerRegistrationValidatorTest {
     }
 
     @Test
+    void rejectsMissingOrIncorrectRegistrationTokens() {
+        WorkerCapabilities capabilities = new WorkerCapabilities(
+                "agent", 1, 21, "Linux", "amd64", "fp",
+                Set.of("junit-platform"), Set.of("junit-jupiter"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> validator.requireRegistration(
+                        Envelope.hello("worker-a", "wrong", capabilities), "expected"));
+        assertThrows(IllegalArgumentException.class,
+                () -> validator.requireRegistration(
+                        Envelope.hello("worker-a", null, capabilities), "expected"));
+        assertThrows(IllegalArgumentException.class,
+                () -> validator.requireRegistration(
+                        Envelope.hello("worker-a", "provided", capabilities), null));
+    }
+
+    @Test
     void rejectsWorkerThatCannotRunRequestedAdapterOrEngine() {
         RemoteWorkerRegistration registration = validator.requireRegistration(
                 Envelope.hello("worker-a", "secret", new WorkerCapabilities(

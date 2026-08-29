@@ -4,6 +4,9 @@ import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -21,7 +24,7 @@ public final class WorkerRegistrationValidator {
         if (hello.type() != Protocol.Type.HELLO) {
             throw new IllegalArgumentException("worker registration must use HELLO");
         }
-        if (!Objects.equals(expectedToken, hello.token())) {
+        if (!tokensMatch(expectedToken, hello.token())) {
             throw new IllegalArgumentException("worker registration token mismatch");
         }
         if (hello.workerId() == null || hello.workerId().isBlank()) {
@@ -62,6 +65,18 @@ public final class WorkerRegistrationValidator {
     static boolean negotiationAware(RemoteWorkerRegistration registration) {
         Objects.requireNonNull(registration, "registration");
         return Boolean.parseBoolean(registration.labels().getOrDefault(PROTOCOL_NEGOTIATED_LABEL, "false"));
+    }
+
+    private static boolean tokensMatch(String expected, String provided) {
+        if (expected == null || provided == null) return false;
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] expectedDigest = digest.digest(expected.getBytes(StandardCharsets.UTF_8));
+            byte[] providedDigest = digest.digest(provided.getBytes(StandardCharsets.UTF_8));
+            return MessageDigest.isEqual(expectedDigest, providedDigest);
+        } catch (NoSuchAlgorithmException unavailable) {
+            throw new IllegalStateException("SHA-256 is required for worker token verification", unavailable);
+        }
     }
 
     private static int negotiateProtocol(WorkerCapabilities capabilities) {

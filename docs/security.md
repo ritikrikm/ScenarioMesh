@@ -34,6 +34,8 @@ Do not commit authentication tokens, key-store passwords, private keys, or trust
 
 TLS authenticates the transport endpoint. The distributed token authenticates ScenarioMesh registration at the protocol layer. Registration is not work authority.
 
+Registration tokens are compared as fixed-length SHA-256 digests using the JDK's timing-resistant digest comparison. This reduces timing leakage at the application authentication boundary; TLS remains required for non-loopback transport because token comparison does not provide confidentiality.
+
 Every dispatched work unit receives an authoritative `workUnitId` and `leaseId`. Results are accepted only for the current lease. Late, duplicate, stale, or replaced-lease results are rejected. Lease heartbeats can renew only their exact lease.
 
 Idle `PRESENCE` heartbeats are intentionally authority-free. They prove worker/socket liveness but cannot create or renew a work lease.
