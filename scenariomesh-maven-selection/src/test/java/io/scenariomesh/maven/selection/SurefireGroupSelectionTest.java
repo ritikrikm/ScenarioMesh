@@ -8,8 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurefireGroupSelectionTest {
     @Test
-    void commaAndLogicalOrUseSurefireGrammar() {
-        var selection = SurefireGroupSelection.fromExpressions("smoke|api", null);
+    void commaSeparatedIncludesUseSurefireGrammar() {
+        var selection = SurefireGroupSelection.fromExpressions("smoke,api", null);
         assertTrue(selection.matches("smoke"));
         assertTrue(selection.matches("api"));
         assertFalse(selection.matches("regression"));
