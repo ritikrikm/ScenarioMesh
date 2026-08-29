@@ -56,6 +56,15 @@ public final class DistributedWorkAuthority {
         return lease;
     }
 
+    /**
+     * Immediately removes all authority held by a disconnected/retired worker. The returned
+     * work-unit ids can be requeued without waiting for lease expiry; late envelopes from the
+     * old connection remain fenced by the registry.
+     */
+    public List<String> revokeWorker(String workerId) {
+        return leases.revokeWorker(workerId);
+    }
+
     public Envelope heartbeatMessage(String workerId, String workUnitId, String leaseId,
                                      WorkerTelemetry telemetry) {
         return Envelope.heartbeat(workerId, workUnitId, leaseId, telemetry);
