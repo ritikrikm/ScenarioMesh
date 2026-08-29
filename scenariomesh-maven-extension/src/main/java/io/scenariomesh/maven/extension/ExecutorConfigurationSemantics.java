@@ -34,7 +34,8 @@ final class ExecutorConfigurationSemantics {
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
-            "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount");
+            "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount",
+            "suiteXmlFiles");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
             Map.entry("dependenciesToScan", "dependency-test-scanning"),
