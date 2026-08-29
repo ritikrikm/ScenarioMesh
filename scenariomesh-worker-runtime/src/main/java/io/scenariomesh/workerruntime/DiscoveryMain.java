@@ -6,6 +6,8 @@ import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.SurefireTestSelection;
 
 import java.io.Serializable;
 import java.nio.file.Path;
@@ -39,11 +41,10 @@ public final class DiscoveryMain {
     private static void discover(Arguments parsed, ClassLoader classLoader) throws Exception {
         AdapterRegistry registry = new AdapterRegistry(classLoader);
         Map<String, String> properties = systemProperties();
-        AdapterContext context = new AdapterContext(
-                classLoader,
-                parsed.testRoots,
-                properties,
-                new DiscoverySelection(parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes));
+        String testListExpression = properties.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
+        DiscoverySelection discoverySelection = new DiscoverySelection(
+                parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes, testListExpression);
+        AdapterContext context = new AdapterContext(classLoader, parsed.testRoots, properties, discoverySelection);
 
         ExecutionBackendInventory.Inventory backendInventory = ExecutionBackendInventory.inspect(
                 classLoader,
@@ -78,7 +79,8 @@ public final class DiscoveryMain {
             }
 
             try {
-                List<ScenarioTask> discovered = adapter.discover(context);
+                List<ScenarioTask> discovered = applyTestListSelection(
+                        adapter.id(), adapter.discover(context), testListExpression);
                 discoveredByAdapter.put(adapter.id(), List.copyOf(discovered));
                 evidence.add(new AdapterEvidence(adapter.id(), adapter.framework(), true, discovered.size(), null));
             } catch (Exception | LinkageError exception) {
@@ -96,6 +98,19 @@ public final class DiscoveryMain {
                         List.copyOf(evidence),
                         selection.warnings(),
                         selection.tasks()));
+    }
+
+    private static List<ScenarioTask> applyTestListSelection(
+            String adapterId, List<ScenarioTask> tasks, String expression) {
+        if (expression == null || expression.isBlank() || tasks.isEmpty()) return List.copyOf(tasks);
+        if (!"testng".equals(adapterId)) return List.copyOf(tasks);
+        SurefireTestSelection selection = new SurefireTestSelection(expression);
+        return tasks.stream().filter(task -> {
+            String className = task.metadata().get("className");
+            String methodName = task.metadata().get("methodName");
+            if (className == null || methodName == null) return true;
+            return selection.matches(className, methodName);
+        }).toList();
     }
 
     private static Selection select(
