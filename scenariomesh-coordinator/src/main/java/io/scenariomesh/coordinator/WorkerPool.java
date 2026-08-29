@@ -111,9 +111,10 @@ final class WorkerPool implements AutoCloseable {
             ConcurrentLinkedQueue<ExecutionResult> results,
             RunProgress progress) {
         WorkerConnection connection = initialConnection;
+        String executionLaneId = "local-lane:" + initialConnection.workerId;
         int tasksOnCurrentWorker = 0;
         for (;;) {
-            ScenarioTask representative = scheduler.nextEligible(candidate -> true);
+            ScenarioTask representative = scheduler.nextEligible(executionLaneId, candidate -> true);
             if (representative == null) {
                 stop(connection);
                 return;
