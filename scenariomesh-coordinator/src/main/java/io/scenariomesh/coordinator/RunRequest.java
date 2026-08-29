@@ -2,7 +2,6 @@ package io.scenariomesh.coordinator;
 
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.core.DiscoverySelection;
-import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -46,7 +45,6 @@ public record RunRequest(Path projectDirectory,
                 .toAbsolutePath().normalize();
     }
 
-    /** Backward-compatible constructor for callers already using split control/target classpaths. */
     public RunRequest(Path projectDirectory,
                       List<Path> runtimeClasspath,
                       List<Path> controlClasspath,
@@ -62,7 +60,6 @@ public record RunRequest(Path projectDirectory,
                 true, Map.of(), Set.of(), projectDirectory);
     }
 
-    /** Backward-compatible constructor used by integrations that still provide one mixed classpath. */
     public RunRequest(Path projectDirectory,
                       List<Path> runtimeClasspath,
                       List<Path> testRoots,
@@ -77,7 +74,6 @@ public record RunRequest(Path projectDirectory,
                 true, Map.of(), Set.of(), projectDirectory);
     }
 
-    /** Backward-compatible constructor: use the JVM that launched ScenarioMesh. */
     public RunRequest(Path projectDirectory,
                       List<Path> runtimeClasspath,
                       List<Path> testRoots,
@@ -91,18 +87,9 @@ public record RunRequest(Path projectDirectory,
                 true, Map.of(), Set.of(), projectDirectory);
     }
 
-    /**
-     * Process working directory exposed to discovery and worker JVMs. The source project directory
-     * remains available separately for non-process metadata.
-     */
     @Override public Path projectDirectory() { return executorWorkingDirectory; }
-
     public Path sourceProjectDirectory() { return projectDirectory; }
-
-    /** Control-plane subprocesses launch from this classpath. */
     @Override public List<Path> runtimeClasspath() { return controlClasspath; }
-
-    /** Target tests and framework adapters resolve from this child execution realm. */
     public List<Path> targetRuntimeClasspath() { return this.runtimeClasspath; }
 
     List<String> effectiveJvmArgs(){
@@ -116,8 +103,6 @@ public record RunRequest(Path projectDirectory,
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
         result.putAll(userProperties);
         result.put(INTERNAL_JAVA_EXECUTABLE_PROPERTY, javaExecutable.toString());
-        result.put(TargetClasspathDescriptor.SYSTEM_PROPERTY,
-                TargetClasspathDescriptor.encodeInline(targetRuntimeClasspath()));
         return Map.copyOf(result);
     }
 
