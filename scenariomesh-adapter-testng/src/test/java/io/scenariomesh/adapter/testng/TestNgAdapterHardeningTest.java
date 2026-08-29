@@ -83,6 +83,33 @@ public class TestNgAdapterHardeningTest {
     }
 
     @Test
+    public void includedGroupRegexAndExcludedGroupUseTestNgPrecedenceDuringDiscovery() throws Exception {
+        List<ScenarioTask> tasks = adapter.discover(discoveryContext(
+                TestNgSimpleClassFixture.class,
+                Map.of("groups", "sm.*, regression", "excludedGroups", "regression")));
+        Assert.assertEquals(tasks.size(), 1);
+        Assert.assertTrue(tasks.get(0).displayName().endsWith(".first"));
+        Assert.assertEquals(tasks.get(0).tags(), Set.of("smoke", "tier$1"));
+    }
+
+    @Test
+    public void dollarInGroupExpressionIsLiteralLikeTestNg() throws Exception {
+        List<ScenarioTask> tasks = adapter.discover(discoveryContext(
+                TestNgSimpleClassFixture.class, Map.of("groups", "tier$1")));
+        Assert.assertEquals(tasks.size(), 1);
+        Assert.assertTrue(tasks.get(0).displayName().endsWith(".first"));
+    }
+
+    @Test
+    public void discoveredGroupSelectionExecutesTheSameLogicalTest() throws Exception {
+        Map<String, String> properties = Map.of("groups", "sm.*", "excludedGroups", "regression");
+        List<ScenarioTask> tasks = adapter.discover(discoveryContext(TestNgSimpleClassFixture.class, properties));
+        Assert.assertEquals(tasks.size(), 1);
+        var result = adapter.execute(tasks.get(0), executionContext(properties));
+        Assert.assertEquals(result.status(), ResultStatus.PASSED);
+    }
+
+    @Test
     public void selectedCandidateClassLoadFailureIsNeverSilentlyDropped() throws Exception {
         Path root = Files.createTempDirectory("scenariomesh-testng-discovery");
         Path classFile = root.resolve("broken/BrokenTest.class");
@@ -127,10 +154,31 @@ public class TestNgAdapterHardeningTest {
         Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
     }
 
+    @Test
+    public void pluginGroupSelectionOverridesSuiteXmlGroupsLikeTestNgCommandLineSelection() throws Exception {
+        Path suite = Path.of(getClass().getResource("/suite-groups.xml").toURI());
+        Map<String, String> properties = Map.of(
+                "scenariomesh.testng.suiteXmlFiles", suite.toString(),
+                "groups", "smoke");
+        AdapterContext context = new AdapterContext(getClass().getClassLoader(), List.of(),
+                properties, DiscoverySelection.all());
+
+        List<ScenarioTask> discovered = adapter.discover(context);
+        Assert.assertEquals(discovered.size(), 1);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext(properties));
+        Assert.assertEquals(execution.tasks().size(), 1);
+        Assert.assertTrue(execution.tasks().get(0).displayName().endsWith(".first"));
+        Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
+    }
+
     private AdapterContext discoveryContext(Class<?> fixture) throws Exception {
+        return discoveryContext(fixture, Map.of());
+    }
+
+    private AdapterContext discoveryContext(Class<?> fixture, Map<String, String> properties) throws Exception {
         Path root = Path.of(fixture.getProtectionDomain().getCodeSource().getLocation().toURI());
         return new AdapterContext(
-                getClass().getClassLoader(), List.of(root), Map.of(),
+                getClass().getClassLoader(), List.of(root), properties,
                 new DiscoverySelection(List.of("\\Q" + fixture.getName() + "\\E"), List.of()));
     }
 
@@ -146,7 +194,11 @@ public class TestNgAdapterHardeningTest {
     }
 
     private ExecutionContext executionContext() {
-        return new ExecutionContext(getClass().getClassLoader(), new WorkerId("test-worker"), 1, Map.of());
+        return executionContext(Map.of());
+    }
+
+    private ExecutionContext executionContext(Map<String, String> properties) {
+        return new ExecutionContext(getClass().getClassLoader(), new WorkerId("test-worker"), 1, properties);
     }
 
     public static final class RuntimeSkipFixture {
