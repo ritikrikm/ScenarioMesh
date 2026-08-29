@@ -200,8 +200,8 @@ jobs:
           summary=examples/junit5-surefire-pass-through-example/target/scenariomesh/summary.json
           test -f "$summary"
           grep -Fq '"total" : 1' "$summary"
-          grep -Fq 'SelectedTest' "$summary"
-          if grep -Fq 'NotSelectedTest' "$summary"; then
+          grep -Fq 'selectedBySurefireConfiguration()' "$summary"
+          if grep -Fq 'mustNotRunWhenSurefireIncludesArePreserved()' "$summary"; then
             echo 'Surefire include parity selected a class native Surefire would exclude'
             exit 1
           fi
