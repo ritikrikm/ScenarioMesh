@@ -22,7 +22,7 @@ final class EffectivePropertyResolver {
     }
 
     String resolve(String key) {
-        String value = property(session.getUserProperties(), key);
+        String value = userProperty(key);
         if (value != null) return value;
 
         value = property(session.getSystemProperties(), key);
@@ -42,12 +42,17 @@ final class EffectivePropertyResolver {
         return key == null ? null : System.getProperty(key);
     }
 
+    /** Returns a Maven user property, i.e. an invocation-level value such as command-line -D. */
+    String userProperty(String key) {
+        return property(session.getUserProperties(), key);
+    }
+
     /**
      * Resolves Maven late-replacement values only from sources that cannot be mutated by an earlier
      * build plugin during this Maven invocation. Effective project properties are intentionally omitted.
      */
     String resolveStableLate(String key) {
-        String value = property(session.getUserProperties(), key);
+        String value = userProperty(key);
         if (value != null) return value;
 
         value = property(session.getSystemProperties(), key);
