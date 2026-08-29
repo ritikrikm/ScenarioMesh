@@ -19,22 +19,13 @@ final class ConfigFileLoader {
     private static final String YAML = "scenariomesh.yml";
     private static final String YAML_LONG = "scenariomesh.yaml";
     private static final int SUPPORTED_VERSION = 1;
+    private static final Set<String> ALLOWED_KEYS = allowedKeys();
 
-    private static final Set<String> ALLOWED_KEYS = Set.of(
-            "configVersion", "enabled",
-            "execution.adapter", "execution.adapterMismatchPolicy", "execution.infrastructureRetries",
-            "scheduling.strategy",
-            "workers.count", "workers.minimumReady", "workers.mode", "workers.maxTasksPerWorker",
-            "workers.maxHeapUsagePercent", "workers.startupTimeout", "workers.taskTimeout",
-            "workers.shutdownTimeout", "workers.jvmArgs",
-            "distributed.bindHost", "distributed.bindPort", "distributed.token",
-            "distributed.registrationTimeout", "distributed.tls.enabled",
-            "distributed.tls.requireClientAuth", "distributed.tls.keyStore",
-            "distributed.tls.keyStorePassword", "distributed.tls.trustStore",
-            "distributed.tls.trustStorePassword",
-            "discovery.timeout", "reporting.directory", "logging.liveConsole",
-            "logging.workerFiles", "logging.showConfiguration", "logging.showProgress"
-    );
+    private static Set<String> allowedKeys() {
+        Set<String> keys = new LinkedHashSet<>(ConfigKey.yamlPaths());
+        keys.add("configVersion");
+        return Set.copyOf(keys);
+    }
 
     LoadedConfig load(Path projectDirectory, Path explicitFile) {
         Path selected = selectFile(projectDirectory, explicitFile);
