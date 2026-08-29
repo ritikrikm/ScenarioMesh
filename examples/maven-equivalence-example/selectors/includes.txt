@@ -1,0 +1,4 @@
+# appended to inline includes
+
+**/BetaContractTest.java
+**/GammaContractTest.java
