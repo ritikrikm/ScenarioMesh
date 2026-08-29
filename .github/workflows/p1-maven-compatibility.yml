@@ -16,6 +16,15 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
+      - name: Target Jackson cannot break ScenarioMesh preflight
+        working-directory: examples/junit5-conflicting-jackson-example
+        run: |
+          mvn -B clean test | tee hostile-jackson.log
+          grep -Fq 'ScenarioMesh preflight: ownership proven' hostile-jackson.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          ! grep -Fq 'No serializer found for class io.scenariomesh.workerruntime.PreflightProbeMain' hostile-jackson.log
       - name: Explicit Surefire JVM selection is preserved
         working-directory: examples/junit5-explicit-jvm-example
         run: |
