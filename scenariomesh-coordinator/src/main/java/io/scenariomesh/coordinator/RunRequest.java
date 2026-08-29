@@ -2,6 +2,7 @@ package io.scenariomesh.coordinator;
 
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -103,6 +104,8 @@ public record RunRequest(Path projectDirectory,
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
         result.putAll(userProperties);
         result.put(INTERNAL_JAVA_EXECUTABLE_PROPERTY, javaExecutable.toString());
+        result.put(TargetClasspathDescriptor.SYSTEM_PROPERTY,
+                TargetClasspathDescriptor.encodeInline(targetRuntimeClasspath()));
         return Map.copyOf(result);
     }
 
