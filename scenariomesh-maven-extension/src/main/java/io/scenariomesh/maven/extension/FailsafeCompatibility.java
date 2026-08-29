@@ -1,5 +1,8 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
+import io.scenariomesh.maven.selection.SurefireTestSelection;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.cli.CommandLineUtils;
@@ -78,12 +81,29 @@ final class FailsafeCompatibility {
                 settings.systemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
             }
 
-            List<String> includes = settings.includes.isEmpty()
-                    ? MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS)
-                    : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
-            List<String> excludes = settings.excludes.isEmpty()
-                    ? MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS)
-                    : MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
+            boolean explicitSelection = !settings.includes.isEmpty() || !settings.excludes.isEmpty();
+            List<String> exactIncludes = settings.includes.isEmpty() ? DEFAULT_INCLUDE_PATTERNS : List.copyOf(settings.includes);
+            List<String> exactExcludes = settings.excludes.isEmpty() ? DEFAULT_EXCLUDE_PATTERNS : List.copyOf(settings.excludes);
+            List<String> includes;
+            List<String> excludes;
+            if (explicitSelection) {
+                try {
+                    SurefireTestSelection.fromPatterns(exactIncludes, exactExcludes);
+                    settings.systemProperties.put(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS,
+                            MavenSelectionCodec.encode(exactIncludes));
+                    settings.systemProperties.put(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS,
+                            MavenSelectionCodec.encode(exactExcludes));
+                    includes = List.of(".*");
+                    excludes = List.of();
+                } catch (RuntimeException invalidSelection) {
+                    allReasons.add("execution '" + executionId(execution)
+                            + "': Failsafe selection cannot be represented by Surefire TestListResolver: " + safeMessage(invalidSelection));
+                    continue;
+                }
+            } else {
+                includes = MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS);
+                excludes = MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS);
+            }
             plans.add(new ExecutionPlan(executionId(execution), false, includes, excludes,
                     List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties), settings.testFailureIgnore));
         }
@@ -257,10 +277,12 @@ final class FailsafeCompatibility {
             if (!"include".equals(item.getName()) && !"exclude".equals(item.getName())) {
                 reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">"); continue;
             }
+            if (item.getChildCount() > 0) {
+                reasons.add(location + " contains a structured selection pattern in <" + parent.getName() + ">"); continue;
+            }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
-            if (value == null || value.isBlank()) reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
-            else try { MavenClassNamePatterns.toRegex(value); destination.add(value); }
-            catch (IllegalArgumentException unsupportedPattern) { reasons.add(location + " uses unsupported Maven class selection pattern '" + value + "': " + unsupportedPattern.getMessage()); }
+            if (value == null || value.isBlank()) reasons.add(location + " contains an empty selection pattern in <" + parent.getName() + ">");
+            else destination.add(value);
         }
     }
 
@@ -292,6 +314,11 @@ final class FailsafeCompatibility {
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(resolved); return resolved.toString();
+    }
+
+    private String safeMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message.replace('\n', ' ').replace('\r', ' ');
     }
 
     static String mavenClassPatternToRegex(String pattern) { return MavenClassNamePatterns.toRegex(pattern); }
