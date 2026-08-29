@@ -5,12 +5,13 @@ import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
- * Framework-neutral class-level discovery boundary supplied by the build
- * integration. Maven-derived selectors are matched against canonical class-file
- * paths (for example {@code com/acme/LoginIT.class}) because that is the surface
- * Surefire/Failsafe regex/glob selection is defined against. For compatibility
- * with existing ScenarioMesh-native regexes, the dotted class name is also
- * accepted as a secondary representation.
+ * Framework-neutral class-level discovery boundary supplied by an outer build integration.
+ *
+ * <p>Core deliberately does not model Maven, Surefire, Failsafe, or framework-specific
+ * selectors. Outer integrations translate their native selection semantics into canonical
+ * regular expressions before crossing this boundary. Matching supports both canonical
+ * compiled-class paths (for example {@code com/acme/LoginIT.class}) and dotted binary
+ * class names so adapters do not need to reinterpret build-tool syntax.</p>
  */
 public record DiscoverySelection(List<String> includeClassNameRegexes,
                                  List<String> excludeClassNameRegexes) {
