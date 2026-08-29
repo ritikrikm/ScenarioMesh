@@ -91,7 +91,22 @@ public final class Ports {
 
     public interface SchedulingStrategy {
         void load(Collection<ScenarioTask> tasks);
-        ScenarioTask nextEligible(Predicate<ScenarioTask> eligible);
+
+        /**
+         * Selects the next task that can run on the supplied stable execution-lane identity.
+         * The lane id is deliberately explicit: scheduler affinity must be tied to the worker/slot
+         * that owns execution, never to whichever coordinator thread happens to call this method.
+         */
+        ScenarioTask nextEligible(String executionLaneId, Predicate<ScenarioTask> eligible);
+
+        /**
+         * Backward-compatible convenience for callers that do not yet expose a stable lane id.
+         * Production coordinator paths should always call the lane-aware overload.
+         */
+        default ScenarioTask nextEligible(Predicate<ScenarioTask> eligible) {
+            return nextEligible("thread:" + Thread.currentThread().getId(), eligible);
+        }
+
         void requeue(ScenarioTask task);
         int queued();
     }
