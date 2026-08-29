@@ -1,5 +1,8 @@
 package io.scenariomesh.coordinator;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.workerruntime.WorkerMain;
+
 import java.io.File;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -25,6 +28,8 @@ final class JavaProcessSupport {
         command.addAll(jvmArgs);
         properties.entrySet().stream()
                 .filter(entry -> !RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY.equals(entry.getKey()))
+                .filter(entry -> !WorkerMain.class.getName().equals(mainClass)
+                        || !RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION.equals(entry.getKey()))
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
         command.add("-cp");
