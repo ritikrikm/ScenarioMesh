@@ -5,6 +5,7 @@ import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.cli.CommandLineUtils;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -137,6 +138,8 @@ final class FailsafeCompatibility {
         switch (child.getName()) {
             case "includes" -> readPatternList(child, settings.includes, location, reasons, propertyResolver);
             case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
+            case "includesFile" -> readSelectionFile(child, settings.includes, location, reasons, propertyResolver);
+            case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
             case "skip", "skipITs", "skipTests" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (Boolean.TRUE.equals(value)) settings.explicitlySkipped = true;
@@ -157,6 +160,40 @@ final class FailsafeCompatibility {
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
+    }
+
+    private void readSelectionFile(Xpp3Dom node,
+                                   Set<String> destination,
+                                   String location,
+                                   List<String> reasons,
+                                   Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <" + node.getName()
+                    + "> and file selection semantics cannot be proven");
+            return;
+        }
+        String configuredPath = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (configuredPath == null) return;
+        String baseDirValue = propertyResolver.apply("project.basedir");
+        if (baseDirValue == null || baseDirValue.isBlank()) {
+            reasons.add(location + " uses <" + node.getName()
+                    + "> but Maven project.basedir is unavailable for exact relative-path resolution");
+            return;
+        }
+        Path baseDir;
+        try {
+            baseDir = Path.of(baseDirValue);
+        } catch (RuntimeException invalidBaseDir) {
+            reasons.add(location + " uses <" + node.getName()
+                    + "> but Maven project.basedir is invalid: " + invalidBaseDir.getMessage());
+            return;
+        }
+        ExternalSelectionFile.Analysis file = ExternalSelectionFile.read(baseDir, configuredPath, node.getName());
+        if (!file.supported()) {
+            reasons.add(location + " uses <" + node.getName() + "> that ScenarioMesh cannot reproduce: " + file.reason());
+            return;
+        }
+        destination.addAll(file.patterns());
     }
 
     private void readArgLine(Xpp3Dom node, String location, EffectiveSettings settings, List<String> reasons,

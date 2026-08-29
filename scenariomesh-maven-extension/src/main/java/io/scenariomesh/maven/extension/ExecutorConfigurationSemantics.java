@@ -32,8 +32,8 @@ final class ExecutorConfigurationSemantics {
             "systemPropertyVariables", "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
-            "skipITs", "includes", "excludes", "argLine", "systemPropertyVariables",
-            "testFailureIgnore", "rerunFailingTestsCount");
+            "skipITs", "includes", "excludes", "includesFile", "excludesFile",
+            "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
             Map.entry("enableAssertions", "assertion-mode-parity"),
