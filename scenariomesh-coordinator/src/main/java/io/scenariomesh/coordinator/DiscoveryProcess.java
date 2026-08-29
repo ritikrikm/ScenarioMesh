@@ -44,11 +44,13 @@ final class DiscoveryProcess {
                 DiscoveryMain.class.getName(),
                 args);
 
-        Process process = new ProcessBuilder(command)
+        ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile())
                 .redirectErrorStream(true)
-                .redirectOutput(log.toFile())
-                .start();
+                .redirectOutput(log.toFile());
+        request.excludedEnvironmentVariables().forEach(builder.environment()::remove);
+        builder.environment().putAll(request.executorEnvironmentVariables());
+        Process process = builder.start();
 
         Duration timeout = request.config().discoveryTimeout();
         if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
