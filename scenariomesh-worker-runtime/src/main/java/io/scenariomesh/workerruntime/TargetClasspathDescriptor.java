@@ -39,9 +39,17 @@ public final class TargetClasspathDescriptor {
                 .collect(java.util.stream.Collectors.joining(INLINE_SEPARATOR));
     }
 
+    /**
+     * Decodes the bootstrap value and removes it from global system properties when it is the
+     * process handoff value. Target tests must never observe ScenarioMesh's internal classpath.
+     */
     public static List<Path> decodeInline(String encoded) {
         if (encoded == null || encoded.isBlank()) throw new IllegalArgumentException("encoded target classpath is empty");
-        return decodeEntries(List.of(encoded.split(java.util.regex.Pattern.quote(INLINE_SEPARATOR), -1)), "inline target classpath");
+        List<Path> decoded = decodeEntries(
+                List.of(encoded.split(java.util.regex.Pattern.quote(INLINE_SEPARATOR), -1)),
+                "inline target classpath");
+        if (encoded.equals(System.getProperty(SYSTEM_PROPERTY))) System.clearProperty(SYSTEM_PROPERTY);
+        return decoded;
     }
 
     private static List<Path> decodeEntries(List<String> entries, String source) {
