@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +48,24 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
+    void classLevelTestSelectorOverridesConfiguredIncludesAndExcludes() {
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"));
+        MavenSession session = session("test");
+        session.getUserProperties().setProperty("surefire.includes", "**/*OtherTest.java");
+        session.getUserProperties().setProperty("surefire.excludes", "**/*LoginTest.java");
+        session.getUserProperties().setProperty("test", "LoginTest,*Checkout*");
+
+        var decision = detector.evaluate(session, project);
+
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals(2, decision.includeClassNameRegexes().size());
+        assertTrue(decision.excludeClassNameRegexes().isEmpty());
+        assertTrue(matchesAny(decision.includeClassNameRegexes(), "LoginTest"));
+        assertTrue(matchesAny(decision.includeClassNameRegexes(), "FastCheckoutTest"));
+        assertFalse(matchesAny(decision.includeClassNameRegexes(), "OtherTest"));
+    }
+
+    @Test
     void unsupportedSurefireIncludePropertyFailsClosed() {
         MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"));
         MavenSession session = session("test");
@@ -67,7 +86,8 @@ class ProjectCompatibilityDetectorTest {
         var decision = detector.evaluate(session, project);
 
         assertFalse(decision.compatible());
-        assertTrue(decision.reason().contains("test-selection property 'test'"), decision.reason());
+        assertTrue(decision.reason().contains("class-only Maven selector subset"), decision.reason());
+        assertTrue(decision.reason().contains("method selectors"), decision.reason());
     }
 
     @Test
@@ -184,6 +204,10 @@ class ProjectCompatibilityDetectorTest {
 
         assertFalse(decision.compatible());
         assertTrue(decision.reason().contains("defined only as a Maven project property"), decision.reason());
+    }
+
+    private boolean matchesAny(List<String> regexes, String className) {
+        return regexes.stream().anyMatch(regex -> Pattern.matches(regex, className));
     }
 
     private MavenSession session(String... goals) {
