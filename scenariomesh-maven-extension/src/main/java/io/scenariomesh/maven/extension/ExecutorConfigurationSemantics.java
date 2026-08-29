@@ -28,7 +28,8 @@ final class ExecutorConfigurationSemantics {
             "skip", "skipTests", "useModulePath");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
-            "includes", "excludes", "systemPropertyVariables", "properties", "suiteXmlFiles");
+            "includes", "excludes", "includesFile", "excludesFile",
+            "systemPropertyVariables", "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "argLine", "systemPropertyVariables",
