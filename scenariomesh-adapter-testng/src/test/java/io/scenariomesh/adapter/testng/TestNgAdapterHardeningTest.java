@@ -98,7 +98,7 @@ public class TestNgAdapterHardeningTest {
             adapter.discover(discoveryContext(
                     TestNgSimpleClassFixture.class, Map.of("groups", "smoke | regression")));
             Assert.fail("Expected invalid Surefire group expression to fail closed");
-        } catch (IllegalStateException expected) {
+        } catch (IllegalArgumentException expected) {
             Assert.assertTrue(expected.getMessage().contains("Cannot parse Surefire group"), expected.getMessage());
         }
     }
