@@ -17,16 +17,20 @@ import org.apache.maven.toolchain.ToolchainManager;
 
 import java.io.File;
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.List;
+import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-/** Proves runtime ownership in the exact JVM Maven selected for target tests. */
+/** Proves runtime ownership in the exact JVM and process context Maven selected for target tests. */
 @Mojo(name = "preflight", defaultPhase = LifecyclePhase.PROCESS_TEST_CLASSES, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
 public final class PreflightMojo extends AbstractMojo {
@@ -41,6 +45,10 @@ public final class PreflightMojo extends AbstractMojo {
     @Parameter private List<String> includeClassNameRegexes;
     @Parameter private List<String> excludeClassNameRegexes;
     @Parameter private Map<String, String> executorSystemProperties;
+    @Parameter(defaultValue = "true") private boolean enableAssertions;
+    @Parameter private List<String> executorEnvironmentEntries;
+    @Parameter private List<String> excludedEnvironmentVariables;
+    @Parameter private String executorWorkingDirectory;
 
     @Override
     public void execute() {
@@ -64,11 +72,26 @@ public final class PreflightMojo extends AbstractMojo {
             if (executorSystemProperties != null) properties.putAll(executorSystemProperties);
             List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
             List<String> excludes = excludeClassNameRegexes == null ? List.of() : List.copyOf(excludeClassNameRegexes);
+            Map<String, String> environment = decodeEnvironmentEntries(executorEnvironmentEntries);
+            Set<String> excludedEnvironment = excludedEnvironmentVariables == null
+                    ? Set.of() : Set.copyOf(new LinkedHashSet<>(excludedEnvironmentVariables));
+            Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
+            Path workingDirectory = executorWorkingDirectory == null || executorWorkingDirectory.isBlank()
+                    ? projectDirectory : Path.of(executorWorkingDirectory).toAbsolutePath().normalize();
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
+
+            ScenarioMeshConfig config = resolveConfig(properties);
+            if (config.distributed().remote()
+                    && (!enableAssertions || !environment.isEmpty() || !excludedEnvironment.isEmpty()
+                    || !workingDirectory.equals(projectDirectory))) {
+                passThrough("remote workers cannot yet prove the exact Surefire/Failsafe assertion/environment/working-directory launch context; native Maven execution is retained");
+                return;
+            }
 
             PreflightProbeMain.ProbeResult probe = probe(
                     javaExecutable, classpaths.controlClasspath(), classpaths.targetClasspath(),
-                    testRoots, properties, includes, excludes);
+                    testRoots, properties, includes, excludes, enableAssertions,
+                    environment, excludedEnvironment, workingDirectory);
 
             if ("DETECTED_NOT_OWNABLE".equals(probe.ownership())) {
                 passThrough("runtime backend is detected but not safely ownable: " + probe.summary());
@@ -80,7 +103,6 @@ public final class PreflightMojo extends AbstractMojo {
                 return;
             }
 
-            ScenarioMeshConfig config = resolveConfig(properties);
             if (config.distributed().remote()) {
                 InetAddress bindAddress = InetAddress.getByName(config.distributed().bindHost());
                 if (!bindAddress.isLoopbackAddress()) {
@@ -116,7 +138,11 @@ public final class PreflightMojo extends AbstractMojo {
                                                   List<Path> testRoots,
                                                   Map<String, String> properties,
                                                   List<String> includes,
-                                                  List<String> excludes) throws Exception {
+                                                  List<String> excludes,
+                                                  boolean assertionsEnabled,
+                                                  Map<String, String> environmentVariables,
+                                                  Set<String> excludedEnvironment,
+                                                  Path workingDirectory) throws Exception {
         Path directory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize()
                 .resolve("scenariomesh-preflight");
         Files.createDirectories(directory);
@@ -126,6 +152,7 @@ public final class PreflightMojo extends AbstractMojo {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable.toString());
         command.add("-ea");
+        if (!assertionsEnabled) command.add("-da");
         properties.entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
         command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "="
@@ -149,11 +176,13 @@ public final class PreflightMojo extends AbstractMojo {
             command.add(exclude);
         }
 
-        Process process = new ProcessBuilder(command)
-                .directory(project.getBasedir())
+        ProcessBuilder builder = new ProcessBuilder(command)
+                .directory(workingDirectory.toFile())
                 .redirectErrorStream(true)
-                .redirectOutput(log.toFile())
-                .start();
+                .redirectOutput(log.toFile());
+        excludedEnvironment.forEach(builder.environment()::remove);
+        builder.environment().putAll(environmentVariables);
+        Process process = builder.start();
         if (!process.waitFor(PROBE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
             process.destroyForcibly();
             throw new IllegalStateException("selected-JVM ownership probe exceeded " + PROBE_TIMEOUT + "; see " + log);
@@ -164,6 +193,22 @@ public final class PreflightMojo extends AbstractMojo {
                     + "; see " + log + System.lineSeparator() + detail);
         }
         return PreflightProbeMain.readResult(output);
+    }
+
+    private Map<String, String> decodeEnvironmentEntries(List<String> encodedEntries) {
+        if (encodedEntries == null || encodedEntries.isEmpty()) return Map.of();
+        Map<String, String> values = new LinkedHashMap<>();
+        Base64.Decoder decoder = Base64.getUrlDecoder();
+        for (String encoded : encodedEntries) {
+            int separator = encoded == null ? -1 : encoded.indexOf(':');
+            if (separator <= 0 || separator == encoded.length() - 1) {
+                throw new IllegalArgumentException("Invalid internal Maven environment entry encoding");
+            }
+            String key = new String(decoder.decode(encoded.substring(0, separator)), StandardCharsets.UTF_8);
+            String value = new String(decoder.decode(encoded.substring(separator + 1)), StandardCharsets.UTF_8);
+            values.put(key, value);
+        }
+        return Map.copyOf(values);
     }
 
     private void passThrough(String reason) {
