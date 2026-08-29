@@ -129,9 +129,12 @@ final class ProjectCompatibilityDetector {
         List<String> excludes = surefireAnalysis == null
                 ? SurefireCompatibility.defaultExcludeClassNameRegexes()
                 : surefireAnalysis.excludeClassNameRegexes();
+        Map<String, String> surefireSystemProperties = new LinkedHashMap<>();
+        if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
+        surefireSystemProperties.putAll(frameworkSystemProperties);
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), frameworkSystemProperties, false)));
+                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
     }
 
     private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
