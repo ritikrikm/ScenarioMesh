@@ -10,27 +10,42 @@ and result semantics.
 
 ### Apache Maven Executor
 
-Decision: **prototype the forked provider**.
+Decision: **do not use the released forked provider as the capsule supervisor; retain it as an
+upstream candidate and behavioral reference**.
 
 Apache Maven Executor provides a dependency-light API for Maven 3 and Maven 4 and includes forked
 and embedded implementations, plus Docker CLI and Testcontainers providers. The project states that
 it is intended to replace Maven Invoker and Maven Verifier:
 <https://github.com/apache/maven-executor>.
 
-Why it fits:
+Why it remains relevant:
 
 - Apache-owned and aligned with current Maven 3/4 integration testing;
 - avoids maintaining Maven executable discovery and command-line compatibility alone;
 - leaves the target Maven distribution in control;
 - optional providers create a future deployment seam without making containers mandatory.
 
-Conditions:
+Source review of release `1.0.0` found a blocking mismatch with ScenarioMesh authority. The forked
+provider constructs and starts a `ProcessBuilder` internally, blocks in `execute`, and does not
+expose the `Process` or asynchronous cancellation. Timeout/interruption calls `destroyForcibly()`
+on the direct Maven process, but does not provide descendant-tree supervision. ScenarioMesh must be
+able to cancel on lease loss and prove cleanup of Surefire forks, browsers, drivers, and helper
+processes. Adopting the provider unchanged would weaken an existing product guarantee.
+
+Re-evaluation conditions:
 
 - pin and qualify exact releases;
 - inspect argument redaction and environment inheritance;
-- verify cancellation and descendant-process behavior;
-- wrap it behind a ScenarioMesh SPI so it can be replaced;
+- require an upstream process lifecycle/supervision hook or equivalent cancellable execution API;
+- verify cancellation and descendant-process behavior on every claimed operating system;
+- keep it behind a ScenarioMesh Maven-launch SPI so it can be replaced;
 - do not allow its result object to become the ScenarioMesh wire contract.
+
+For capsule beta, reuse ScenarioMesh's tested Java process-tree supervision and build Maven command
+arguments from an immutable ScenarioMesh request. This is a deliberately small ownership layer,
+not a reimplementation of Maven: the spawned target Maven distribution still parses all CLI/model
+semantics. Consider contributing the required supervision seam upstream instead of maintaining a
+permanent fork.
 
 ### Maven Invoker
 
@@ -195,4 +210,3 @@ Every adopted library must pass:
 - secret redaction and supply-chain review;
 - replacement through a ScenarioMesh-owned interface;
 - native-equivalence tests before production ownership changes.
-
