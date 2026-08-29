@@ -3,6 +3,7 @@ package io.scenariomesh.maven;
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.config.TlsConfig;
+import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 import io.scenariomesh.workerruntime.WorkerMain;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
@@ -51,7 +52,8 @@ public final class WorkerMojo extends AbstractMojo {
                 throw new IllegalArgumentException("ScenarioMesh remote authentication token is required via scenariomesh.distributed.token or SCENARIOMESH_DISTRIBUTED_TOKEN");
             }
             Path java = new TestJvmResolver().resolve(project, session, toolchainManager, "surefire", null);
-            List<Path> classpath = new RuntimeClasspathResolver().resolve(project, pluginArtifacts);
+            RuntimeClasspathResolver.RuntimeClasspaths classpaths =
+                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
             String id = effectiveWorkerId();
 
             List<String> command = new ArrayList<>();
@@ -60,8 +62,11 @@ public final class WorkerMojo extends AbstractMojo {
             for (Map.Entry<String, String> property : EffectiveMavenProperties.user(session).entrySet()) {
                 if (safeSystemPropertyName(property.getKey())) command.add("-D" + property.getKey() + "=" + property.getValue());
             }
+            command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "="
+                    + TargetClasspathDescriptor.encodeInline(classpaths.targetClasspath()));
             command.add("-cp");
-            command.add(classpath.stream().map(Path::toString).reduce((a, b) -> a + File.pathSeparator + b).orElse(""));
+            command.add(classpaths.controlClasspath().stream().map(Path::toString)
+                    .reduce((a, b) -> a + File.pathSeparator + b).orElse(""));
             command.add(WorkerMain.class.getName());
             command.add("--host"); command.add(host.trim());
             command.add("--port"); command.add(Integer.toString(port));
@@ -81,7 +86,8 @@ public final class WorkerMojo extends AbstractMojo {
 
             getLog().info("ScenarioMesh remote worker " + id + " connecting to " + host.trim() + ":" + port
                     + " transport=" + (tls.enabled() ? "tls" : "loopback-plain")
-                    + " using test JVM " + java + ". Authentication and TLS secrets are not passed as process arguments.");
+                    + " using test JVM " + java
+                    + " with isolated control/target classpaths. Authentication and TLS secrets are not passed as process arguments.");
             Process process = builder.start();
             int exit = process.waitFor();
             if (exit != 0) throw new MojoExecutionException("ScenarioMesh remote worker exited with code " + exit);
