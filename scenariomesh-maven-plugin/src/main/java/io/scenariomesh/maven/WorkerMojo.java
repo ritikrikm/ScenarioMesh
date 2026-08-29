@@ -19,7 +19,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.UUID;
 
 /** Joins a coordinator from a CI-allocated executor without exposing secrets in child process arguments. */
@@ -45,8 +44,7 @@ public final class WorkerMojo extends AbstractMojo {
 
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
             Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
-            Map<String, String> properties = stringProperties(session.getSystemProperties());
-            properties.putAll(stringProperties(session.getUserProperties()));
+            Map<String, String> properties = EffectiveMavenProperties.configuration(project, session);
             ScenarioMeshConfig config = new ConfigResolver().resolve(projectDirectory, buildDirectory, properties, System.getenv());
             String effectiveToken = token == null || token.isBlank() ? config.distributed().token() : token.trim();
             if (effectiveToken == null || effectiveToken.isBlank()) {
@@ -59,7 +57,7 @@ public final class WorkerMojo extends AbstractMojo {
             List<String> command = new ArrayList<>();
             command.add(java.toString());
             command.addAll(config.workerJvmArgs());
-            for (Map.Entry<String, String> property : stringProperties(session.getUserProperties()).entrySet()) {
+            for (Map.Entry<String, String> property : EffectiveMavenProperties.user(session).entrySet()) {
                 if (safeSystemPropertyName(property.getKey())) command.add("-D" + property.getKey() + "=" + property.getValue());
             }
             command.add("-cp");
@@ -111,10 +109,5 @@ public final class WorkerMojo extends AbstractMojo {
         String lower = name.toLowerCase();
         return !lower.contains("password") && !lower.contains("secret") && !lower.contains("token")
                 && !lower.contains("credential") && !lower.contains("key");
-    }
-    private Map<String, String> stringProperties(Properties properties) {
-        java.util.LinkedHashMap<String, String> values = new java.util.LinkedHashMap<>();
-        if (properties != null) properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        return values;
     }
 }
