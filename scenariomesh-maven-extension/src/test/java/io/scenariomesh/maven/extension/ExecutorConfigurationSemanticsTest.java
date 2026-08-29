@@ -25,11 +25,15 @@ class ExecutorConfigurationSemanticsTest {
     }
 
     @Test
-    void knownUnsupportedFeaturesNameTheirRequiredCapability() {
-        var groups = ExecutorConfigurationSemantics.forFailsafe("groups");
-        assertEquals(ExecutorConfigurationSemantics.Kind.REQUIRES_CAPABILITY, groups.kind());
-        assertEquals("framework-group-selection", groups.capability());
+    void groupSelectionIsPreservedForProviderSpecificCompatibilityGating() {
+        assertEquals(ExecutorConfigurationSemantics.Kind.PRESERVED,
+                ExecutorConfigurationSemantics.forSurefire("groups").kind());
+        assertEquals(ExecutorConfigurationSemantics.Kind.PRESERVED,
+                ExecutorConfigurationSemantics.forFailsafe("excludedGroups").kind());
+    }
 
+    @Test
+    void knownUnsupportedFeaturesNameTheirRequiredCapability() {
         var scan = ExecutorConfigurationSemantics.forSurefire("dependenciesToScan");
         assertEquals(ExecutorConfigurationSemantics.Kind.REQUIRES_CAPABILITY, scan.kind());
         assertEquals("dependency-test-scanning", scan.capability());
