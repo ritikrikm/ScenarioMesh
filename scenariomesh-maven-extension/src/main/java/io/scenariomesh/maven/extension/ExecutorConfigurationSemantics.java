@@ -24,7 +24,7 @@ final class ExecutorConfigurationSemantics {
             "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
-            "skip", "skipTests", "useModulePath", "groups", "excludedGroups");
+            "skip", "skipTests", "useModulePath");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
             "includes", "excludes", "includesFile", "excludesFile",
@@ -38,6 +38,8 @@ final class ExecutorConfigurationSemantics {
             "suiteXmlFiles");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
+            Map.entry("groups", "framework-group-selection"),
+            Map.entry("excludedGroups", "framework-group-selection"),
             Map.entry("dependenciesToScan", "dependency-test-scanning"),
             Map.entry("additionalClasspathElements", "executor-classpath-extension"),
             Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),
