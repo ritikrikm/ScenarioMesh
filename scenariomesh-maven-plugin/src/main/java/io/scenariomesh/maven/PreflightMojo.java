@@ -2,7 +2,6 @@ package io.scenariomesh.maven;
 
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
-import io.scenariomesh.coordinator.PreparedRemoteWorkers;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
 import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 import org.apache.maven.artifact.Artifact;
@@ -16,7 +15,6 @@ import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
 
 import java.io.File;
-import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -81,10 +79,8 @@ public final class PreflightMojo extends AbstractMojo {
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
 
             ScenarioMeshConfig config = resolveConfig(properties);
-            if (config.distributed().remote()
-                    && (!enableAssertions || !environment.isEmpty() || !excludedEnvironment.isEmpty()
-                    || !workingDirectory.equals(projectDirectory))) {
-                passThrough("remote workers cannot yet prove the exact Surefire/Failsafe assertion/environment/working-directory launch context; native Maven execution is retained");
+            if (config.distributed().remote()) {
+                passThrough("transparent Maven takeover cannot prove native Surefire/Failsafe fork-process equivalence across remote agents (inherited environment, working directory, and host process context differ); native Maven execution is retained. Direct ScenarioMesh remote execution remains available outside transparent takeover.");
                 return;
             }
 
@@ -103,19 +99,7 @@ public final class PreflightMojo extends AbstractMojo {
                 return;
             }
 
-            if (config.distributed().remote()) {
-                InetAddress bindAddress = InetAddress.getByName(config.distributed().bindHost());
-                if (!bindAddress.isLoopbackAddress()) {
-                    passThrough("remote transparent takeover on a non-loopback coordinator is disabled until authenticated TLS transport is implemented; current token-only TCP transport is not a production-safe remote boundary");
-                    return;
-                }
-                PreparedRemoteWorkers prepared = PreparedRemoteWorkers.prepare(
-                        config, probe.requiredAdapterIds(), probe.requiredEngineIds(), getLog()::info);
-                RemotePreflightState.store(getPluginContext(), prepared);
-            }
-
-            PreflightState.owned(project, probe.summary() + "; testJvm=" + javaExecutable
-                    + (config.distributed().remote() ? "; remoteWorkers=preflight-proven" : ""));
+            PreflightState.owned(project, probe.summary() + "; testJvm=" + javaExecutable);
             suppressNativeExecutor();
             getLog().info("ScenarioMesh preflight: ownership proven in Maven-selected test JVM " + javaExecutable
                     + "; native " + normalizedExecutor() + " execution will be suppressed. Backend inventory: "
