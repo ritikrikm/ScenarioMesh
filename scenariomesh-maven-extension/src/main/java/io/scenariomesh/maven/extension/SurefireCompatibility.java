@@ -120,6 +120,7 @@ final class SurefireCompatibility {
             case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
+            case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
             case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
             case "properties" -> readProviderProperties(child, location, settings, reasons, propertyResolver);
             case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
@@ -134,6 +135,18 @@ final class SurefireCompatibility {
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
+    }
+
+    private void readScalarSystemProperty(Xpp3Dom node, String location, EffectiveSettings settings,
+                                          List<String> reasons, Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " contains structured <" + node.getName() + "> group selection");
+            return;
+        }
+        String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (value == null) return;
+        if (value.isBlank()) settings.systemProperties.remove(node.getName());
+        else settings.systemProperties.put(node.getName(), value);
     }
 
     private void readEngineList(Xpp3Dom parent, Set<String> destination, String location,
