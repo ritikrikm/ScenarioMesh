@@ -82,6 +82,10 @@ final class ProjectCompatibilityDetector {
                         "maven-failsafe-plugin participates in this invocation but ScenarioMesh cannot reproduce it safely: "
                                 + analysis.reason());
             }
+            if (suiteXmlWithGroupSelection(properties, analysis.executionPlans())) {
+                return CompatibilityDecision.passThrough(
+                        "Failsafe suiteXmlFiles combined with groups/excludedGroups remains native until TestNG suite materialization and zero-selection semantics are proven equivalent");
+            }
             if (groupSelectionRequested(properties, analysis.executionPlans()) && !frameworks.testNgOnly()) {
                 return CompatibilityDecision.passThrough(
                         "Failsafe groups/excludedGroups are currently owned only for a pure TestNG provider set; "
@@ -143,7 +147,9 @@ final class ProjectCompatibilityDetector {
             surefireAnalysis = surefireCompatibility.analyze(surefire, properties::resolve);
             if (surefireAnalysis.explicitlySkipsTests()) return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             reasons.addAll(surefireAnalysis.reasons());
-            if (groupSelectionRequested(properties, surefireAnalysis.systemProperties()) && !frameworks.testNgOnly()) {
+            if (suiteXmlWithGroupSelection(properties, surefireAnalysis.systemProperties())) {
+                reasons.add("Surefire suiteXmlFiles combined with groups/excludedGroups remains native until TestNG suite materialization and zero-selection semantics are proven equivalent");
+            } else if (groupSelectionRequested(properties, surefireAnalysis.systemProperties()) && !frameworks.testNgOnly()) {
                 reasons.add("Surefire groups/excludedGroups are currently owned only for a pure TestNG provider set; "
                         + "mixed, JUnit Platform, and JUnit4 group semantics remain native");
             }
@@ -193,6 +199,18 @@ final class ProjectCompatibilityDetector {
         if (selection != null && selection.testListExpression() != null) {
             properties.put(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION, selection.testListExpression());
         }
+    }
+
+    private boolean suiteXmlWithGroupSelection(EffectivePropertyResolver properties,
+                                               List<FailsafeCompatibility.ExecutionPlan> plans) {
+        return plans.stream().anyMatch(plan -> !plan.explicitlySkipped()
+                && suiteXmlWithGroupSelection(properties, plan.systemProperties()));
+    }
+
+    private boolean suiteXmlWithGroupSelection(EffectivePropertyResolver properties,
+                                               Map<String, String> planProperties) {
+        return planProperties.containsKey(SurefireCompatibility.TESTNG_SUITE_XML_FILES_PROPERTY)
+                && groupSelectionRequested(properties, planProperties);
     }
 
     private boolean groupSelectionRequested(EffectivePropertyResolver properties,
