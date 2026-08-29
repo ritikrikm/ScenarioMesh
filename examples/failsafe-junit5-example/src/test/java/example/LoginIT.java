@@ -9,5 +9,6 @@ class LoginIT {
     void validLogin() {
         assertEquals("true", System.getProperty("scenariomesh.fixture.argline"));
         assertEquals("EN", System.getProperty("scenariomesh.fixture.language"));
+        IntegrationRecorder.record("LoginIT#validLogin");
     }
 }

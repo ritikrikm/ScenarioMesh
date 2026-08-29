@@ -12,6 +12,7 @@ project_dir="$(cd "$project_dir" && pwd)"
 extension_file="$project_dir/.mvn/extensions.xml"
 extension_backup="$project_dir/.mvn/extensions.xml.scenariomesh-equivalence"
 trace_file="$project_dir/target/maven-equivalence-events.log"
+goal="${MAVEN_EQUIVALENCE_GOAL:-test}"
 native_trace="$(mktemp)"
 mesh_trace="$(mktemp)"
 mesh_log="$(mktemp)"
@@ -33,7 +34,7 @@ run_contract() {
   CONTRACT_ENV=equivalence-env \
   CONTRACT_EXCLUDED=inherited-excluded \
   CONTRACT_OVERLAY=inherited-overlay \
-  mvn -B clean test "$@"
+  mvn -B clean "$goal" "$@"
 }
 
 mv "$extension_file" "$extension_backup"
@@ -60,4 +61,4 @@ if grep -Fq 'SUREFIRE_CAPSULE' "$mesh_log"; then
   exit 1
 fi
 
-echo "Maven equivalence proven for: mvn test $*"
+echo "Maven equivalence proven for: mvn $goal $*"

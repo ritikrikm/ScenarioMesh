@@ -105,6 +105,7 @@ final class FailsafeCompatibility {
                 excludes = MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS);
             }
             plans.add(new ExecutionPlan(executionId(execution), false, includes, excludes,
+                    exactIncludes, exactExcludes,
                     List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties), settings.testFailureIgnore));
         }
 
@@ -327,15 +328,21 @@ final class FailsafeCompatibility {
     private static String trim(String value) { if (value == null) return null; String t = value.trim(); return t.isEmpty() ? null : t; }
 
     record ExecutionPlan(String executionId, boolean explicitlySkipped, List<String> includeClassNameRegexes,
-                         List<String> excludeClassNameRegexes, List<String> jvmArgs,
+                         List<String> excludeClassNameRegexes, List<String> includedTestPatterns,
+                         List<String> excludedTestPatterns, List<String> jvmArgs,
                          Map<String, String> systemProperties, boolean testFailureIgnore) {
         ExecutionPlan {
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
+            includedTestPatterns = List.copyOf(includedTestPatterns == null ? List.of() : includedTestPatterns);
+            excludedTestPatterns = List.copyOf(excludedTestPatterns == null ? List.of() : excludedTestPatterns);
             jvmArgs = List.copyOf(jvmArgs == null ? List.of() : jvmArgs);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
         }
-        static ExecutionPlan skipped(String executionId) { return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), Map.of(), false); }
+        static ExecutionPlan skipped(String executionId) {
+            return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), List.of(),
+                    List.of(), Map.of(), false);
+        }
     }
 
     record Analysis(boolean supported, boolean explicitlySkipped, List<ExecutionPlan> executionPlans, String reason) {

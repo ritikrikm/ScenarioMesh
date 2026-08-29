@@ -28,6 +28,7 @@
           <argLine>-Dscenariomesh.fixture.argline=true</argLine>
           <systemPropertyVariables>
             <scenariomesh.fixture.language>${fixture.language}</scenariomesh.fixture.language>
+            <contract.trace>${project.basedir}/target/maven-equivalence-events.log</contract.trace>
           </systemPropertyVariables>
           <testFailureIgnore>false</testFailureIgnore>
           <rerunFailingTestsCount>0</rerunFailingTestsCount>

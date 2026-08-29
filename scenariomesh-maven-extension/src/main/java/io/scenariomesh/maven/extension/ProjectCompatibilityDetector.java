@@ -105,24 +105,22 @@ final class ProjectCompatibilityDetector {
                     return CompatibilityDecision.passThrough(commandSelection.reason());
                 }
 
-                SelectionOverride selectionOverride;
-                if (commandSelection.present()) {
-                    selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
-                } else {
-                    selectionOverride = selectionOverride(
-                            properties, "failsafe.includes", "failsafe.excludes", "Failsafe");
-                }
-                if (!selectionOverride.supported()) {
-                    return CompatibilityDecision.passThrough(selectionOverride.reason());
-                }
                 Map<String, String> finalFrameworkSystemProperties = frameworkSystemProperties;
-                List<ExecutorPlan> plans = analysis.executionPlans().stream()
-                        .filter(plan -> !plan.explicitlySkipped())
-                        .map(plan -> {
+                List<ExecutorPlan> plans = new ArrayList<>();
+                for (FailsafeCompatibility.ExecutionPlan plan : analysis.executionPlans()) {
+                    if (plan.explicitlySkipped()) continue;
+                    SelectionOverride selectionOverride = commandSelection.present()
+                            ? SelectionOverride.supported(commandSelection.includeRegexes(), List.of(), Map.of())
+                            : selectionOverride(properties, "failsafe.includes", "failsafe.excludes", "Failsafe",
+                                    plan.includedTestPatterns(), plan.excludedTestPatterns());
+                    if (!selectionOverride.supported()) {
+                        return CompatibilityDecision.passThrough("Failsafe execution '" + plan.executionId()
+                                + "': " + selectionOverride.reason());
+                    }
                             Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
                             planProperties.putAll(finalFrameworkSystemProperties);
-                            attachAdvancedSelection(planProperties, commandSelection);
-                            return new ExecutorPlan(
+                    applySelectionProperties(planProperties, commandSelection, selectionOverride);
+                    plans.add(new ExecutorPlan(
                                     plan.executionId(),
                                     selectionOverride.includes() == null
                                             ? plan.includeClassNameRegexes() : selectionOverride.includes(),
@@ -130,9 +128,8 @@ final class ProjectCompatibilityDetector {
                                             ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
                                     plan.jvmArgs(),
                                     planProperties,
-                                    plan.testFailureIgnore());
-                        })
-                        .toList();
+                                    plan.testFailureIgnore()));
+                }
                 if (!plans.isEmpty()) {
                     return CompatibilityDecision.takeOver(
                             frameworks.names(), ExecutorKind.FAILSAFE, "integration-test", true, plans);
@@ -168,10 +165,14 @@ final class ProjectCompatibilityDetector {
 
         SelectionOverride selectionOverride;
         if (commandSelection.present()) {
-            selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
+            selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of(), Map.of());
         } else {
+            List<String> baseIncludes = surefireAnalysis == null
+                    ? SurefireCompatibility.defaultIncludePatterns() : surefireAnalysis.includedTestPatterns();
+            List<String> baseExcludes = surefireAnalysis == null
+                    ? SurefireCompatibility.defaultExcludePatterns() : surefireAnalysis.excludedTestPatterns();
             selectionOverride = selectionOverride(
-                    properties, "surefire.includes", "surefire.excludes", "Surefire");
+                    properties, "surefire.includes", "surefire.excludes", "Surefire", baseIncludes, baseExcludes);
         }
         if (!selectionOverride.supported()) return CompatibilityDecision.passThrough(selectionOverride.reason());
 
@@ -188,16 +189,30 @@ final class ProjectCompatibilityDetector {
         Map<String, String> surefireSystemProperties = new LinkedHashMap<>();
         if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
         surefireSystemProperties.putAll(frameworkSystemProperties);
-        attachAdvancedSelection(surefireSystemProperties, commandSelection);
+        applySelectionProperties(surefireSystemProperties, commandSelection, selectionOverride);
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
                 List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
     }
 
-    private void attachAdvancedSelection(Map<String, String> properties,
-                                         CommandLineClassSelection.Analysis selection) {
-        if (selection != null && selection.testListExpression() != null) {
-            properties.put(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION, selection.testListExpression());
+    private void applySelectionProperties(Map<String, String> target,
+                                          CommandLineClassSelection.Analysis commandSelection,
+                                          SelectionOverride selectionOverride) {
+        if (commandSelection != null && commandSelection.present()) {
+            // Surefire's test/it.test parameter overrides configured include and exclude collections.
+            target.remove(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS);
+            target.remove(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS);
+            target.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
+            if (commandSelection.testListExpression() != null) {
+                target.put(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION, commandSelection.testListExpression());
+            }
+            return;
+        }
+        target.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
+        if (selectionOverride != null && selectionOverride.present()) {
+            target.remove(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS);
+            target.remove(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS);
+            target.putAll(selectionOverride.internalProperties());
         }
     }
 
@@ -234,36 +249,34 @@ final class ProjectCompatibilityDetector {
     private SelectionOverride selectionOverride(EffectivePropertyResolver properties,
                                                 String includesKey,
                                                 String excludesKey,
-                                                String executorName) {
-        List<String> includes = null;
-        List<String> excludes = null;
-        if (properties.present(includesKey)) {
-            String value = properties.resolve(includesKey);
-            if (value == null || value.isBlank()) {
-                return SelectionOverride.unsupported(executorName + " selection property '" + includesKey
-                        + "' is blank; ScenarioMesh will not guess Maven's collection binding semantics");
-            }
-            try {
-                includes = MavenClassNamePatterns.toRegexes(List.of(value));
-            } catch (IllegalArgumentException unsupported) {
-                return SelectionOverride.unsupported(executorName + " selection property '" + includesKey
-                        + "' is not in ScenarioMesh's proven Maven selector subset: " + unsupported.getMessage());
-            }
+                                                String executorName,
+                                                List<String> baseIncludes,
+                                                List<String> baseExcludes) {
+        boolean includesPresent = properties.present(includesKey);
+        boolean excludesPresent = properties.present(excludesKey);
+        if (!includesPresent && !excludesPresent) return SelectionOverride.absent();
+
+        String includesValue = includesPresent ? properties.resolve(includesKey) : null;
+        String excludesValue = excludesPresent ? properties.resolve(excludesKey) : null;
+        if (includesPresent && (includesValue == null || includesValue.isBlank())) {
+            return SelectionOverride.unsupported(executorName + " selection property '" + includesKey
+                    + "' is blank; ScenarioMesh will not guess Maven's collection binding semantics");
         }
-        if (properties.present(excludesKey)) {
-            String value = properties.resolve(excludesKey);
-            if (value == null || value.isBlank()) {
-                return SelectionOverride.unsupported(executorName + " selection property '" + excludesKey
-                        + "' is blank; ScenarioMesh will not guess Maven's collection binding semantics");
-            }
-            try {
-                excludes = MavenClassNamePatterns.toRegexes(List.of(value));
-            } catch (IllegalArgumentException unsupported) {
-                return SelectionOverride.unsupported(executorName + " selection property '" + excludesKey
-                        + "' is not in ScenarioMesh's proven Maven selector subset: " + unsupported.getMessage());
-            }
+        if (excludesPresent && (excludesValue == null || excludesValue.isBlank())) {
+            return SelectionOverride.unsupported(executorName + " selection property '" + excludesKey
+                    + "' is blank; ScenarioMesh will not guess Maven's collection binding semantics");
         }
-        return SelectionOverride.supported(includes, excludes);
+
+        List<String> effectiveIncludes = includesPresent ? List.of(includesValue) : baseIncludes;
+        List<String> effectiveExcludes = excludesPresent ? List.of(excludesValue) : baseExcludes;
+        ConfiguredTestSelection.Plan plan = ConfiguredTestSelection.analyze(
+                effectiveIncludes, effectiveExcludes, baseIncludes, baseExcludes);
+        if (!plan.supported()) {
+            return SelectionOverride.unsupported(executorName + " user-property selection cannot be reproduced: "
+                    + plan.reason());
+        }
+        return SelectionOverride.supported(plan.includeClassNameRegexes(),
+                plan.excludeClassNameRegexes(), plan.internalProperties());
     }
 
     private Map<String, String> effectiveFrameworkSystemProperties(
@@ -392,14 +405,22 @@ final class ProjectCompatibilityDetector {
         boolean testFailureIgnore() { return primaryPlan().testFailureIgnore(); }
     }
 
-    private record SelectionOverride(boolean supported, List<String> includes, List<String> excludes, String reason) {
-        private static SelectionOverride supported(List<String> includes, List<String> excludes) {
-            return new SelectionOverride(true,
+    private record SelectionOverride(boolean present, boolean supported, List<String> includes, List<String> excludes,
+                                     Map<String, String> internalProperties, String reason) {
+        private SelectionOverride {
+            internalProperties = Map.copyOf(internalProperties == null ? Map.of() : internalProperties);
+        }
+        private static SelectionOverride absent() {
+            return new SelectionOverride(false, true, null, null, Map.of(), null);
+        }
+        private static SelectionOverride supported(List<String> includes, List<String> excludes,
+                                                   Map<String, String> internalProperties) {
+            return new SelectionOverride(true, true,
                     includes == null ? null : List.copyOf(includes),
-                    excludes == null ? null : List.copyOf(excludes), null);
+                    excludes == null ? null : List.copyOf(excludes), internalProperties, null);
         }
         private static SelectionOverride unsupported(String reason) {
-            return new SelectionOverride(false, null, null, reason);
+            return new SelectionOverride(true, false, null, null, Map.of(), reason);
         }
     }
 

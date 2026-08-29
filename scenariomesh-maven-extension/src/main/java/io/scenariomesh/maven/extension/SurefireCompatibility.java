@@ -106,11 +106,13 @@ final class SurefireCompatibility {
         }
 
         return new Analysis(settings.explicitlySkipsTests, List.copyOf(reasons), includes, excludes,
-                Map.copyOf(settings.systemProperties));
+                exactIncludes, exactExcludes, Map.copyOf(settings.systemProperties));
     }
 
     static List<String> defaultIncludeClassNameRegexes() { return MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS); }
     static List<String> defaultExcludeClassNameRegexes() { return MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS); }
+    static List<String> defaultIncludePatterns() { return DEFAULT_INCLUDE_PATTERNS; }
+    static List<String> defaultExcludePatterns() { return DEFAULT_EXCLUDE_PATTERNS; }
 
     private boolean isStandardLifecycleExecution(PluginExecution execution) {
         if (!DEFAULT_TEST_EXECUTION_ID.equals(trimToNull(execution.getId()))) return false;
@@ -314,11 +316,14 @@ final class SurefireCompatibility {
     private String trimToNull(String value) { if (value == null) return null; String trimmed = value.trim(); return trimmed.isEmpty() ? null : trimmed; }
 
     record Analysis(boolean explicitlySkipsTests, List<String> reasons, List<String> includeClassNameRegexes,
-                    List<String> excludeClassNameRegexes, Map<String, String> systemProperties) {
+                    List<String> excludeClassNameRegexes, List<String> includedTestPatterns,
+                    List<String> excludedTestPatterns, Map<String, String> systemProperties) {
         Analysis {
             reasons = List.copyOf(reasons == null ? List.of() : reasons);
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
+            includedTestPatterns = List.copyOf(includedTestPatterns == null ? List.of() : includedTestPatterns);
+            excludedTestPatterns = List.copyOf(excludedTestPatterns == null ? List.of() : excludedTestPatterns);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
         }
     }

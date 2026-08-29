@@ -61,11 +61,12 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void knownButUnsupportedSemanticCapabilityIsNamedExplicitly() {
+    void groupSelectionIsPreservedForFrameworkSpecificOwnershipDecision() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("groups", "smoke"));
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("framework-group-selection")));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("smoke", analysis.systemProperties().get("groups"));
     }
 
     @Test

@@ -54,10 +54,42 @@ jobs:
         run: |
           bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
             -Dtest=Alpha* -Dcontract.value=cli
+      - name: Native and ScenarioMesh advanced selector grammar is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            '-Dtest=AlphaContractTest#alphaOne+alphaTwo' -Dcontract.value=cli
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            '-Dtest=#alpha*' -Dcontract.value=cli
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            '-Dtest=*ContractTest,!BetaContractTest,!GammaContractTest' -Dcontract.value=cli
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            '-Dtest=%regex[.*.AlphaContractTest.class#alpha.*]' -Dcontract.value=cli
+      - name: Native and ScenarioMesh collection selector contract is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            '-Dsurefire.includes=**/AlphaContractTest.java,**/BetaContractTest.java' \
+            '-Dsurefire.excludes=**/BetaContractTest.java' -Dcontract.value=cli
       - name: Native and ScenarioMesh selector-file contract is identical
         run: |
           bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
             -Pselection-files -Dcontract.value=cli
+      - name: Command selector overrides configured and file selectors identically
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            -Pselection-files '-Dtest=AlphaContractTest#alphaOne' -Dcontract.value=cli
+      - name: Native and ScenarioMesh Failsafe selector contract is identical
+        env:
+          MAVEN_EQUIVALENCE_GOAL: verify
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/failsafe-junit5-example \
+            '-Dit.test=CheckoutIT#cardPayment+bankTransfer'
+          bash scripts/compat/maven-equivalence.sh examples/failsafe-junit5-example \
+            '-Dit.test=*IT,!LoginIT'
+          bash scripts/compat/maven-equivalence.sh examples/failsafe-junit5-example \
+            '-Dit.test=%regex[.*.CheckoutIT.class#card.*]'
+          bash scripts/compat/maven-equivalence.sh examples/failsafe-junit5-example \
+            '-Dfailsafe.includes=**/CheckoutIT.java,**/LoginIT.java' \
+            '-Dfailsafe.excludes=**/LoginIT.java'
       - name: Native and ScenarioMesh fork process context is identical
         run: |
           bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \

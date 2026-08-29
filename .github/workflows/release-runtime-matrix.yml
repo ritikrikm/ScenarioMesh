@@ -102,7 +102,7 @@ jobs:
           (
             cd examples/failsafe-junit5-example
             mvn -B clean verify
-            grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+            grep -Fq '"passed" : 3' target/scenariomesh/summary.json
             test -f target/scenariomesh/deferred-verification.properties
           )
           (
