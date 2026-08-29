@@ -94,7 +94,7 @@ public final class DiscoveryMain {
         DiscoveryResultCodec.write(
                 parsed.output,
                 new DiscoveryResult(
-                        List.of(selection.adapterId()),
+                        selection.adapterIds(),
                         List.copyOf(evidence),
                         selection.warnings(),
                         selection.tasks()));
@@ -132,14 +132,8 @@ public final class DiscoveryMain {
             if (candidates.isEmpty()) {
                 throw new IllegalStateException("ScenarioMesh detected no adapter with executable tests." + evidenceText(evidence));
             }
-            if (candidates.size() > 1) {
-                throw new IllegalStateException("ScenarioMesh adapter ownership is ambiguous: "
-                        + String.join(", ", candidates.keySet())
-                        + " all discovered executable tests. Configure scenariomesh.execution.adapter explicitly "
-                        + "or use a more specific supported adapter." + evidenceText(evidence));
-            }
-            Map.Entry<String, List<ScenarioTask>> selected = candidates.entrySet().iterator().next();
-            return new Selection(selected.getKey(), selected.getValue(), List.of());
+            List<ScenarioTask> combined = combineWithUniqueOwnership(candidates, evidence);
+            return new Selection(List.copyOf(candidates.keySet()), combined, List.of());
         }
 
         registry.required(parsed.adapter);
@@ -149,7 +143,7 @@ public final class DiscoveryMain {
                     ? List.of("Multiple adapters discovered executable tests (" + String.join(", ", candidates.keySet())
                     + "); explicit configuration selected '" + parsed.adapter + "'.")
                     : List.of();
-            return new Selection(parsed.adapter, configuredTasks, warnings);
+            return new Selection(List.of(parsed.adapter), configuredTasks, warnings);
         }
 
         String mismatch = "Configured adapter '" + parsed.adapter
@@ -159,13 +153,41 @@ public final class DiscoveryMain {
                 && autoDiscoveryErrors.isEmpty()) {
             Map.Entry<String, List<ScenarioTask>> detected = candidates.entrySet().iterator().next();
             return new Selection(
-                    detected.getKey(),
+                    List.of(detected.getKey()),
                     detected.getValue(),
                     List.of(mismatch + " Using uniquely detected adapter '" + detected.getKey()
                             + "' because execution.adapterMismatchPolicy=use-detected."));
         }
         throw new IllegalStateException(mismatch + " Policy is " + parsed.mismatchPolicy.externalValue()
                 + "; ScenarioMesh will not guess which tests to run.");
+    }
+
+    private static List<ScenarioTask> combineWithUniqueOwnership(
+            Map<String, List<ScenarioTask>> candidates, List<AdapterEvidence> evidence) {
+        Map<String, String> ownerByLogicalTest = new LinkedHashMap<>();
+        List<ScenarioTask> combined = new ArrayList<>();
+        for (Map.Entry<String, List<ScenarioTask>> candidate : candidates.entrySet()) {
+            for (ScenarioTask task : candidate.getValue()) {
+                String key = logicalKey(task);
+                String previous = ownerByLogicalTest.putIfAbsent(key, candidate.getKey());
+                if (previous != null && !previous.equals(candidate.getKey())) {
+                    throw new IllegalStateException("ScenarioMesh cannot prove unique framework ownership for logical test '"
+                            + key + "': adapters '" + previous + "' and '" + candidate.getKey()
+                            + "' both discovered it. Native Maven execution is safer." + evidenceText(evidence));
+                }
+                combined.add(task);
+            }
+        }
+        return List.copyOf(combined);
+    }
+
+    static String logicalKey(ScenarioTask task) {
+        String className = task.metadata().get("className");
+        String methodName = task.metadata().get("methodName");
+        if (className != null && !className.isBlank()) {
+            return className + "#" + (methodName == null ? "" : methodName);
+        }
+        return task.source() + "|" + task.displayName();
     }
 
     private static String evidenceText(List<AdapterEvidence> evidence) {
@@ -214,8 +236,9 @@ public final class DiscoveryMain {
         }
     }
 
-    private record Selection(String adapterId, List<ScenarioTask> tasks, List<String> warnings) {
+    private record Selection(List<String> adapterIds, List<ScenarioTask> tasks, List<String> warnings) {
         private Selection {
+            adapterIds = List.copyOf(adapterIds);
             tasks = List.copyOf(tasks);
             warnings = List.copyOf(warnings);
         }
