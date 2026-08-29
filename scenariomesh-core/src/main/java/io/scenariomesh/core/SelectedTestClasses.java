@@ -9,12 +9,11 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Resolves the compiled test classes selected by the build integration.
+ * Resolves compiled test classes selected through the framework-neutral core boundary.
  *
- * <p>This creates a single framework-neutral selection boundary before a test
- * framework is asked to discover executable leaves. Maven selection is defined
- * over compiled class-file paths; adapters should not reinterpret Maven path
- * expressions as framework-specific dotted-name filters.</p>
+ * <p>Outer build integrations are responsible for translating their native include/exclude
+ * syntax into {@link DiscoverySelection}. Core only scans compiled roots and applies that
+ * canonical selection; adapters therefore never need to understand build-tool expressions.</p>
  */
 public final class SelectedTestClasses {
     private SelectedTestClasses() {}
