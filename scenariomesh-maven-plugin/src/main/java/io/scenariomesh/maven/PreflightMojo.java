@@ -49,6 +49,9 @@ public final class PreflightMojo extends AbstractMojo {
     @Parameter private List<String> executorEnvironmentEntries;
     @Parameter private List<String> excludedEnvironmentVariables;
     @Parameter private String executorWorkingDirectory;
+    @Parameter private List<String> additionalClasspathElements;
+    @Parameter private List<String> classpathDependencyExcludes;
+    @Parameter private String classpathDependencyScopeExclude;
 
     @Override
     public void execute() {
@@ -65,7 +68,12 @@ public final class PreflightMojo extends AbstractMojo {
             }
 
             RuntimeClasspathResolver.RuntimeClasspaths classpaths =
-                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
+                    new RuntimeClasspathResolver().resolveSplit(
+                            project,
+                            pluginArtifacts,
+                            additionalClasspathElements == null ? List.of() : additionalClasspathElements,
+                            classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes,
+                            classpathDependencyScopeExclude);
             List<Path> testRoots = new TestRootResolver().resolve(project);
             Map<String, String> properties = new LinkedHashMap<>(
                     EffectiveMavenProperties.configuration(project, session));
