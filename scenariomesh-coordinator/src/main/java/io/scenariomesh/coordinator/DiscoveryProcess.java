@@ -36,9 +36,12 @@ final class DiscoveryProcess {
             args.add(regex);
         }
 
+        // Discovery still executes framework probing in the target realm. Worker execution below is
+        // already control-classpath isolated; discovery will move to the same bootstrap once the
+        // JUnit backend probe itself is relocated behind the adapter SPI.
         List<String> command = JavaProcessSupport.command(
                 request.javaExecutable(),
-                request.runtimeClasspath(),
+                request.targetRuntimeClasspath(),
                 request.effectiveJvmArgs(),
                 request.effectiveSystemProperties(),
                 DiscoveryMain.class.getName(),
