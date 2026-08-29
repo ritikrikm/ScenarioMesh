@@ -1,5 +1,6 @@
 package io.scenariomesh.adapter.junitplatform;
 
+import io.scenariomesh.core.RuntimePropertyNames;
 import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.TagFilter;
 import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
@@ -29,17 +30,16 @@ final class JUnitEngineSelection {
         }
 
         String groups = properties == null ? null : properties.get(GROUPS_PROPERTY);
-        if (groups != null && !groups.isBlank()) {
-            builder.filters(TagFilter.includeTags(groups));
-        }
+        if (groups != null && !groups.isBlank()) builder.filters(TagFilter.includeTags(groups));
         String excludedGroups = properties == null ? null : properties.get(EXCLUDED_GROUPS_PROPERTY);
-        if (excludedGroups != null && !excludedGroups.isBlank()) {
-            builder.filters(TagFilter.excludeTags(excludedGroups));
-        }
+        if (excludedGroups != null && !excludedGroups.isBlank()) builder.filters(TagFilter.excludeTags(excludedGroups));
 
-        // Generic JUnit 4 ownership remains gated until the dedicated Vintage equivalence fixture is green.
-        excludes.add(VINTAGE);
-        builder.filters(EngineFilter.excludeEngines(excludes.toArray(String[]::new)));
+        if (properties != null && Boolean.parseBoolean(properties.get(RuntimePropertyNames.JUNIT_VINTAGE_DISABLED))) {
+            excludes.add(VINTAGE);
+        }
+        if (!excludes.isEmpty()) {
+            builder.filters(EngineFilter.excludeEngines(excludes.toArray(String[]::new)));
+        }
         return builder;
     }
 
