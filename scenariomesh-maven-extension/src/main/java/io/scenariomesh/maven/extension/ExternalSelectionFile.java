@@ -34,19 +34,10 @@ final class ExternalSelectionFile {
         List<String> patterns = new ArrayList<>();
         try {
             for (String line : Files.readAllLines(path, Charset.defaultCharset())) {
-                // Maven Shared Utils FileUtils.loadFile ignores only empty lines and lines
-                // whose first character is '#'; leading whitespace is semantically significant.
+                // Maven Shared Utils FileUtils.loadFile ignores only empty lines and lines whose
+                // first character is '#'. Preserve every other byte-level selector spelling for
+                // Surefire TestListResolver; do not approximate method/negation/%regex grammar.
                 if (line.isEmpty() || line.startsWith("#")) continue;
-
-                // P0 owns only the class-pattern subset. Validate before handing patterns to
-                // the compatibility analyzers so unsupported method/negation grammar becomes
-                // an explicit native-Maven pass-through instead of an analyzer exception.
-                try {
-                    MavenClassNamePatterns.toRegex(line);
-                } catch (IllegalArgumentException unsupportedPattern) {
-                    return Analysis.unsupported(parameterName + " contains unsupported Maven class selection pattern '"
-                            + line + "': " + unsupportedPattern.getMessage());
-                }
                 patterns.add(line);
             }
         } catch (IOException unreadable) {
