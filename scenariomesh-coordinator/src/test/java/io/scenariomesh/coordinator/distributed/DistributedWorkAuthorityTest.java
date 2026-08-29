@@ -71,6 +71,28 @@ class DistributedWorkAuthorityTest {
     }
 
     @Test
+    void workerLossCanBeReassignedImmediatelyAndLateResultCannotWin() {
+        Instant now = Instant.parse("2026-08-27T00:00:00Z");
+        DistributedWorkAuthority authority = new DistributedWorkAuthority(new LeaseRegistry(Duration.ofMinutes(2)));
+        ScenarioTask task = task("recover");
+
+        Envelope oldRun = authority.issueRun("unit-recover", "agent-a-worker-1", 1, List.of(task), now);
+        assertEquals(List.of("unit-recover"), authority.revokeWorker("agent-a-worker-1"));
+
+        Envelope replacement = authority.issueRun("unit-recover", "agent-b-worker-4", 2,
+                List.of(task), now.plusSeconds(1));
+        Envelope late = Envelope.resultBatch("agent-a-worker-1", oldRun.workUnitId(), oldRun.leaseId(),
+                List.of(), List.of(passed(task, "agent-a-worker-1", 1, now, now.plusSeconds(2))), null);
+        assertThrows(LeaseRegistry.StaleLeaseException.class,
+                () -> authority.acceptResult("agent-a-worker-1", late, now.plusSeconds(3)));
+
+        Envelope current = Envelope.resultBatch("agent-b-worker-4", replacement.workUnitId(), replacement.leaseId(),
+                List.of(), List.of(passed(task, "agent-b-worker-4", 2, now.plusSeconds(1), now.plusSeconds(3))), null);
+        assertEquals(replacement.leaseId(),
+                authority.acceptResult("agent-b-worker-4", current, now.plusSeconds(4)).leaseId());
+    }
+
+    @Test
     void heartbeatRenewsOnlyCurrentWorkerLease() {
         Instant now = Instant.parse("2026-08-27T00:00:00Z");
         DistributedWorkAuthority authority = new DistributedWorkAuthority(new LeaseRegistry(Duration.ofSeconds(10)));
