@@ -1,8 +1,8 @@
 package io.scenariomesh.reporting;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import io.scenariomesh.workerruntime.JsonCodec;
+import io.scenariomesh.controljson.ControlJsonCodec;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -48,8 +48,8 @@ final class ReportArtifacts {
     static Path writeManifest(Path reportingDirectory, List<ReportArtifact> artifacts) throws Exception {
         Files.createDirectories(reportingDirectory);
         Path output = reportingDirectory.resolve("artifacts.json");
-        ObjectMapper mapper = JsonCodec.create();
-        mapper.writerWithDefaultPrettyPrinter().writeValue(output.toFile(), new ArtifactManifest(1, artifacts));
+        Files.writeString(output,
+                ControlJsonCodec.writePretty(new ArtifactManifest(1, artifacts)), StandardCharsets.UTF_8);
         return output;
     }
 
