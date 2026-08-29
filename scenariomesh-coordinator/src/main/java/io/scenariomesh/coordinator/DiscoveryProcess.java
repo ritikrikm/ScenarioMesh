@@ -1,8 +1,7 @@
 package io.scenariomesh.coordinator;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.workerruntime.DiscoveryMain;
-import io.scenariomesh.workerruntime.JsonCodec;
+import io.scenariomesh.workerruntime.DiscoveryResultCodec;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,7 +14,7 @@ final class DiscoveryProcess {
     private static final Duration TERMINATION_GRACE = Duration.ofSeconds(2);
 
     DiscoveryMain.DiscoveryResult discover(RunRequest request, Path directory) throws Exception {
-        Path output = directory.resolve("discovered-scenarios.json");
+        Path output = directory.resolve("discovered-scenarios.bin");
         Path log = directory.resolve("discovery.log");
         List<String> args = new ArrayList<>();
         args.add("--output");
@@ -62,7 +61,6 @@ final class DiscoveryProcess {
                     + "." + System.lineSeparator() + detail);
         }
 
-        ObjectMapper mapper = JsonCodec.create();
-        return mapper.readValue(output.toFile(), DiscoveryMain.DiscoveryResult.class);
+        return DiscoveryResultCodec.read(output);
     }
 }
