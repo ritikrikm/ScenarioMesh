@@ -26,9 +26,25 @@ public final class PreflightProbeMain {
 
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        ClassLoader controlLoader = PreflightProbeMain.class.getClassLoader();
+        String encoded = System.getProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY);
+        List<Path> targetClasspath = encoded == null || encoded.isBlank()
+                ? currentClasspath()
+                : TargetClasspathDescriptor.decodeInline(encoded);
+        Thread thread = Thread.currentThread();
+        ClassLoader previous = thread.getContextClassLoader();
+        try (TargetRuntimeClassLoader loader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
+            thread.setContextClassLoader(loader);
+            run(parsed, loader);
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    private static void run(Arguments parsed, ClassLoader loader) throws Exception {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
+        properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
         DiscoverySelection selection = new DiscoverySelection(parsed.includes, parsed.excludes);
         AdapterContext context = new AdapterContext(loader, parsed.testRoots, properties, selection);
         AdapterRegistry registry = new AdapterRegistry(loader);
@@ -48,11 +64,6 @@ public final class PreflightProbeMain {
                 requirements.adapterIds(), requirements.engineIds()));
     }
 
-    /**
-     * The preflight bootstrap deliberately uses only JDK classes for its result format. The target
-     * project is allowed to carry any Jackson version; that dependency must never determine whether
-     * ScenarioMesh can report the outcome of its own ownership probe.
-     */
     public static void writeResult(Path output, ProbeResult result) throws Exception {
         Properties values = new Properties();
         values.setProperty("ownership", result.ownership());
@@ -108,6 +119,13 @@ public final class PreflightProbeMain {
             }
         }
         return new RuntimeRequirements(Set.copyOf(adapterIds), Set.copyOf(engineIds));
+    }
+
+    private static List<Path> currentClasspath() {
+        String raw = System.getProperty("java.class.path", "");
+        if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath was supplied");
+        return java.util.Arrays.stream(raw.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(value -> value != null && !value.isBlank()).map(Path::of).toList();
     }
 
     public record ProbeResult(String ownership, String summary,
