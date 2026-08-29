@@ -57,6 +57,9 @@ public final class RunMojo extends AbstractMojo {
     @Parameter private List<String> executorEnvironmentEntries;
     @Parameter private List<String> excludedEnvironmentVariables;
     @Parameter private String executorWorkingDirectory;
+    @Parameter private List<String> additionalClasspathElements;
+    @Parameter private List<String> classpathDependencyExcludes;
+    @Parameter private String classpathDependencyScopeExclude;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -102,7 +105,12 @@ public final class RunMojo extends AbstractMojo {
             if (config.showConfiguration()) logConfiguration(config, resolution, testJava);
 
             RuntimeClasspathResolver.RuntimeClasspaths classpaths =
-                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
+                    new RuntimeClasspathResolver().resolveSplit(
+                            project,
+                            pluginArtifacts,
+                            additionalClasspathElements == null ? List.of() : additionalClasspathElements,
+                            classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes,
+                            classpathDependencyScopeExclude);
             Path workingDirectory = executorWorkingDirectory == null || executorWorkingDirectory.isBlank()
                     ? projectDirectory : Path.of(executorWorkingDirectory).toAbsolutePath().normalize();
             RunRequest request = new RunRequest(
