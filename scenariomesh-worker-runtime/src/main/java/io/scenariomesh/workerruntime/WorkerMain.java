@@ -42,10 +42,20 @@ public final class WorkerMain {
 
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
+        Thread thread = Thread.currentThread();
+        ClassLoader controlLoader = thread.getContextClassLoader();
+        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromCurrentClasspath(controlLoader)) {
+            thread.setContextClassLoader(targetLoader);
+            run(parsed, targetLoader);
+        } finally {
+            thread.setContextClassLoader(controlLoader);
+        }
+    }
+
+    private static void run(Arguments parsed, ClassLoader classLoader) throws Exception {
         Map<String, String> environment = System.getenv();
         String token = RemoteWorkerTransport.authenticationToken(environment);
-        AdapterRegistry adapters = new AdapterRegistry();
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        AdapterRegistry adapters = new AdapterRegistry(classLoader);
         List<WorkerTaskCleanup> cleanupHooks = ServiceLoader.load(WorkerTaskCleanup.class, classLoader)
                 .stream().map(ServiceLoader.Provider::get).toList();
         Map<String, String> properties = new HashMap<>();
@@ -77,6 +87,7 @@ public final class WorkerMain {
                 return;
             }
             Envelope first = ControlJsonCodec.read(firstFrame, Envelope.class);
+            first.validatePayloadShape();
             traceEnvelope("IN_FIRST", parsed.workerId, first);
             int sessionProtocol = requireSupportedProtocol(first.protocolVersion());
             boolean negotiationAck = first.type() == Protocol.Type.ACK;
@@ -97,6 +108,7 @@ public final class WorkerMain {
                             break;
                         }
                         envelope = ControlJsonCodec.read(frame, Envelope.class);
+                        envelope.validatePayloadShape();
                         traceEnvelope("IN", parsed.workerId, envelope);
                     }
                     validate(envelope, sessionProtocol);
@@ -313,6 +325,7 @@ public final class WorkerMain {
 
     private static void write(BufferedWriter writer, Envelope envelope, int protocolVersion) throws Exception {
         Envelope versioned = envelope.withProtocolVersion(protocolVersion);
+        versioned.validatePayloadShape();
         traceEnvelope("OUT", versioned.workerId(), versioned);
         synchronized (writer) {
             writer.write(ControlJsonCodec.write(versioned));
