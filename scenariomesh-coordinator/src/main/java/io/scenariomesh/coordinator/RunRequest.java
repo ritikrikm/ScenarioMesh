@@ -50,8 +50,11 @@ public record RunRequest(Path projectDirectory,
     }
 
     Map<String,String> effectiveSystemProperties(){
-        Map<String,String> result=new LinkedHashMap<>(userProperties);
-        result.putAll(executorSystemProperties);
+        // Surefire/Failsafe calculate provider properties from executor configuration first and
+        // then promote MavenSession user properties (-D...) later, so user properties win on key
+        // collisions. ScenarioMesh must preserve that precedence exactly.
+        Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
+        result.putAll(userProperties);
         // The existing WorkerPool launcher still calls JavaProcessSupport's compatibility overload.
         // Carry the selected test JVM as an internal launch hint; JavaProcessSupport consumes and
         // filters this key instead of forwarding it to target tests.
