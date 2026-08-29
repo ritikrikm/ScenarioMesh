@@ -169,7 +169,7 @@ jobs:
       - name: Mixed JUnit 4 and JUnit 5 remains native Maven execution
         working-directory: examples/mixed-junit4-junit5-pass-through-example
         run: mvn -B clean test
-      - name: TestNG group filtering remains native Maven execution
+      - name: TestNG group filtering is reproduced by ScenarioMesh
         working-directory: examples/testng-group-pass-through-example
         run: mvn -B clean test -Dgroups=smoke
       - name: Verify reports were generated
@@ -185,6 +185,7 @@ jobs:
           test -f examples/process-tree-cleanup-example/target/scenariomesh/report.html
           test -f examples/worker-recycling-scopes-example/target/scenariomesh/report.html
           test -f examples/junit5-surefire-pass-through-example/target/scenariomesh/report.html
+          test -f examples/testng-group-pass-through-example/target/scenariomesh/report.html
       - name: Verify modern report content and machine-readable timing
         run: |
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
@@ -214,8 +215,13 @@ jobs:
           test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.JupiterTest.xml
           test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
           test ! -e examples/mixed-junit4-junit5-pass-through-example/target/scenariomesh/report.html
-      - name: Verify TestNG group-filtered project was not taken over
+      - name: Verify TestNG group-filtered project is owned exactly once
         run: |
-          test -f examples/testng-group-pass-through-example/target/surefire-reports/TEST-example.GroupedTest.xml
-          grep -Fq 'tests="1"' examples/testng-group-pass-through-example/target/surefire-reports/TEST-example.GroupedTest.xml
-          test ! -e examples/testng-group-pass-through-example/target/scenariomesh/report.html
+          summary=examples/testng-group-pass-through-example/target/scenariomesh/summary.json
+          test -f "$summary"
+          grep -Fq '"total" : 1' "$summary"
+          grep -Fq 'smokeRuns()' "$summary"
+          if grep -Fq 'slowMustStayFilteredOut()' "$summary"; then
+            echo 'ScenarioMesh executed a TestNG method excluded by -Dgroups=smoke'
+            exit 1
+          fi
