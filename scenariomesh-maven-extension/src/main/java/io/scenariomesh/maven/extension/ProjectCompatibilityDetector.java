@@ -82,6 +82,11 @@ final class ProjectCompatibilityDetector {
                         "maven-failsafe-plugin participates in this invocation but ScenarioMesh cannot reproduce it safely: "
                                 + analysis.reason());
             }
+            if (groupSelectionRequested(properties, analysis.executionPlans()) && !frameworks.testNgOnly()) {
+                return CompatibilityDecision.passThrough(
+                        "Failsafe groups/excludedGroups are currently owned only for a pure TestNG provider set; "
+                                + "mixed, JUnit Platform, and JUnit4 group semantics remain native");
+            }
             if (!analysis.explicitlySkipped()) {
                 String unsafe = firstPresentProperty(properties, FAILSAFE_UNSAFE_SELECTION_PROPERTIES);
                 if (unsafe != null) {
@@ -138,6 +143,12 @@ final class ProjectCompatibilityDetector {
             surefireAnalysis = surefireCompatibility.analyze(surefire, properties::resolve);
             if (surefireAnalysis.explicitlySkipsTests()) return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             reasons.addAll(surefireAnalysis.reasons());
+            if (groupSelectionRequested(properties, surefireAnalysis.systemProperties()) && !frameworks.testNgOnly()) {
+                reasons.add("Surefire groups/excludedGroups are currently owned only for a pure TestNG provider set; "
+                        + "mixed, JUnit Platform, and JUnit4 group semantics remain native");
+            }
+        } else if (executorGroupPropertyPresent(properties) && !frameworks.testNgOnly()) {
+            reasons.add("Surefire groups/excludedGroups are currently owned only for a pure TestNG provider set");
         }
         String unsafe = firstPresentProperty(properties, SUREFIRE_UNSAFE_SELECTION_PROPERTIES);
         if (unsafe != null) reasons.add("Maven test-selection property '" + unsafe + "' is present and is not yet reproduced by ScenarioMesh discovery");
@@ -184,6 +195,24 @@ final class ProjectCompatibilityDetector {
         }
     }
 
+    private boolean groupSelectionRequested(EffectivePropertyResolver properties,
+                                            List<FailsafeCompatibility.ExecutionPlan> plans) {
+        if (executorGroupPropertyPresent(properties)) return true;
+        return plans.stream().anyMatch(plan -> groupSelectionRequested(plan.systemProperties()));
+    }
+
+    private boolean groupSelectionRequested(EffectivePropertyResolver properties, Map<String, String> planProperties) {
+        return executorGroupPropertyPresent(properties) || groupSelectionRequested(planProperties);
+    }
+
+    private boolean executorGroupPropertyPresent(EffectivePropertyResolver properties) {
+        return properties.present("groups") || properties.present("excludedGroups");
+    }
+
+    private boolean groupSelectionRequested(Map<String, String> properties) {
+        return properties.containsKey("groups") || properties.containsKey("excludedGroups");
+    }
+
     private SelectionOverride selectionOverride(EffectivePropertyResolver properties,
                                                 String includesKey,
                                                 String excludesKey,
@@ -226,7 +255,7 @@ final class ProjectCompatibilityDetector {
         copyFrameworkProperties(session.getUserProperties(), values);
         for (String key : EXECUTOR_FRAMEWORK_PROPERTIES) {
             String value = effectiveProperties.resolve(key);
-            if (value != null && !value.isBlank()) values.put(key, value);
+            if (value != null && !value.isEmpty()) values.put(key, value);
         }
         return Map.copyOf(values);
     }
@@ -357,6 +386,10 @@ final class ProjectCompatibilityDetector {
     }
 
     private record FrameworkSignals(boolean junitPlatform, boolean cucumberJUnit4, boolean testNg, boolean directJUnit4) {
+        boolean testNgOnly() {
+            return testNg && !junitPlatform && !cucumberJUnit4 && !directJUnit4;
+        }
+
         Set<String> names() {
             Set<String> names = new LinkedHashSet<>();
             if (junitPlatform) names.add("junit-platform");
