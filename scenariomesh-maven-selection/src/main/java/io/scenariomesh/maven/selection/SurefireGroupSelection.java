@@ -5,6 +5,7 @@ import org.apache.maven.surefire.group.match.GroupMatcher;
 import org.apache.maven.surefire.group.match.InverseGroupMatcher;
 import org.apache.maven.surefire.group.parse.GroupMatcherParser;
 import org.apache.maven.surefire.group.parse.ParseException;
+import org.apache.maven.surefire.group.parse.TokenMgrError;
 
 /**
  * Public ScenarioMesh wrapper around Surefire's own group-expression grammar.
@@ -26,7 +27,7 @@ public final class SurefireGroupSelection {
             if (included != null) combined.addMatcher(included);
             if (excluded != null) combined.addMatcher(new InverseGroupMatcher(excluded));
             return new SurefireGroupSelection(included == null && excluded == null ? null : combined);
-        } catch (ParseException exception) {
+        } catch (ParseException | TokenMgrError exception) {
             throw new IllegalArgumentException(
                     "Cannot parse Surefire group includes/excludes expression(s): includes='"
                             + groups + "' excludes='" + excludedGroups + "'", exception);
