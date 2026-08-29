@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CommandLineClassSelectionTest {
@@ -15,6 +16,7 @@ class CommandLineClassSelectionTest {
 
         assertTrue(analysis.present());
         assertTrue(analysis.supported());
+        assertNull(analysis.testListExpression());
         assertTrue(matchesAny(analysis, "LoginTest"));
         assertTrue(matchesAny(analysis, "example.LoginTest"));
         assertTrue(matchesClassFile(analysis, "example/LoginTest.class"));
@@ -27,6 +29,7 @@ class CommandLineClassSelectionTest {
                 "Surefire", "test", "*Login*,CheckoutTest");
 
         assertTrue(analysis.supported());
+        assertNull(analysis.testListExpression());
         assertTrue(matchesAny(analysis, "example.AdminLoginTest"));
         assertTrue(matchesAny(analysis, "another.package.CheckoutTest"));
         assertFalse(matchesAny(analysis, "example.PaymentTest"));
@@ -41,33 +44,34 @@ class CommandLineClassSelectionTest {
     }
 
     @Test
-    void rejectsMethodSelectorUntilCompleteGrammarIsOwned() {
+    void delegatesMethodSelectorToSurefirePublicGrammar() {
         var analysis = CommandLineClassSelection.analyze(
                 "Surefire", "test", "LoginTest#successfulLogin");
 
         assertTrue(analysis.present());
-        assertFalse(analysis.supported());
-        assertTrue(analysis.reason().contains("method selectors"));
+        assertTrue(analysis.supported());
+        assertTrue(analysis.includeRegexes().stream().anyMatch(regex -> Pattern.matches(regex, "example.LoginTest")));
+        assertTrue("LoginTest#successfulLogin".equals(analysis.testListExpression()));
     }
 
     @Test
-    void rejectsNegationUntilCompleteGrammarIsOwned() {
+    void delegatesNegationToSurefirePublicGrammar() {
         var analysis = CommandLineClassSelection.analyze(
                 "Failsafe", "it.test", "CheckoutIT,!SlowCheckoutIT");
 
         assertTrue(analysis.present());
-        assertFalse(analysis.supported());
-        assertTrue(analysis.reason().contains("inline negation"));
+        assertTrue(analysis.supported());
+        assertTrue("CheckoutIT,!SlowCheckoutIT".equals(analysis.testListExpression()));
     }
 
     @Test
-    void rejectsPackageQualifiedSelectorUntilFullGrammarIsOwned() {
+    void delegatesPackageQualifiedSelectorToSurefirePublicGrammar() {
         var analysis = CommandLineClassSelection.analyze(
                 "Surefire", "test", "example.LoginTest");
 
         assertTrue(analysis.present());
-        assertFalse(analysis.supported());
-        assertTrue(analysis.reason().contains("package-qualified"));
+        assertTrue(analysis.supported());
+        assertTrue("example.LoginTest".equals(analysis.testListExpression()));
     }
 
     @Test
@@ -77,6 +81,7 @@ class CommandLineClassSelectionTest {
         assertFalse(analysis.present());
         assertTrue(analysis.supported());
         assertTrue(analysis.includeRegexes().isEmpty());
+        assertNull(analysis.testListExpression());
     }
 
     private boolean matchesAny(CommandLineClassSelection.Analysis analysis, String dottedClassName) {
