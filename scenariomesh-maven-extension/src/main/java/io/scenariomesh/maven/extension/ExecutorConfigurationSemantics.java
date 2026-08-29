@@ -20,8 +20,6 @@ final class ExecutorConfigurationSemantics {
             "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
-            // ScenarioMesh resolves these through Maven ToolchainManager and uses the
-            // resulting executable for discovery and worker JVMs.
             "jvm", "jdkToolchain");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
@@ -29,10 +27,12 @@ final class ExecutorConfigurationSemantics {
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
             "includes", "excludes", "includesFile", "excludesFile",
+            "includeJUnit5Engines", "excludeJUnit5Engines",
             "systemPropertyVariables", "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "includesFile", "excludesFile",
+            "includeJUnit5Engines", "excludeJUnit5Engines",
             "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
@@ -42,12 +42,11 @@ final class ExecutorConfigurationSemantics {
             Map.entry("dependenciesToScan", "dependency-test-scanning"),
             Map.entry("additionalClasspathElements", "executor-classpath-extension"),
             Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),
-            Map.entry("classpathDependencyExclude", "executor-classpath-filtering"),
+            Map.entry("classpathDependencyExcludes", "executor-classpath-filtering"),
             Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"),
             Map.entry("environmentVariables", "fork-environment-reproduction"),
-            Map.entry("workingDirectory", "fork-working-directory"),
-            Map.entry("includesFile", "external-selection-file"),
-            Map.entry("excludesFile", "external-selection-file"));
+            Map.entry("excludedEnvironmentVariables", "fork-environment-reproduction"),
+            Map.entry("workingDirectory", "fork-working-directory"));
 
     static Classification forSurefire(String name) {
         if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
