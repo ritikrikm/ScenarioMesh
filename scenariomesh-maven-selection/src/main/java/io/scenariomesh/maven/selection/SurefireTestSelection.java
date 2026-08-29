@@ -32,6 +32,14 @@ public final class SurefireTestSelection {
         this.resolver = new TestListResolver(this.included, this.excluded);
     }
 
+    public static SurefireTestSelection fromExpression(String expression) {
+        return new SurefireTestSelection(expression);
+    }
+
+    public static SurefireTestSelection fromPatterns(Collection<String> included, Collection<String> excluded) {
+        return new SurefireTestSelection(included, excluded);
+    }
+
     public String expression() { return expression; }
     public List<String> included() { return included; }
     public List<String> excluded() { return excluded; }
