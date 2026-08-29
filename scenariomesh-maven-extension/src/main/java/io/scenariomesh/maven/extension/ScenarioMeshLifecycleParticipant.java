@@ -36,6 +36,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
     private final MavenForkLaunchConfiguration forkLaunchConfiguration = new MavenForkLaunchConfiguration();
+    private final MavenExecutorClasspathConfiguration executorClasspathConfiguration = new MavenExecutorClasspathConfiguration();
     private final DownstreamReportCompatibility downstreamReportCompatibility = new DownstreamReportCompatibility();
     private final DownstreamLifecycleCompatibility downstreamLifecycleCompatibility = new DownstreamLifecycleCompatibility();
     private final ConfigResolver configResolver = new ConfigResolver();
@@ -88,10 +89,12 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             EffectivePropertyResolver effectiveProperties = new EffectivePropertyResolver(session, project);
             Plugin nativeExecutor = project.getPlugin(
                     decision.executorKind() == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE ? FAILSAFE : SUREFIRE);
+            List<String> executionIds = decision.executorPlans().stream()
+                    .map(ProjectCompatibilityDetector.ExecutorPlan::executionId).toList();
             MavenForkLaunchConfiguration.Analysis launchAnalysis = forkLaunchConfiguration.analyze(
                     nativeExecutor,
                     decision.executorKind(),
-                    decision.executorPlans().stream().map(ProjectCompatibilityDetector.ExecutorPlan::executionId).toList(),
+                    executionIds,
                     effectiveProperties::resolve,
                     effectiveProperties::userProperty);
             if (!launchAnalysis.supported()) {
@@ -99,6 +102,20 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                         "Maven fork launch configuration cannot be reproduced safely: " + launchAnalysis.reason());
                 info("ScenarioMesh: pass-through for " + project.getArtifactId()
                         + " - Maven fork launch configuration cannot be reproduced safely: " + launchAnalysis.reason());
+                continue;
+            }
+
+            MavenExecutorClasspathConfiguration.Analysis classpathAnalysis = executorClasspathConfiguration.analyze(
+                    nativeExecutor,
+                    decision.executorKind(),
+                    executionIds,
+                    effectiveProperties::resolve,
+                    effectiveProperties::userProperty);
+            if (!classpathAnalysis.supported()) {
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision,
+                        "Maven executor classpath cannot be reproduced safely: " + classpathAnalysis.reason());
+                info("ScenarioMesh: pass-through for " + project.getArtifactId()
+                        + " - Maven executor classpath cannot be reproduced safely: " + classpathAnalysis.reason());
                 continue;
             }
 
@@ -125,7 +142,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
-            injectScenarioMesh(project, decision, launchAnalysis, reportInvocationId, reportAnalysis.runtimeProperties());
+            injectScenarioMesh(project, decision, launchAnalysis, classpathAnalysis,
+                    reportInvocationId, reportAnalysis.runtimeProperties());
             String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
             info("ScenarioMesh: takeover candidate for " + project.getArtifactId()
                     + " (executor=" + decision.executorKind().name().toLowerCase()
@@ -145,6 +163,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             MavenProject project,
             ProjectCompatibilityDetector.CompatibilityDecision decision,
             MavenForkLaunchConfiguration.Analysis launchAnalysis,
+            MavenExecutorClasspathConfiguration.Analysis classpathAnalysis,
             String singlePlanInvocationId,
             Map<String, String> downstreamRuntimeProperties) {
         Plugin plugin = project.getPlugin(GROUP_ID + ":" + PLUGIN_ARTIFACT_ID);
@@ -173,6 +192,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             addList(preflightConfig, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
             addMap(preflightConfig, "executorSystemProperties", plan.executorSystemProperties());
             addLaunchConfiguration(preflightConfig, launchAnalysis.required(plan.executionId()));
+            addClasspathConfiguration(preflightConfig, classpathAnalysis.required(plan.executionId()));
         }
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);
@@ -187,7 +207,12 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             run.setId(RUN_EXECUTION_ID + suffix);
             run.setPhase(decision.takeoverPhase());
             run.addGoal("run");
-            run.setConfiguration(runConfiguration(decision, plan, launchAnalysis.required(plan.executionId()), invocationId,
+            run.setConfiguration(runConfiguration(
+                    decision,
+                    plan,
+                    launchAnalysis.required(plan.executionId()),
+                    classpathAnalysis.required(plan.executionId()),
+                    invocationId,
                     single ? downstreamRuntimeProperties : Map.of()));
             plugin.addExecution(run);
 
@@ -219,6 +244,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             ProjectCompatibilityDetector.CompatibilityDecision decision,
             ProjectCompatibilityDetector.ExecutorPlan plan,
             MavenForkLaunchConfiguration.LaunchSettings launchSettings,
+            MavenExecutorClasspathConfiguration.Settings classpathSettings,
             String invocationId,
             Map<String, String> downstreamRuntimeProperties) {
         Xpp3Dom root = new Xpp3Dom("configuration");
@@ -233,6 +259,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         systemProperties.putAll(downstreamRuntimeProperties);
         addMap(root, "executorSystemProperties", systemProperties);
         addLaunchConfiguration(root, launchSettings);
+        addClasspathConfiguration(root, classpathSettings);
         return root;
     }
 
@@ -247,6 +274,14 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         addList(root, "excludedEnvironmentVariables", "name", settings.excludedEnvironmentVariables().stream().toList());
         if (settings.workingDirectory() != null) {
             addValue(root, "executorWorkingDirectory", settings.workingDirectory().toString());
+        }
+    }
+
+    private void addClasspathConfiguration(Xpp3Dom root, MavenExecutorClasspathConfiguration.Settings settings) {
+        addList(root, "additionalClasspathElements", "element", settings.additionalClasspathElements());
+        addList(root, "classpathDependencyExcludes", "exclude", settings.classpathDependencyExcludes());
+        if (settings.classpathDependencyScopeExclude() != null) {
+            addValue(root, "classpathDependencyScopeExclude", settings.classpathDependencyScopeExclude());
         }
     }
 
