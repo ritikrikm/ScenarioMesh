@@ -30,8 +30,10 @@ final class MavenForkLaunchConfiguration {
             Function<String, String> userPropertyResolver) {
         if (plugin == null) {
             MutableSettings defaults = new MutableSettings();
+            List<String> reasons = new ArrayList<>();
             applyUserOverrides(defaults, executorKind == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE
-                    ? "failsafe" : "surefire", new ArrayList<>(), userPropertyResolver);
+                    ? "failsafe" : "surefire", reasons, userPropertyResolver);
+            if (!reasons.isEmpty()) return Analysis.unsupported(String.join("; ", reasons));
             return Analysis.supported(Map.of("default-test", defaults.freeze()));
         }
 
@@ -200,7 +202,7 @@ final class MavenForkLaunchConfiguration {
 
     private String resolve(String raw, String location, List<String> reasons,
                            Function<String, String> propertyResolver) {
-        String value = raw == null ? "" : raw.trim();
+        String value = raw == null ? "" : raw;
         Matcher matcher = PROPERTY_REFERENCE.matcher(value);
         StringBuffer resolved = new StringBuffer();
         while (matcher.find()) {
