@@ -72,6 +72,25 @@ public final class LeaseRegistry {
         return List.copyOf(expiredUnits);
     }
 
+    /**
+     * Immediately fences every lease owned by a worker whose connection/authority has been lost.
+     * Returned work-unit ids are safe for the scheduler to requeue immediately; a late result from
+     * the retired worker will be rejected even if the original lease deadline has not elapsed yet.
+     */
+    public synchronized List<String> revokeWorker(String workerId) {
+        String worker = require(workerId, "workerId");
+        List<String> revokedUnits = new ArrayList<>();
+        for (Map.Entry<String, String> entry : new ArrayList<>(activeLeaseByWorkUnit.entrySet())) {
+            WorkLease lease = activeByLeaseId.get(entry.getValue());
+            if (lease != null && lease.workerId().equals(worker)) {
+                activeLeaseByWorkUnit.remove(entry.getKey());
+                activeByLeaseId.remove(lease.leaseId());
+                revokedUnits.add(entry.getKey());
+            }
+        }
+        return List.copyOf(revokedUnits);
+    }
+
     public synchronized int activeLeaseCount() {
         return activeByLeaseId.size();
     }
