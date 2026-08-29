@@ -10,24 +10,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CommandLineClassSelectionTest {
 
     @Test
-    void acceptsSingleClassSelector() {
+    void acceptsSingleClassSelectorAcrossPackages() {
         var analysis = CommandLineClassSelection.analyze("Surefire", "test", "LoginTest");
 
         assertTrue(analysis.present());
         assertTrue(analysis.supported());
         assertTrue(matchesAny(analysis, "LoginTest"));
+        assertTrue(matchesAny(analysis, "example.LoginTest"));
+        assertTrue(matchesClassFile(analysis, "example/LoginTest.class"));
         assertFalse(matchesAny(analysis, "CheckoutTest"));
     }
 
     @Test
-    void acceptsWildcardAndMultipleClassSelectors() {
+    void acceptsWildcardAndMultipleClassSelectorsAcrossPackages() {
         var analysis = CommandLineClassSelection.analyze(
                 "Surefire", "test", "*Login*,CheckoutTest");
 
         assertTrue(analysis.supported());
-        assertTrue(matchesAny(analysis, "AdminLoginTest"));
-        assertTrue(matchesAny(analysis, "CheckoutTest"));
-        assertFalse(matchesAny(analysis, "PaymentTest"));
+        assertTrue(matchesAny(analysis, "example.AdminLoginTest"));
+        assertTrue(matchesAny(analysis, "another.package.CheckoutTest"));
+        assertFalse(matchesAny(analysis, "example.PaymentTest"));
+    }
+
+    @Test
+    void acceptsDocumentedJavaSuffixWithoutMakingItPackageQualified() {
+        var analysis = CommandLineClassSelection.analyze("Surefire", "test", "LoginTest.java");
+
+        assertTrue(analysis.supported());
+        assertTrue(matchesAny(analysis, "example.LoginTest"));
     }
 
     @Test
@@ -51,6 +61,16 @@ class CommandLineClassSelectionTest {
     }
 
     @Test
+    void rejectsPackageQualifiedSelectorUntilFullGrammarIsOwned() {
+        var analysis = CommandLineClassSelection.analyze(
+                "Surefire", "test", "example.LoginTest");
+
+        assertTrue(analysis.present());
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("package-qualified"));
+    }
+
+    @Test
     void absentSelectorDoesNotOverrideConfiguredSelection() {
         var analysis = CommandLineClassSelection.analyze("Surefire", "test", null);
 
@@ -61,5 +81,9 @@ class CommandLineClassSelectionTest {
 
     private boolean matchesAny(CommandLineClassSelection.Analysis analysis, String dottedClassName) {
         return analysis.includeRegexes().stream().anyMatch(regex -> Pattern.matches(regex, dottedClassName));
+    }
+
+    private boolean matchesClassFile(CommandLineClassSelection.Analysis analysis, String classFile) {
+        return analysis.includeRegexes().stream().anyMatch(regex -> Pattern.matches(regex, classFile));
     }
 }
