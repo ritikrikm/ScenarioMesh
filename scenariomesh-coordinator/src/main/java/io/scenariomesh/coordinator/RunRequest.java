@@ -11,6 +11,7 @@ import java.util.Map;
 
 public record RunRequest(Path projectDirectory,
                          List<Path> runtimeClasspath,
+                         List<Path> controlClasspath,
                          List<Path> testRoots,
                          Map<String,String> userProperties,
                          ScenarioMeshConfig config,
@@ -22,12 +23,27 @@ public record RunRequest(Path projectDirectory,
 
     public RunRequest {
         runtimeClasspath=List.copyOf(runtimeClasspath);
+        controlClasspath=List.copyOf(controlClasspath==null||controlClasspath.isEmpty()?runtimeClasspath:controlClasspath);
         testRoots=List.copyOf(testRoots);
         userProperties=Map.copyOf(userProperties);
         discoverySelection=discoverySelection==null?DiscoverySelection.all():discoverySelection;
         executorJvmArgs=List.copyOf(executorJvmArgs==null?List.of():executorJvmArgs);
         executorSystemProperties=Map.copyOf(executorSystemProperties==null?Map.of():executorSystemProperties);
         javaExecutable=javaExecutable==null?defaultJavaExecutable():javaExecutable.toAbsolutePath().normalize();
+    }
+
+    /** Backward-compatible constructor used by integrations that still provide one mixed classpath. */
+    public RunRequest(Path projectDirectory,
+                      List<Path> runtimeClasspath,
+                      List<Path> testRoots,
+                      Map<String,String> userProperties,
+                      ScenarioMeshConfig config,
+                      DiscoverySelection discoverySelection,
+                      List<String> executorJvmArgs,
+                      Map<String,String> executorSystemProperties,
+                      Path javaExecutable) {
+        this(projectDirectory, runtimeClasspath, runtimeClasspath, testRoots, userProperties, config,
+                discoverySelection, executorJvmArgs, executorSystemProperties, javaExecutable);
     }
 
     /** Backward-compatible constructor: use the JVM that launched ScenarioMesh. */
@@ -39,7 +55,7 @@ public record RunRequest(Path projectDirectory,
                       DiscoverySelection discoverySelection,
                       List<String> executorJvmArgs,
                       Map<String,String> executorSystemProperties) {
-        this(projectDirectory, runtimeClasspath, testRoots, userProperties, config,
+        this(projectDirectory, runtimeClasspath, runtimeClasspath, testRoots, userProperties, config,
                 discoverySelection, executorJvmArgs, executorSystemProperties, null);
     }
 
@@ -55,9 +71,6 @@ public record RunRequest(Path projectDirectory,
         // collisions. ScenarioMesh must preserve that precedence exactly.
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
         result.putAll(userProperties);
-        // The existing WorkerPool launcher still calls JavaProcessSupport's compatibility overload.
-        // Carry the selected test JVM as an internal launch hint; JavaProcessSupport consumes and
-        // filters this key instead of forwarding it to target tests.
         result.put(INTERNAL_JAVA_EXECUTABLE_PROPERTY, javaExecutable.toString());
         return Map.copyOf(result);
     }
