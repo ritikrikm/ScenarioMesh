@@ -21,13 +21,10 @@ final class ExecutorConfigurationSemantics {
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
             "jvm", "jdkToolchain",
-            // Exact local-process reproduction is implemented by MavenForkLaunchConfiguration,
-            // PreflightMojo, DiscoveryProcess and WorkerPool. Remote takeover remains fail-closed
-            // in preflight when any non-default process context is present.
             "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
-            "skip", "skipTests", "useModulePath");
+            "skip", "skipTests", "useModulePath", "groups", "excludedGroups");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
             "includes", "excludes", "includesFile", "excludesFile",
@@ -40,8 +37,6 @@ final class ExecutorConfigurationSemantics {
             "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
-            Map.entry("groups", "framework-group-selection"),
-            Map.entry("excludedGroups", "framework-group-selection"),
             Map.entry("dependenciesToScan", "dependency-test-scanning"),
             Map.entry("additionalClasspathElements", "executor-classpath-extension"),
             Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),
