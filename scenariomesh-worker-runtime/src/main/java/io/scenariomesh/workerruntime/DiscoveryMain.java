@@ -1,6 +1,5 @@
 package io.scenariomesh.workerruntime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.config.ScenarioMeshConfig.AdapterMismatchPolicy;
 import io.scenariomesh.core.DiscoverySelection;
@@ -8,7 +7,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 
-import java.nio.file.Files;
+import java.io.Serializable;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -80,10 +79,8 @@ public final class DiscoveryMain {
         }
 
         Selection selection = select(parsed, registry, discoveredByAdapter, evidence, autoDiscoveryErrors);
-        Files.createDirectories(parsed.output.getParent());
-        ObjectMapper mapper = JsonCodec.create();
-        mapper.writerWithDefaultPrettyPrinter().writeValue(
-                parsed.output.toFile(),
+        DiscoveryResultCodec.write(
+                parsed.output,
                 new DiscoveryResult(
                         List.of(selection.adapterId()),
                         List.copyOf(evidence),
@@ -169,12 +166,13 @@ public final class DiscoveryMain {
         return message == null || message.isBlank() ? throwable.getClass().getName() : message;
     }
 
-    public record AdapterEvidence(String adapterId, String framework, boolean available, int discoveredCount, String error) {}
+    public record AdapterEvidence(String adapterId, String framework, boolean available,
+                                  int discoveredCount, String error) implements Serializable {}
 
     public record DiscoveryResult(List<String> adapters,
                                   List<AdapterEvidence> evidence,
                                   List<String> warnings,
-                                  List<ScenarioTask> tasks) {
+                                  List<ScenarioTask> tasks) implements Serializable {
         public DiscoveryResult {
             adapters = List.copyOf(adapters == null ? List.of() : adapters);
             evidence = List.copyOf(evidence == null ? List.of() : evidence);
