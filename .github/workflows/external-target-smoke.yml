@@ -20,7 +20,7 @@ jobs:
 
       - name: Clone independent Maven Cucumber target
         run: |
-          git clone --depth 1 --branch test/controlled-contract \
+          git clone --depth 1 --branch main \
             https://github.com/ritikrikm/scenariomesh-target-fixture.git \
             "$RUNNER_TEMP/scenariomesh-target-fixture"
 
