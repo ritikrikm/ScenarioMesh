@@ -24,9 +24,14 @@ import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Mojo(name = "run", defaultPhase = LifecyclePhase.TEST, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
@@ -48,6 +53,10 @@ public final class RunMojo extends AbstractMojo {
     @Parameter private List<String> excludeClassNameRegexes;
     @Parameter private List<String> executorJvmArgs;
     @Parameter private Map<String, String> executorSystemProperties;
+    @Parameter(defaultValue = "true") private boolean enableAssertions;
+    @Parameter private List<String> executorEnvironmentEntries;
+    @Parameter private List<String> excludedEnvironmentVariables;
+    @Parameter private String executorWorkingDirectory;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -94,6 +103,8 @@ public final class RunMojo extends AbstractMojo {
 
             RuntimeClasspathResolver.RuntimeClasspaths classpaths =
                     new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
+            Path workingDirectory = executorWorkingDirectory == null || executorWorkingDirectory.isBlank()
+                    ? projectDirectory : Path.of(executorWorkingDirectory).toAbsolutePath().normalize();
             RunRequest request = new RunRequest(
                     projectDirectory,
                     classpaths.targetClasspath(),
@@ -104,7 +115,11 @@ public final class RunMojo extends AbstractMojo {
                     selection,
                     executorJvmArgs == null ? List.of() : executorJvmArgs,
                     executorSystemProperties == null ? Map.of() : executorSystemProperties,
-                    testJava);
+                    testJava,
+                    enableAssertions,
+                    decodeEnvironmentEntries(executorEnvironmentEntries),
+                    excludedEnvironmentVariables == null ? Set.of() : new LinkedHashSet<>(excludedEnvironmentVariables),
+                    workingDirectory);
 
             if (config.distributed().remote()) {
                 preparedRemoteWorkers = RemotePreflightState.take(getPluginContext());
@@ -161,6 +176,22 @@ public final class RunMojo extends AbstractMojo {
             if (preparedRemoteWorkers != null) preparedRemoteWorkers.close();
             RemotePreflightState.clear(getPluginContext());
         }
+    }
+
+    private Map<String, String> decodeEnvironmentEntries(List<String> encodedEntries) {
+        if (encodedEntries == null || encodedEntries.isEmpty()) return Map.of();
+        Map<String, String> values = new LinkedHashMap<>();
+        Base64.Decoder decoder = Base64.getUrlDecoder();
+        for (String encoded : encodedEntries) {
+            int separator = encoded == null ? -1 : encoded.indexOf(':');
+            if (separator <= 0 || separator == encoded.length() - 1) {
+                throw new IllegalArgumentException("Invalid internal Maven environment entry encoding");
+            }
+            String key = new String(decoder.decode(encoded.substring(0, separator)), StandardCharsets.UTF_8);
+            String value = new String(decoder.decode(encoded.substring(separator + 1)), StandardCharsets.UTF_8);
+            values.put(key, value);
+        }
+        return Map.copyOf(values);
     }
 
     private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution, Path testJava) {
