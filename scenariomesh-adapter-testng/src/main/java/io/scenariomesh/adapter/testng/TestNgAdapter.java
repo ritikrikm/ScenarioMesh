@@ -9,6 +9,7 @@ import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
 import io.scenariomesh.core.TaskMetadata;
+import io.scenariomesh.maven.selection.SurefireGroupSelection;
 import org.testng.IConfigurationListener;
 import org.testng.IMethodInstance;
 import org.testng.IMethodInterceptor;
@@ -29,13 +30,11 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class TestNgAdapter implements ScenarioAdapter {
@@ -237,8 +236,9 @@ public final class TestNgAdapter implements ScenarioAdapter {
         testNg.setUseDefaultListeners(false);
         testNg.setVerbose(0);
         testNg.setTestClasses(new Class<?>[]{clazz});
-        applyGroupSelection(testNg, context.properties());
-
+        // Maven/Surefire group selection is already applied during discovery using Surefire's own
+        // expression grammar. Passing that expression to TestNG here would reinterpret it as
+        // TestNG CLI group syntax and could change the selected logical test.
         testNg.setMethodInterceptor(new ExactMethodInterceptor(generic));
         CapturingListener listener = new CapturingListener();
         testNg.addListener((ITestListener) listener);
@@ -266,7 +266,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
         testNg.setUseDefaultListeners(false);
         testNg.setVerbose(0);
         testNg.setTestSuites(List.of(suiteXmlFile));
-        applyGroupSelection(testNg, context.properties());
+        applyTestNgSuiteGroupSelection(testNg, context.properties());
         SuiteCapturingListener listener = new SuiteCapturingListener();
         testNg.addListener((ITestListener) listener);
         testNg.addListener((IConfigurationListener) listener);
@@ -406,50 +406,21 @@ public final class TestNgAdapter implements ScenarioAdapter {
         return detail == null || detail.isBlank() ? throwable.getClass().getName() : detail;
     }
 
-    private static void applyGroupSelection(TestNG testNg, Map<String, String> properties) {
+    private static void applyTestNgSuiteGroupSelection(TestNG testNg, Map<String, String> properties) {
         String groups = properties.get("groups");
         String excludedGroups = properties.get("excludedGroups");
         if (groups != null && !groups.isEmpty()) testNg.setGroups(groups);
         if (excludedGroups != null && !excludedGroups.isEmpty()) testNg.setExcludedGroups(excludedGroups);
     }
 
-    /**
-     * Mirrors TestNG's public group-selection behavior without depending on TestNG internals:
-     * comma-separated values are trimmed, each entry is a full Java regular expression, '$' is
-     * literal unless already escaped, and excluded groups win over included groups. TestNG method
-     * dependencies are rejected above, so no group dependency closure needs to be recreated here.
-     */
-    private record GroupSelection(List<Pattern> included, List<Pattern> excluded) {
+    private record GroupSelection(SurefireGroupSelection selection) {
         private static GroupSelection from(Map<String, String> properties) {
-            return new GroupSelection(patterns(properties.get("groups")),
-                    patterns(properties.get("excludedGroups")));
+            return new GroupSelection(SurefireGroupSelection.fromExpressions(
+                    properties.get("groups"), properties.get("excludedGroups")));
         }
 
         private boolean includes(String[] groups) {
-            boolean includedByGroup = included.isEmpty() || matches(included, groups);
-            return includedByGroup && !matches(excluded, groups);
-        }
-
-        private static boolean matches(List<Pattern> patterns, String[] groups) {
-            for (String group : groups) {
-                for (Pattern pattern : patterns) {
-                    if (pattern.matcher(group).matches()) return true;
-                }
-            }
-            return false;
-        }
-
-        private static List<Pattern> patterns(String raw) {
-            if (raw == null || raw.isEmpty()) return List.of();
-            return Arrays.stream(raw.split(",", -1))
-                    .map(String::trim)
-                    .map(GroupSelection::asTestNgRegexp)
-                    .map(Pattern::compile)
-                    .toList();
-        }
-
-        private static String asTestNgRegexp(String group) {
-            return group.contains("\\$") ? group : group.replace("$", "\\$");
+            return selection.matches(groups);
         }
     }
 
