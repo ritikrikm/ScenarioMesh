@@ -27,6 +27,9 @@ final class ExecutorConfigurationSemantics {
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
 
+    private static final Set<String> SUREFIRE_PRESERVED = Set.of(
+            "includes", "excludes", "systemPropertyVariables");
+
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "argLine", "systemPropertyVariables",
             "testFailureIgnore", "rerunFailingTestsCount");
@@ -48,7 +51,7 @@ final class ExecutorConfigurationSemantics {
 
     static Classification forSurefire(String name) {
         if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
-        if (COMMON_PRESERVED.contains(name)) return Classification.preserved();
+        if (COMMON_PRESERVED.contains(name) || SUREFIRE_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);
     }
