@@ -22,12 +22,17 @@ public final class DiscoveryMain {
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
         Thread thread = Thread.currentThread();
-        ClassLoader controlLoader = thread.getContextClassLoader();
-        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromCurrentClasspath(controlLoader)) {
+        ClassLoader controlLoader = DiscoveryMain.class.getClassLoader();
+        String encoded = System.getProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY);
+        List<Path> targetClasspath = encoded == null || encoded.isBlank()
+                ? currentClasspath()
+                : TargetClasspathDescriptor.decodeInline(encoded);
+        ClassLoader previous = thread.getContextClassLoader();
+        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
             thread.setContextClassLoader(targetLoader);
             discover(parsed, targetLoader);
         } finally {
-            thread.setContextClassLoader(controlLoader);
+            thread.setContextClassLoader(previous);
         }
     }
 
@@ -40,8 +45,6 @@ public final class DiscoveryMain {
                 properties,
                 new DiscoverySelection(parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes));
 
-        // Defense-in-depth for direct ScenarioMesh runs and any future lifecycle integration.
-        // The normal Maven extension already performs this probe before suppressing Surefire/Failsafe.
         ExecutionBackendInventory.Inventory backendInventory = ExecutionBackendInventory.inspect(
                 classLoader,
                 parsed.testRoots,
@@ -52,9 +55,6 @@ public final class DiscoveryMain {
                     + backendInventory.summary() + ". Native Maven execution is safer.");
         }
 
-        // Dependency presence only tells us which adapters might work. Before trusting adapter
-        // discovery, prove that the Maven-selected class set does not contain an executable
-        // framework family for which ScenarioMesh has no owner.
         new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
 
         Map<String, List<ScenarioTask>> discoveredByAdapter = new LinkedHashMap<>();
@@ -168,7 +168,15 @@ public final class DiscoveryMain {
     private static Map<String, String> systemProperties() {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
+        properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
         return properties;
+    }
+
+    private static List<Path> currentClasspath() {
+        String raw = System.getProperty("java.class.path", "");
+        if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath was supplied");
+        return java.util.Arrays.stream(raw.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(value -> value != null && !value.isBlank()).map(Path::of).toList();
     }
 
     private static String message(Throwable throwable) {
