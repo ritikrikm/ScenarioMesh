@@ -13,21 +13,24 @@ import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 import io.scenariomesh.protocol.ProtocolFrameReader;
-import org.junit.platform.engine.TestEngine;
 
 import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,12 +46,18 @@ public final class WorkerMain {
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
         Thread thread = Thread.currentThread();
-        ClassLoader controlLoader = thread.getContextClassLoader();
-        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromCurrentClasspath(controlLoader)) {
+        ClassLoader controlLoader = WorkerMain.class.getClassLoader();
+        List<Path> targetClasspath = parsed.targetClasspathFile == null
+                ? currentClasspath()
+                : TargetClasspathDescriptor.read(parsed.targetClasspathFile);
+        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
+            ClassLoader previous = thread.getContextClassLoader();
             thread.setContextClassLoader(targetLoader);
-            run(parsed, targetLoader);
-        } finally {
-            thread.setContextClassLoader(controlLoader);
+            try {
+                run(parsed, targetLoader);
+            } finally {
+                thread.setContextClassLoader(previous);
+            }
         }
     }
 
@@ -201,18 +210,52 @@ public final class WorkerMain {
         int javaFeature = Runtime.version().feature();
         Set<String> adapterIds = adapters.available(classLoader).stream()
                 .map(adapter -> adapter.id()).collect(Collectors.toUnmodifiableSet());
-        Set<String> engineIds = ServiceLoader.load(TestEngine.class, classLoader).stream()
-                .map(ServiceLoader.Provider::get).map(TestEngine::getId)
-                .filter(id -> id != null && !id.isBlank()).collect(Collectors.toUnmodifiableSet());
+        Set<String> engineIds = detectJUnitPlatformEngineIds(classLoader);
         String fingerprintInput = String.join("\n",
                 Integer.toString(Protocol.VERSION), Integer.toString(javaFeature),
                 System.getProperty("java.vendor", "unknown"), System.getProperty("java.version", "unknown"),
-                os, architecture, System.getProperty("java.class.path", ""));
+                os, architecture, executionRealmFingerprint(classLoader));
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
                 HexFormat.of().formatHex(digest), adapterIds, engineIds,
                 Protocol.MIN_SUPPORTED_VERSION, Protocol.VERSION);
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static Set<String> detectJUnitPlatformEngineIds(ClassLoader classLoader) throws Exception {
+        Class<?> engineType;
+        try {
+            engineType = Class.forName("org.junit.platform.engine.TestEngine", false, classLoader);
+        } catch (ClassNotFoundException absent) {
+            return Set.of();
+        }
+        Method getId = engineType.getMethod("getId");
+        Set<String> ids = new LinkedHashSet<>();
+        ServiceLoader services = ServiceLoader.load((Class) engineType, classLoader);
+        for (Object engine : services) {
+            Object raw = getId.invoke(engine);
+            if (raw instanceof String id && !id.isBlank()) {
+                if (!ids.add(id)) throw new IllegalStateException("duplicate JUnit Platform engine id '" + id + "'");
+            }
+        }
+        return Set.copyOf(ids);
+    }
+
+    private static String executionRealmFingerprint(ClassLoader classLoader) {
+        if (classLoader instanceof URLClassLoader urls) {
+            return java.util.Arrays.stream(urls.getURLs()).map(Object::toString).sorted()
+                    .collect(Collectors.joining("\n"));
+        }
+        return classLoader.getClass().getName();
+    }
+
+    private static List<Path> currentClasspath() {
+        String raw = System.getProperty("java.class.path", "");
+        if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath descriptor was supplied");
+        return java.util.Arrays.stream(raw.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(value -> value != null && !value.isBlank())
+                .map(Path::of).toList();
     }
 
     private static WorkUnitExecution executeWorkUnit(AdapterRegistry adapters, List<ScenarioTask> tasks,
@@ -353,10 +396,11 @@ public final class WorkerMain {
         System.err.println(TRACE_PREFIX + " " + Instant.now() + " thread=" + Thread.currentThread().getName() + " " + message);
     }
 
-    private record Arguments(String host, int port, String workerId) {
+    private record Arguments(String host, int port, String workerId, Path targetClasspathFile) {
         private static Arguments parse(String[] args) {
             String host = null, workerId = null;
             Integer port = null;
+            Path targetClasspathFile = null;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
                 if (i + 1 >= args.length) throw new IllegalArgumentException(key + " requires a value");
@@ -365,13 +409,14 @@ public final class WorkerMain {
                     case "--host" -> host = value;
                     case "--port" -> port = Integer.parseInt(value);
                     case "--worker-id" -> workerId = value;
+                    case "--target-classpath-file" -> targetClasspathFile = Path.of(value).toAbsolutePath().normalize();
                     default -> throw new IllegalArgumentException("Unknown worker argument: " + key);
                 }
             }
             if (host == null || port == null || workerId == null) {
                 throw new IllegalArgumentException("--host, --port and --worker-id are required; authentication is provided through environment variables");
             }
-            return new Arguments(host, port, workerId);
+            return new Arguments(host, port, workerId, targetClasspathFile);
         }
     }
 }
