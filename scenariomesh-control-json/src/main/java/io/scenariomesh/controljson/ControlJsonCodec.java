@@ -22,6 +22,11 @@ public final class ControlJsonCodec {
         return MAPPER.writeValueAsString(Objects.requireNonNull(value, "value"));
     }
 
+    public static String writePretty(Object value) throws Exception {
+        return MAPPER.writerWithDefaultPrettyPrinter()
+                .writeValueAsString(Objects.requireNonNull(value, "value"));
+    }
+
     public static byte[] writeBytes(Object value) throws Exception {
         return write(value).getBytes(StandardCharsets.UTF_8);
     }
