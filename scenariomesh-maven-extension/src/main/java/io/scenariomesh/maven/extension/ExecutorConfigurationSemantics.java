@@ -20,7 +20,12 @@ final class ExecutorConfigurationSemantics {
             "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
-            "jvm", "jdkToolchain");
+            "jvm", "jdkToolchain",
+            // These four options are reproduced by MavenForkLaunchConfiguration and the
+            // ScenarioMesh worker launcher. Keeping them in one ownership group prevents
+            // SurefireCompatibility/FailsafeCompatibility from independently approximating
+            // process-launch behavior.
+            "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
@@ -36,17 +41,13 @@ final class ExecutorConfigurationSemantics {
             "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
-            Map.entry("enableAssertions", "assertion-mode-parity"),
             Map.entry("groups", "framework-group-selection"),
             Map.entry("excludedGroups", "framework-group-selection"),
             Map.entry("dependenciesToScan", "dependency-test-scanning"),
             Map.entry("additionalClasspathElements", "executor-classpath-extension"),
             Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),
             Map.entry("classpathDependencyExcludes", "executor-classpath-filtering"),
-            Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"),
-            Map.entry("environmentVariables", "fork-environment-reproduction"),
-            Map.entry("excludedEnvironmentVariables", "fork-environment-reproduction"),
-            Map.entry("workingDirectory", "fork-working-directory"));
+            Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"));
 
     static Classification forSurefire(String name) {
         if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
