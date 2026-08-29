@@ -29,7 +29,7 @@ final class JavaProcessSupport {
         properties.entrySet().stream()
                 .filter(entry -> !RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY.equals(entry.getKey()))
                 .filter(entry -> !WorkerMain.class.getName().equals(mainClass)
-                        || !RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION.equals(entry.getKey()))
+                        || !entry.getKey().startsWith(RuntimePropertyNames.INTERNAL_PREFIX))
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
         command.add("-cp");
