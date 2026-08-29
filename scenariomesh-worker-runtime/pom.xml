@@ -6,6 +6,7 @@
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-core</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-config</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-protocol</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-control-json</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-adapter-junit-platform</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-adapter-cucumber-junit4</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-adapter-testng</artifactId><version>${project.version}</version></dependency>
