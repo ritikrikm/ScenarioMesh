@@ -53,6 +53,23 @@ class LeaseRegistryTest {
     }
 
     @Test
+    void workerLossImmediatelyFencesEveryOwnedLeaseWithoutWaitingForExpiry() {
+        LeaseRegistry registry = new LeaseRegistry(Duration.ofMinutes(5));
+        WorkLease first = registry.issue("unit-a", "worker-a", 1, List.of("a"), start);
+        WorkLease second = registry.issue("unit-b", "worker-a", 1, List.of("b"), start);
+        WorkLease other = registry.issue("unit-c", "worker-b", 1, List.of("c"), start);
+
+        assertEquals(List.of("unit-a", "unit-b"), registry.revokeWorker("worker-a"));
+        assertEquals(1, registry.activeLeaseCount());
+        assertThrows(LeaseRegistry.StaleLeaseException.class,
+                () -> registry.acceptResult("unit-a", first.leaseId(), "worker-a", start.plusSeconds(1)));
+        assertThrows(LeaseRegistry.StaleLeaseException.class,
+                () -> registry.heartbeat("unit-b", second.leaseId(), "worker-a", start.plusSeconds(1)));
+        assertEquals(other.leaseId(),
+                registry.acceptResult("unit-c", other.leaseId(), "worker-b", start.plusSeconds(1)).leaseId());
+    }
+
+    @Test
     void remoteWorkerCapabilitiesRequireExactRuntimeFingerprint() {
         RemoteWorkerRegistration worker = new RemoteWorkerRegistration(
                 "worker-a", "sha256:runtime-1", 6, 21, "Linux", "amd64",
