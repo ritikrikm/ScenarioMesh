@@ -188,6 +188,87 @@ public final class Protocol {
             return new Envelope(version, type, workerId, token, capabilities, workUnitId, leaseId,
                     leaseExpiresAt, tasks, materializedTasks, attempt, results, telemetry, error);
         }
+
+        /**
+         * Validates the type-specific wire shape after decoding. The envelope remains tolerant of
+         * legacy v8 fields, but contradictory payload families are rejected instead of being left
+         * to ad-hoc coordinator/worker checks.
+         */
+        public void validatePayloadShape() {
+            if (type == null) throw new IllegalArgumentException("protocol message type is required");
+            if (workerId == null || workerId.isBlank()) throw new IllegalArgumentException("protocol workerId is required");
+            switch (type) {
+                case HELLO -> {
+                    requireEmpty("HELLO tasks", tasks);
+                    requireEmpty("HELLO materializedTasks", materializedTasks);
+                    requireEmpty("HELLO results", results);
+                    if (attempt != null || error != null) throw invalid("HELLO contains execution/result fields");
+                }
+                case RUN -> {
+                    if (tasks.isEmpty()) throw invalid("RUN requires at least one task");
+                    if (attempt == null || attempt < 1) throw invalid("RUN requires a positive attempt");
+                    requireEmpty("RUN materializedTasks", materializedTasks);
+                    requireEmpty("RUN results", results);
+                    if (error != null) throw invalid("RUN contains an error payload");
+                }
+                case RESULT -> {
+                    requireEmpty("RESULT tasks", tasks);
+                    if (results.isEmpty()) throw invalid("RESULT requires at least one terminal result");
+                    if (attempt == null || attempt < 1) throw invalid("RESULT requires a positive attempt");
+                    if (error != null) throw invalid("RESULT contains an error payload");
+                }
+                case HEARTBEAT -> {
+                    if (workUnitId == null || workUnitId.isBlank() || leaseId == null || leaseId.isBlank()) {
+                        throw invalid("HEARTBEAT requires workUnitId and leaseId");
+                    }
+                    requireEmpty("HEARTBEAT tasks", tasks);
+                    requireEmpty("HEARTBEAT materializedTasks", materializedTasks);
+                    requireEmpty("HEARTBEAT results", results);
+                    if (attempt != null || error != null) throw invalid("HEARTBEAT contains terminal/execution payload");
+                }
+                case PRESENCE, DRAIN, STOP, ACK -> {
+                    requireEmpty(type + " tasks", tasks);
+                    requireEmpty(type + " materializedTasks", materializedTasks);
+                    requireEmpty(type + " results", results);
+                    if (attempt != null || error != null) throw invalid(type + " contains terminal/execution payload");
+                    if (type != Type.PRESENCE && telemetry != null) throw invalid(type + " contains telemetry");
+                }
+                case ERROR -> {
+                    requireEmpty("ERROR tasks", tasks);
+                    requireEmpty("ERROR materializedTasks", materializedTasks);
+                    requireEmpty("ERROR results", results);
+                    if (error == null || error.isBlank()) throw invalid("ERROR requires a message");
+                    if (attempt != null) throw invalid("ERROR contains an execution attempt");
+                }
+            }
+        }
+
+        /** Authentication material must never appear in ordinary diagnostics. */
+        @Override
+        public String toString() {
+            return "Envelope[protocolVersion=" + protocolVersion
+                    + ", type=" + type
+                    + ", workerId=" + workerId
+                    + ", token=" + (token == null || token.isBlank() ? "<unset>" : "<redacted>")
+                    + ", capabilities=" + capabilities
+                    + ", workUnitId=" + workUnitId
+                    + ", leaseId=" + leaseId
+                    + ", leaseExpiresAt=" + leaseExpiresAt
+                    + ", tasks=" + tasks.size()
+                    + ", materializedTasks=" + materializedTasks.size()
+                    + ", attempt=" + attempt
+                    + ", results=" + results.size()
+                    + ", telemetry=" + telemetry
+                    + ", error=" + error + "]";
+        }
+
+        private void requireEmpty(String name, List<?> values) {
+            if (!values.isEmpty()) throw invalid(name + " must be empty");
+        }
+
+        private IllegalArgumentException invalid(String detail) {
+            return new IllegalArgumentException("Invalid ScenarioMesh " + type + " envelope: " + detail);
+        }
     }
 
     private static String require(String value, String name) {
