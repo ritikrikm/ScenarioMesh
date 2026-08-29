@@ -1,10 +1,8 @@
 package io.scenariomesh.maven;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.coordinator.PreparedRemoteWorkers;
-import io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
@@ -123,7 +121,7 @@ public final class PreflightMojo extends AbstractMojo {
         Path directory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize()
                 .resolve("scenariomesh-preflight");
         Files.createDirectories(directory);
-        Path output = directory.resolve("probe.json");
+        Path output = directory.resolve("probe.properties");
         Path log = directory.resolve("probe.log");
 
         List<String> command = new ArrayList<>();
@@ -164,8 +162,7 @@ public final class PreflightMojo extends AbstractMojo {
             throw new IllegalStateException("selected-JVM ownership probe exited " + process.exitValue()
                     + "; see " + log + System.lineSeparator() + detail);
         }
-        ObjectMapper mapper = JsonCodec.create();
-        return mapper.readValue(output.toFile(), PreflightProbeMain.ProbeResult.class);
+        return PreflightProbeMain.readResult(output);
     }
 
     private void passThrough(String reason) {
