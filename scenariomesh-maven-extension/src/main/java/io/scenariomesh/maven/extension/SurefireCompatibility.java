@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.Properties;
 import java.io.StringReader;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -142,6 +143,8 @@ final class SurefireCompatibility {
         switch (child.getName()) {
             case "includes" -> readPatternList(child, settings.includes, location, reasons, propertyResolver);
             case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
+            case "includesFile" -> readSelectionFile(child, settings.includes, location, reasons, propertyResolver);
+            case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
             case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
             case "properties" -> readProviderProperties(child, location, settings, reasons, propertyResolver);
             case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
@@ -158,6 +161,41 @@ final class SurefireCompatibility {
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
+    }
+
+    private void readSelectionFile(Xpp3Dom node,
+                                   Set<String> destination,
+                                   String location,
+                                   List<String> reasons,
+                                   Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <" + node.getName() + "> and file selection semantics cannot be proven");
+            return;
+        }
+        String configuredPath = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (configuredPath == null) return;
+        String baseDirValue = propertyResolver.apply("project.basedir");
+        if (baseDirValue == null || baseDirValue.isBlank()) {
+            reasons.add(location + " uses <" + node.getName()
+                    + "> but Maven project.basedir is unavailable for exact relative-path resolution");
+            return;
+        }
+
+        Path baseDir;
+        try {
+            baseDir = Path.of(baseDirValue);
+        } catch (RuntimeException invalidBaseDir) {
+            reasons.add(location + " uses <" + node.getName()
+                    + "> but Maven project.basedir is invalid: " + invalidBaseDir.getMessage());
+            return;
+        }
+
+        ExternalSelectionFile.Analysis file = ExternalSelectionFile.read(baseDir, configuredPath, node.getName());
+        if (!file.supported()) {
+            reasons.add(location + " uses <" + node.getName() + "> that ScenarioMesh cannot reproduce: " + file.reason());
+            return;
+        }
+        destination.addAll(file.patterns());
     }
 
     private void readProviderProperties(Xpp3Dom parent,
