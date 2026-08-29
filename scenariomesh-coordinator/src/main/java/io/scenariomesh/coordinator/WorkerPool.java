@@ -336,6 +336,12 @@ final class WorkerPool implements AutoCloseable {
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile())
                 .redirectErrorStream(true);
+        // Surefire creates the command line with inherited exclusions first and then overlays
+        // configured environmentVariables. Mirror that order exactly; ScenarioMesh's own
+        // transport token is internal and is installed last so target configuration cannot
+        // accidentally break worker authentication.
+        request.excludedEnvironmentVariables().forEach(builder.environment()::remove);
+        builder.environment().putAll(request.executorEnvironmentVariables());
         builder.environment().put("SCENARIOMESH_REMOTE_TOKEN", token);
         Process process = builder.start();
         processes.put(id, process);
