@@ -160,7 +160,7 @@ jobs:
           grep -Fq 'worker-2 REPLACED worker-1 after task-count recycling after 1 task(s)' process-tree-cleanup.log
           test "$(grep -Fc 'PASSED independentScopeOne()' process-tree-cleanup.log)" -eq 1
           test "$(grep -Fc 'PASSED independentScopeTwo()' process-tree-cleanup.log)" -eq 1
-      - name: Custom Surefire selection remains normal Maven execution
+      - name: Surefire includes selection is reproduced by ScenarioMesh
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
       - name: Unsupported generic JUnit 4 uses normal Maven execution
@@ -184,6 +184,7 @@ jobs:
           test -f examples/cleanup-hook-example/target/scenariomesh/report.html
           test -f examples/process-tree-cleanup-example/target/scenariomesh/report.html
           test -f examples/worker-recycling-scopes-example/target/scenariomesh/report.html
+          test -f examples/junit5-surefire-pass-through-example/target/scenariomesh/report.html
       - name: Verify modern report content and machine-readable timing
         run: |
           grep -q 'data-filter="passed"' examples/cucumber-junit4-example/target/scenariomesh/report.html
@@ -194,11 +195,16 @@ jobs:
           grep -q '"sequentialEquivalentMillis"' examples/cucumber-junit4-example/target/scenariomesh/summary.json
           grep -q '"estimatedTimeSavedMillis"' examples/cucumber-junit4-example/target/scenariomesh/summary.json
           grep -q '"workers"' examples/cucumber-junit4-example/target/scenariomesh/summary.json
-      - name: Verify custom Surefire project was not taken over
+      - name: Verify Surefire includes exact selection under ScenarioMesh ownership
         run: |
-          test -f examples/junit5-surefire-pass-through-example/target/surefire-reports/TEST-example.SelectedTest.xml
-          test ! -e examples/junit5-surefire-pass-through-example/target/surefire-reports/TEST-example.NotSelectedTest.xml
-          test ! -e examples/junit5-surefire-pass-through-example/target/scenariomesh/report.html
+          summary=examples/junit5-surefire-pass-through-example/target/scenariomesh/summary.json
+          test -f "$summary"
+          grep -Fq '"total" : 1' "$summary"
+          grep -Fq 'selectedBySurefireConfiguration()' "$summary"
+          if grep -Fq 'mustNotRunWhenSurefireIncludesArePreserved()' "$summary"; then
+            echo 'Surefire include parity selected a class native Surefire would exclude'
+            exit 1
+          fi
       - name: Verify unsupported project was not taken over
         run: |
           test -f examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml

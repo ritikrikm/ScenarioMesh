@@ -2,15 +2,18 @@ package io.scenariomesh.config;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Single source of truth for external ScenarioMesh configuration names.
  *
- * <p>Keeping canonical names and backward-compatible aliases here prevents
- * Maven integration, YAML parsing and environment handling from drifting apart.</p>
+ * <p>Canonical property names, legacy aliases, environment names and YAML paths are all derived
+ * from this registry so Maven, CLI, worker and file parsing cannot evolve different schemas.</p>
  */
 enum ConfigKey {
-    CONFIG_FILE("scenariomesh.config.file"),
+    CONFIG_FILE("scenariomesh.config.file", false),
     ENABLED("scenariomesh.enabled"),
     EXECUTION_ADAPTER("scenariomesh.execution.adapter"),
     ADAPTER_MISMATCH_POLICY("scenariomesh.execution.adapterMismatchPolicy"),
@@ -42,12 +45,22 @@ enum ConfigKey {
     LOGGING_SHOW_CONFIGURATION("scenariomesh.logging.showConfiguration"),
     LOGGING_SHOW_PROGRESS("scenariomesh.logging.showProgress");
 
+    private static final String PREFIX = "scenariomesh.";
     private final String canonical;
     private final List<String> aliases;
+    private final boolean yamlVisible;
 
     ConfigKey(String canonical, String... aliases) {
+        this(canonical, true, aliases);
+    }
+
+    ConfigKey(String canonical, boolean yamlVisible, String... aliases) {
+        if (canonical == null || !canonical.startsWith(PREFIX)) {
+            throw new IllegalArgumentException("ScenarioMesh config key must use the 'scenariomesh.' namespace");
+        }
         this.canonical = canonical;
         this.aliases = List.of(aliases);
+        this.yamlVisible = yamlVisible;
     }
 
     String canonical() { return canonical; }
@@ -62,6 +75,17 @@ enum ConfigKey {
 
     List<String> environmentNames() {
         return propertyNames().stream().map(ConfigKey::environmentName).toList();
+    }
+
+    Optional<String> yamlPath() {
+        return yamlVisible ? Optional.of(canonical.substring(PREFIX.length())) : Optional.empty();
+    }
+
+    static Set<String> yamlPaths() {
+        return java.util.Arrays.stream(values())
+                .map(ConfigKey::yamlPath)
+                .flatMap(Optional::stream)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private static String environmentName(String propertyName) {

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -93,11 +94,66 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void rejectsUnsupportedExecutionConfiguration() {
+    void reproducesSurefireIncludesFromExecutionConfiguration() {
         PluginExecution execution = defaultTestExecution();
-        execution.setConfiguration(configuration("includes", "**/SmokeTest.java"));
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom includes = new Xpp3Dom("includes");
+        add(includes, "include", "**/Smoke*Test.java");
+        config.addChild(includes);
+        execution.setConfiguration(config);
+
         SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(execution));
-        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("<includes>")));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertTrue(analysis.includeClassNameRegexes().stream()
+                .anyMatch(regex -> Pattern.matches(regex, "example/SmokeCheckoutTest.class")));
+        assertFalse(analysis.includeClassNameRegexes().stream()
+                .anyMatch(regex -> Pattern.matches(regex, "example/CheckoutTest.class")));
+    }
+
+    @Test
+    void resolvesMavenPropertiesInsideSurefireIncludes() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom includes = new Xpp3Dom("includes");
+        add(includes, "include", "${company.test.pattern}");
+        config.addChild(includes);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, Map.of("company.test.pattern", "**/*ContractTest.java")::get);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertTrue(analysis.includeClassNameRegexes().stream()
+                .anyMatch(regex -> Pattern.matches(regex, "example/PaymentContractTest.class")));
+    }
+
+    @Test
+    void reproducesSurefireSystemPropertyVariables() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
+        add(properties, "baseUrl", "${test.baseUrl}");
+        add(properties, "browser", "chrome");
+        config.addChild(properties);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, Map.of("test.baseUrl", "https://example.test")::get);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("https://example.test", analysis.systemProperties().get("baseUrl"));
+        assertEquals("chrome", analysis.systemProperties().get("browser"));
+    }
+
+    @Test
+    void unresolvedSurefireSystemPropertyFailsClosed() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
+        add(properties, "baseUrl", "${missing.baseUrl}");
+        config.addChild(properties);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, ignored -> null);
+        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("unresolved Maven property")));
     }
 
     @Test

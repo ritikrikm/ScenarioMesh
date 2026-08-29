@@ -15,18 +15,18 @@ class HistoryAwareFifoTest {
     void startsLongestKnownTaskFirst() {
         FifoSchedulingStrategy scheduler = new FifoSchedulingStrategy();
         scheduler.load(List.of(task("short", 10), task("long", 1000), task("medium", 100)));
-        assertEquals("long", scheduler.nextEligible(task -> true).id().value());
-        assertEquals("medium", scheduler.nextEligible(task -> true).id().value());
-        assertEquals("short", scheduler.nextEligible(task -> true).id().value());
+        assertEquals("long", scheduler.nextEligible("test-lane", task -> true).id().value());
+        assertEquals("medium", scheduler.nextEligible("test-lane", task -> true).id().value());
+        assertEquals("short", scheduler.nextEligible("test-lane", task -> true).id().value());
     }
 
     @Test
     void preservesFifoWhenNoHistoryExists() {
         FifoSchedulingStrategy scheduler = new FifoSchedulingStrategy();
         scheduler.load(List.of(task("a", null), task("b", null), task("c", null)));
-        assertEquals("a", scheduler.nextEligible(task -> true).id().value());
-        assertEquals("b", scheduler.nextEligible(task -> true).id().value());
-        assertEquals("c", scheduler.nextEligible(task -> true).id().value());
+        assertEquals("a", scheduler.nextEligible("test-lane", task -> true).id().value());
+        assertEquals("b", scheduler.nextEligible("test-lane", task -> true).id().value());
+        assertEquals("c", scheduler.nextEligible("test-lane", task -> true).id().value());
     }
 
     private ScenarioTask task(String id, Integer estimate) {

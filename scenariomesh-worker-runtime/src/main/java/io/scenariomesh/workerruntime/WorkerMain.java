@@ -1,6 +1,6 @@
 package io.scenariomesh.workerruntime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.controljson.ControlJsonCodec;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.ScenarioTask;
@@ -13,21 +13,24 @@ import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 import io.scenariomesh.protocol.ProtocolFrameReader;
-import org.junit.platform.engine.TestEngine;
 
 import java.io.BufferedWriter;
 import java.io.OutputStreamWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
+import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,15 +45,34 @@ public final class WorkerMain {
 
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
+        Thread thread = Thread.currentThread();
+        ClassLoader controlLoader = WorkerMain.class.getClassLoader();
+        String inlineClasspath = System.getProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY);
+        List<Path> targetClasspath = parsed.targetClasspathFile != null
+                ? TargetClasspathDescriptor.read(parsed.targetClasspathFile)
+                : inlineClasspath != null && !inlineClasspath.isBlank()
+                    ? TargetClasspathDescriptor.decodeInline(inlineClasspath)
+                    : currentClasspath();
+        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
+            ClassLoader previous = thread.getContextClassLoader();
+            thread.setContextClassLoader(targetLoader);
+            try {
+                run(parsed, targetLoader);
+            } finally {
+                thread.setContextClassLoader(previous);
+            }
+        }
+    }
+
+    private static void run(Arguments parsed, ClassLoader classLoader) throws Exception {
         Map<String, String> environment = System.getenv();
         String token = RemoteWorkerTransport.authenticationToken(environment);
-        ObjectMapper mapper = JsonCodec.create();
-        AdapterRegistry adapters = new AdapterRegistry();
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        AdapterRegistry adapters = new AdapterRegistry(classLoader);
         List<WorkerTaskCleanup> cleanupHooks = ServiceLoader.load(WorkerTaskCleanup.class, classLoader)
                 .stream().map(ServiceLoader.Provider::get).toList();
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
+        properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
         WorkerCapabilities capabilities = capabilities(adapters, classLoader);
 
         trace("START worker=" + parsed.workerId + " target=" + parsed.host + ":" + parsed.port
@@ -69,7 +91,7 @@ public final class WorkerMain {
             Envelope hello = Envelope.hello(parsed.workerId, token, capabilities);
             trace("HELLO_SEND worker=" + parsed.workerId + " bootstrapProtocol=" + Protocol.BOOTSTRAP_VERSION
                     + " advertisedRange=[" + capabilities.minProtocolVersion() + "," + capabilities.maxProtocolVersion() + "]");
-            write(mapper, writer, hello, Protocol.BOOTSTRAP_VERSION);
+            write(writer, hello, Protocol.BOOTSTRAP_VERSION);
 
             trace("FIRST_COMMAND_WAIT worker=" + parsed.workerId);
             byte[] firstFrame = reader.readBlocking();
@@ -77,7 +99,8 @@ public final class WorkerMain {
                 trace("FIRST_COMMAND_EOF worker=" + parsed.workerId);
                 return;
             }
-            Envelope first = mapper.readValue(firstFrame, Envelope.class);
+            Envelope first = ControlJsonCodec.read(firstFrame, Envelope.class);
+            first.validatePayloadShape();
             traceEnvelope("IN_FIRST", parsed.workerId, first);
             int sessionProtocol = requireSupportedProtocol(first.protocolVersion());
             boolean negotiationAck = first.type() == Protocol.Type.ACK;
@@ -86,7 +109,7 @@ public final class WorkerMain {
 
             try (PresenceHeartbeatEmitter presence = PresenceHeartbeatEmitter.start(
                     parsed.workerId, WorkerMain::telemetry,
-                    heartbeat -> write(mapper, writer, heartbeat, sessionProtocol))) {
+                    heartbeat -> write(writer, heartbeat, sessionProtocol))) {
                 trace("PRESENCE_STARTED worker=" + parsed.workerId + " protocol=" + sessionProtocol);
                 boolean draining = false;
                 Envelope envelope = negotiationAck ? null : first;
@@ -97,7 +120,8 @@ public final class WorkerMain {
                             trace("COMMAND_EOF worker=" + parsed.workerId + " protocol=" + sessionProtocol);
                             break;
                         }
-                        envelope = mapper.readValue(frame, Envelope.class);
+                        envelope = ControlJsonCodec.read(frame, Envelope.class);
+                        envelope.validatePayloadShape();
                         traceEnvelope("IN", parsed.workerId, envelope);
                     }
                     validate(envelope, sessionProtocol);
@@ -108,19 +132,19 @@ public final class WorkerMain {
                     if (envelope.type() == Protocol.Type.DRAIN) {
                         draining = true;
                         trace("DRAIN_ACCEPT worker=" + parsed.workerId + " protocol=" + sessionProtocol);
-                        write(mapper, writer, Envelope.ack(parsed.workerId), sessionProtocol);
+                        write(writer, Envelope.ack(parsed.workerId), sessionProtocol);
                         envelope = null;
                         continue;
                     }
                     if (envelope.type() == Protocol.Type.STOP) {
                         trace("STOP_ACCEPT worker=" + parsed.workerId + " protocol=" + sessionProtocol);
-                        write(mapper, writer, Envelope.ack(parsed.workerId), sessionProtocol);
+                        write(writer, Envelope.ack(parsed.workerId), sessionProtocol);
                         trace("STOPPED worker=" + parsed.workerId);
                         return;
                     }
                     if (draining && envelope.type() == Protocol.Type.RUN) {
                         trace("RUN_REJECT_DRAINING worker=" + parsed.workerId + " workUnit=" + value(envelope.workUnitId()));
-                        write(mapper, writer, Envelope.error(parsed.workerId,
+                        write(writer, Envelope.error(parsed.workerId,
                                 "Worker is draining and will not accept new work"), sessionProtocol);
                         envelope = null;
                         continue;
@@ -130,7 +154,7 @@ public final class WorkerMain {
                         trace("RUN_REJECT_INVALID worker=" + parsed.workerId + " type=" + envelope.type()
                                 + " attempt=" + envelope.attempt()
                                 + " tasks=" + (envelope.tasks() == null ? "null" : envelope.tasks().size()));
-                        write(mapper, writer, Envelope.error(parsed.workerId,
+                        write(writer, Envelope.error(parsed.workerId,
                                 "Expected RUN command with at least one task and a positive attempt"), sessionProtocol);
                         envelope = null;
                         continue;
@@ -149,7 +173,7 @@ public final class WorkerMain {
                     List<ExecutionResult> cleaned;
                     try (LeaseHeartbeatEmitter heartbeat = LeaseHeartbeatEmitter.start(
                             parsed.workerId, envelope, WorkerMain::telemetry,
-                            heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope, sessionProtocol))) {
+                            heartbeatEnvelope -> write(writer, heartbeatEnvelope, sessionProtocol))) {
                         trace("LEASE_HEARTBEAT_STARTED worker=" + parsed.workerId
                                 + " workUnit=" + value(envelope.workUnitId()) + " lease=" + value(envelope.leaseId()));
                         execution = executeWorkUnit(adapters, dispatched, context);
@@ -165,7 +189,7 @@ public final class WorkerMain {
                             + " workUnit=" + value(envelope.workUnitId())
                             + " lease=" + value(envelope.leaseId())
                             + " results=" + cleaned.size() + " unsuccessful=" + failed);
-                    write(mapper, writer, Envelope.resultBatch(parsed.workerId,
+                    write(writer, Envelope.resultBatch(parsed.workerId,
                             envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()),
                             sessionProtocol);
                     envelope = null;
@@ -190,18 +214,52 @@ public final class WorkerMain {
         int javaFeature = Runtime.version().feature();
         Set<String> adapterIds = adapters.available(classLoader).stream()
                 .map(adapter -> adapter.id()).collect(Collectors.toUnmodifiableSet());
-        Set<String> engineIds = ServiceLoader.load(TestEngine.class, classLoader).stream()
-                .map(ServiceLoader.Provider::get).map(TestEngine::getId)
-                .filter(id -> id != null && !id.isBlank()).collect(Collectors.toUnmodifiableSet());
+        Set<String> engineIds = detectJUnitPlatformEngineIds(classLoader);
         String fingerprintInput = String.join("\n",
                 Integer.toString(Protocol.VERSION), Integer.toString(javaFeature),
                 System.getProperty("java.vendor", "unknown"), System.getProperty("java.version", "unknown"),
-                os, architecture, System.getProperty("java.class.path", ""));
+                os, architecture, executionRealmFingerprint(classLoader));
         byte[] digest = MessageDigest.getInstance("SHA-256")
                 .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
                 HexFormat.of().formatHex(digest), adapterIds, engineIds,
                 Protocol.MIN_SUPPORTED_VERSION, Protocol.VERSION);
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static Set<String> detectJUnitPlatformEngineIds(ClassLoader classLoader) throws Exception {
+        Class<?> engineType;
+        try {
+            engineType = Class.forName("org.junit.platform.engine.TestEngine", false, classLoader);
+        } catch (ClassNotFoundException absent) {
+            return Set.of();
+        }
+        Method getId = engineType.getMethod("getId");
+        Set<String> ids = new LinkedHashSet<>();
+        ServiceLoader services = ServiceLoader.load((Class) engineType, classLoader);
+        for (Object engine : services) {
+            Object raw = getId.invoke(engine);
+            if (raw instanceof String id && !id.isBlank()) {
+                if (!ids.add(id)) throw new IllegalStateException("duplicate JUnit Platform engine id '" + id + "'");
+            }
+        }
+        return Set.copyOf(ids);
+    }
+
+    private static String executionRealmFingerprint(ClassLoader classLoader) {
+        if (classLoader instanceof URLClassLoader urls) {
+            return java.util.Arrays.stream(urls.getURLs()).map(Object::toString).sorted()
+                    .collect(Collectors.joining("\n"));
+        }
+        return classLoader.getClass().getName();
+    }
+
+    private static List<Path> currentClasspath() {
+        String raw = System.getProperty("java.class.path", "");
+        if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath descriptor was supplied");
+        return java.util.Arrays.stream(raw.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(value -> value != null && !value.isBlank())
+                .map(Path::of).toList();
     }
 
     private static WorkUnitExecution executeWorkUnit(AdapterRegistry adapters, List<ScenarioTask> tasks,
@@ -312,12 +370,12 @@ public final class WorkerMain {
         }
     }
 
-    private static void write(ObjectMapper mapper, BufferedWriter writer, Envelope envelope,
-                              int protocolVersion) throws Exception {
+    private static void write(BufferedWriter writer, Envelope envelope, int protocolVersion) throws Exception {
         Envelope versioned = envelope.withProtocolVersion(protocolVersion);
+        versioned.validatePayloadShape();
         traceEnvelope("OUT", versioned.workerId(), versioned);
         synchronized (writer) {
-            writer.write(mapper.writeValueAsString(versioned));
+            writer.write(ControlJsonCodec.write(versioned));
             writer.newLine();
             writer.flush();
         }
@@ -342,10 +400,11 @@ public final class WorkerMain {
         System.err.println(TRACE_PREFIX + " " + Instant.now() + " thread=" + Thread.currentThread().getName() + " " + message);
     }
 
-    private record Arguments(String host, int port, String workerId) {
+    private record Arguments(String host, int port, String workerId, Path targetClasspathFile) {
         private static Arguments parse(String[] args) {
             String host = null, workerId = null;
             Integer port = null;
+            Path targetClasspathFile = null;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
                 if (i + 1 >= args.length) throw new IllegalArgumentException(key + " requires a value");
@@ -354,13 +413,14 @@ public final class WorkerMain {
                     case "--host" -> host = value;
                     case "--port" -> port = Integer.parseInt(value);
                     case "--worker-id" -> workerId = value;
+                    case "--target-classpath-file" -> targetClasspathFile = Path.of(value).toAbsolutePath().normalize();
                     default -> throw new IllegalArgumentException("Unknown worker argument: " + key);
                 }
             }
             if (host == null || port == null || workerId == null) {
                 throw new IllegalArgumentException("--host, --port and --worker-id are required; authentication is provided through environment variables");
             }
-            return new Arguments(host, port, workerId);
+            return new Arguments(host, port, workerId, targetClasspathFile);
         }
     }
 }

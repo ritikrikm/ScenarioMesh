@@ -50,6 +50,7 @@ public final class RemoteWorkerSession implements AutoCloseable {
 
     public synchronized void write(Envelope envelope) throws Exception {
         Envelope versioned = Objects.requireNonNull(envelope, "envelope").withProtocolVersion(protocolVersion);
+        versioned.validatePayloadShape();
         traceEnvelope("OUT", versioned);
         try {
             writer.write(mapper.writeValueAsString(versioned));
@@ -75,7 +76,7 @@ public final class RemoteWorkerSession implements AutoCloseable {
             }
             Envelope envelope = mapper.readValue(frame, Envelope.class);
             traceEnvelope("IN", envelope);
-            return requireSessionVersion(envelope);
+            return requireValidSessionEnvelope(envelope);
         } catch (Exception exception) {
             trace("READ_FAILURE worker=" + registration.workerId() + " expectedProtocol=" + protocolVersion
                     + " exception=" + exception.getClass().getName() + " message=" + safeMessage(exception));
@@ -92,7 +93,7 @@ public final class RemoteWorkerSession implements AutoCloseable {
             if (frame == null) return null;
             Envelope envelope = mapper.readValue(frame, Envelope.class);
             traceEnvelope("IN_AVAILABLE", envelope);
-            return requireSessionVersion(envelope);
+            return requireValidSessionEnvelope(envelope);
         } catch (Exception exception) {
             trace("READ_AVAILABLE_FAILURE worker=" + registration.workerId() + " expectedProtocol=" + protocolVersion
                     + " exception=" + exception.getClass().getName() + " message=" + safeMessage(exception));
@@ -100,14 +101,23 @@ public final class RemoteWorkerSession implements AutoCloseable {
         }
     }
 
-    private Envelope requireSessionVersion(Envelope envelope) {
+    private Envelope requireValidSessionEnvelope(Envelope envelope) {
+        requireSessionVersion(envelope);
+        envelope.validatePayloadShape();
+        if (!registration.workerId().equals(envelope.workerId())) {
+            throw new IllegalArgumentException("remote worker changed authenticated worker identity from "
+                    + registration.workerId() + " to " + envelope.workerId());
+        }
+        return envelope;
+    }
+
+    private void requireSessionVersion(Envelope envelope) {
         if (envelope.protocolVersion() != protocolVersion) {
             trace("PROTOCOL_MISMATCH worker=" + registration.workerId() + " expected=" + protocolVersion
                     + " actual=" + envelope.protocolVersion() + " type=" + envelope.type());
             throw new IllegalArgumentException("remote worker changed negotiated protocol version from "
                     + protocolVersion + " to " + envelope.protocolVersion());
         }
-        return envelope;
     }
 
     private void traceEnvelope(String direction, Envelope envelope) {

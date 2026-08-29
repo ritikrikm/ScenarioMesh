@@ -91,7 +91,14 @@ public final class Ports {
 
     public interface SchedulingStrategy {
         void load(Collection<ScenarioTask> tasks);
-        ScenarioTask nextEligible(Predicate<ScenarioTask> eligible);
+
+        /**
+         * Selects the next task that can run on the supplied stable execution-lane identity.
+         * The lane id is deliberately explicit: scheduler affinity must be tied to the worker/slot
+         * that owns execution, never to whichever coordinator thread happens to call this method.
+         */
+        ScenarioTask nextEligible(String executionLaneId, Predicate<ScenarioTask> eligible);
+
         void requeue(ScenarioTask task);
         int queued();
     }

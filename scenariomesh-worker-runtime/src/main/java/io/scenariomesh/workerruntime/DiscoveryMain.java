@@ -1,6 +1,5 @@
 package io.scenariomesh.workerruntime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.config.ScenarioMeshConfig.AdapterMismatchPolicy;
 import io.scenariomesh.core.DiscoverySelection;
@@ -8,7 +7,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 
-import java.nio.file.Files;
+import java.io.Serializable;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,8 +21,23 @@ public final class DiscoveryMain {
 
     public static void main(String[] args) throws Exception {
         Arguments parsed = Arguments.parse(args);
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-        AdapterRegistry registry = new AdapterRegistry();
+        Thread thread = Thread.currentThread();
+        ClassLoader controlLoader = DiscoveryMain.class.getClassLoader();
+        String encoded = System.getProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY);
+        List<Path> targetClasspath = encoded == null || encoded.isBlank()
+                ? currentClasspath()
+                : TargetClasspathDescriptor.decodeInline(encoded);
+        ClassLoader previous = thread.getContextClassLoader();
+        try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
+            thread.setContextClassLoader(targetLoader);
+            discover(parsed, targetLoader);
+        } finally {
+            thread.setContextClassLoader(previous);
+        }
+    }
+
+    private static void discover(Arguments parsed, ClassLoader classLoader) throws Exception {
+        AdapterRegistry registry = new AdapterRegistry(classLoader);
         Map<String, String> properties = systemProperties();
         AdapterContext context = new AdapterContext(
                 classLoader,
@@ -31,8 +45,6 @@ public final class DiscoveryMain {
                 properties,
                 new DiscoverySelection(parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes));
 
-        // Defense-in-depth for direct ScenarioMesh runs and any future lifecycle integration.
-        // The normal Maven extension already performs this probe before suppressing Surefire/Failsafe.
         ExecutionBackendInventory.Inventory backendInventory = ExecutionBackendInventory.inspect(
                 classLoader,
                 parsed.testRoots,
@@ -43,9 +55,6 @@ public final class DiscoveryMain {
                     + backendInventory.summary() + ". Native Maven execution is safer.");
         }
 
-        // Dependency presence only tells us which adapters might work. Before trusting adapter
-        // discovery, prove that the Maven-selected class set does not contain an executable
-        // framework family for which ScenarioMesh has no owner.
         new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
 
         Map<String, List<ScenarioTask>> discoveredByAdapter = new LinkedHashMap<>();
@@ -80,10 +89,8 @@ public final class DiscoveryMain {
         }
 
         Selection selection = select(parsed, registry, discoveredByAdapter, evidence, autoDiscoveryErrors);
-        Files.createDirectories(parsed.output.getParent());
-        ObjectMapper mapper = JsonCodec.create();
-        mapper.writerWithDefaultPrettyPrinter().writeValue(
-                parsed.output.toFile(),
+        DiscoveryResultCodec.write(
+                parsed.output,
                 new DiscoveryResult(
                         List.of(selection.adapterId()),
                         List.copyOf(evidence),
@@ -161,7 +168,15 @@ public final class DiscoveryMain {
     private static Map<String, String> systemProperties() {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
+        properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
         return properties;
+    }
+
+    private static List<Path> currentClasspath() {
+        String raw = System.getProperty("java.class.path", "");
+        if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath was supplied");
+        return java.util.Arrays.stream(raw.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator)))
+                .filter(value -> value != null && !value.isBlank()).map(Path::of).toList();
     }
 
     private static String message(Throwable throwable) {
@@ -169,12 +184,13 @@ public final class DiscoveryMain {
         return message == null || message.isBlank() ? throwable.getClass().getName() : message;
     }
 
-    public record AdapterEvidence(String adapterId, String framework, boolean available, int discoveredCount, String error) {}
+    public record AdapterEvidence(String adapterId, String framework, boolean available,
+                                  int discoveredCount, String error) implements Serializable {}
 
     public record DiscoveryResult(List<String> adapters,
                                   List<AdapterEvidence> evidence,
                                   List<String> warnings,
-                                  List<ScenarioTask> tasks) {
+                                  List<ScenarioTask> tasks) implements Serializable {
         public DiscoveryResult {
             adapters = List.copyOf(adapters == null ? List.of() : adapters);
             evidence = List.copyOf(evidence == null ? List.of() : evidence);

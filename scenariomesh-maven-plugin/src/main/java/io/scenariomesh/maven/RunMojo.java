@@ -25,7 +25,6 @@ import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
 
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -41,22 +40,14 @@ public final class RunMojo extends AbstractMojo {
     @Component
     private ToolchainManager toolchainManager;
 
-    @Parameter
-    private String invocationId;
-    @Parameter(defaultValue = "false")
-    private boolean deferFailureUntilVerify;
-    @Parameter(defaultValue = "surefire")
-    private String takeoverExecutor;
-    @Parameter(defaultValue = "false")
-    private boolean testFailureIgnore;
-    @Parameter
-    private List<String> includeClassNameRegexes;
-    @Parameter
-    private List<String> excludeClassNameRegexes;
-    @Parameter
-    private List<String> executorJvmArgs;
-    @Parameter
-    private Map<String, String> executorSystemProperties;
+    @Parameter private String invocationId;
+    @Parameter(defaultValue = "false") private boolean deferFailureUntilVerify;
+    @Parameter(defaultValue = "surefire") private String takeoverExecutor;
+    @Parameter(defaultValue = "false") private boolean testFailureIgnore;
+    @Parameter private List<String> includeClassNameRegexes;
+    @Parameter private List<String> excludeClassNameRegexes;
+    @Parameter private List<String> executorJvmArgs;
+    @Parameter private Map<String, String> executorSystemProperties;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -75,8 +66,7 @@ public final class RunMojo extends AbstractMojo {
             return;
         }
         if (preflight == PreflightState.State.OWNED) {
-            getLog().info("ScenarioMesh: takeover enabled after runtime ownership preflight. "
-                    + PreflightState.reason(project));
+            getLog().info("ScenarioMesh: takeover enabled after runtime ownership preflight. " + PreflightState.reason(project));
         } else {
             getLog().debug("ScenarioMesh preflight state is absent; proceeding as an explicit/direct ScenarioMesh run.");
         }
@@ -84,9 +74,8 @@ public final class RunMojo extends AbstractMojo {
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         PreparedRemoteWorkers preparedRemoteWorkers = null;
         try {
-            Map<String, String> userProperties = stringProperties(session.getUserProperties());
-            Map<String, String> configProperties = stringProperties(session.getSystemProperties());
-            configProperties.putAll(userProperties);
+            Map<String, String> userProperties = EffectiveMavenProperties.user(session);
+            Map<String, String> configProperties = EffectiveMavenProperties.configuration(project, session);
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
             ConfigResolution resolution = new ConfigResolver().resolveDetailed(
                     projectDirectory, buildDirectory, configProperties, System.getenv());
@@ -100,17 +89,15 @@ public final class RunMojo extends AbstractMojo {
             DiscoverySelection selection = new DiscoverySelection(
                     includeClassNameRegexes == null ? List.of() : includeClassNameRegexes,
                     excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
+            Path testJava = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
+            if (config.showConfiguration()) logConfiguration(config, resolution, testJava);
 
-            Path testJava = new TestJvmResolver().resolve(
-                    project, session, toolchainManager, takeoverExecutor, null);
-
-            if (config.showConfiguration()) {
-                logConfiguration(config, resolution, testJava);
-            }
-
+            RuntimeClasspathResolver.RuntimeClasspaths classpaths =
+                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
             RunRequest request = new RunRequest(
                     projectDirectory,
-                    new RuntimeClasspathResolver().resolve(project, pluginArtifacts),
+                    classpaths.targetClasspath(),
+                    classpaths.controlClasspath(),
                     new TestRootResolver().resolve(project),
                     userProperties,
                     config,
@@ -129,7 +116,6 @@ public final class RunMojo extends AbstractMojo {
             }
 
             new LatestReportCleaner().clear(config.reportingDirectory());
-
             RunOutcome outcome = new ScenarioMeshRunner().run(request, preparedRemoteWorkers);
             preparedRemoteWorkers = null;
             ReportWriter.ReportPaths reports = new ReportWriter().write(outcome, config.reportingDirectory());
@@ -148,10 +134,7 @@ public final class RunMojo extends AbstractMojo {
             }
 
             if (deferFailureUntilVerify) {
-                DeferredVerificationState.write(
-                        buildDirectory,
-                        invocationId,
-                        effectiveSuccess,
+                DeferredVerificationState.write(buildDirectory, invocationId, effectiveSuccess,
                         reports.latestHtml().toString(),
                         effectiveSuccess ? null : "ScenarioMesh run contained failing or infrastructure results");
                 if (!effectiveSuccess) {
@@ -159,9 +142,7 @@ public final class RunMojo extends AbstractMojo {
                 }
                 return;
             }
-            if (!effectiveSuccess) {
-                throw new MojoFailureException("ScenarioMesh run failed. See " + reports.latestHtml());
-            }
+            if (!effectiveSuccess) throw new MojoFailureException("ScenarioMesh run failed. See " + reports.latestHtml());
         } catch (MojoFailureException failure) {
             throw failure;
         } catch (Exception exception) {
@@ -215,11 +196,5 @@ public final class RunMojo extends AbstractMojo {
         if (!testFailureIgnore) return false;
         return outcome.results().stream()
                 .allMatch(result -> result.buildSuccessful() || result.status() == ResultStatus.TEST_FAILURE);
-    }
-
-    private Map<String, String> stringProperties(java.util.Properties properties) {
-        Map<String, String> values = new LinkedHashMap<>();
-        if (properties != null) properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        return values;
     }
 }

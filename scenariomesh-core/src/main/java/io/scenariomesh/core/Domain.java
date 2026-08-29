@@ -1,5 +1,6 @@
 package io.scenariomesh.core;
 
+import java.io.Serializable;
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,19 +12,19 @@ import java.util.UUID;
 public final class Domain {
     private Domain() {}
 
-    public record ScenarioId(String value) {
+    public record ScenarioId(String value) implements Serializable {
         public ScenarioId {
             Objects.requireNonNull(value);
         }
     }
 
-    public record WorkerId(String value) {
+    public record WorkerId(String value) implements Serializable {
         public WorkerId {
             Objects.requireNonNull(value);
         }
     }
 
-    public record RunId(String value) {
+    public record RunId(String value) implements Serializable {
         public RunId {
             Objects.requireNonNull(value);
         }
@@ -64,7 +65,7 @@ public final class Domain {
             Integer line,
             String selector,
             Set<String> tags,
-            Map<String, String> metadata) {
+            Map<String, String> metadata) implements Serializable {
         public ScenarioTask {
             Objects.requireNonNull(id);
             Objects.requireNonNull(displayName);
@@ -86,7 +87,7 @@ public final class Domain {
             Instant startedAt,
             Instant finishedAt,
             String failureMessage,
-            String failureType) {
+            String failureType) implements Serializable {
         public ExecutionResult {
             Objects.requireNonNull(scenarioId);
             Objects.requireNonNull(displayName);

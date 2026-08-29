@@ -24,9 +24,9 @@ final class ProjectCompatibilityDetector {
             "test", "prepare-package", "package", "pre-integration-test",
             "integration-test", "post-integration-test", "verify", "install", "deploy");
     private static final Set<String> SUREFIRE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "test", "surefire.includes", "surefire.excludes", "suiteXmlFiles", "dependenciesToScan");
+            "test", "suiteXmlFiles", "dependenciesToScan");
     private static final Set<String> FAILSAFE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "it.test", "failsafe.includes", "failsafe.excludes", "suiteXmlFiles", "dependenciesToScan");
+            "it.test", "suiteXmlFiles", "dependenciesToScan");
     private static final Set<String> CUCUMBER_SELECTION_PROPERTIES = Set.of(
             "cucumber.filter.tags", "cucumber.filter.name", "cucumber.features");
     private static final List<String> FRAMEWORK_PROPERTY_PREFIXES = List.of(
@@ -90,6 +90,11 @@ final class ProjectCompatibilityDetector {
                             "Failsafe test-selection property '" + unsafe
                                     + "' is present and is not yet reproduced by ScenarioMesh discovery");
                 }
+                SelectionOverride selectionOverride = selectionOverride(
+                        properties, "failsafe.includes", "failsafe.excludes", "Failsafe");
+                if (!selectionOverride.supported()) {
+                    return CompatibilityDecision.passThrough(selectionOverride.reason());
+                }
                 List<ExecutorPlan> plans = analysis.executionPlans().stream()
                         .filter(plan -> !plan.explicitlySkipped())
                         .map(plan -> {
@@ -97,8 +102,10 @@ final class ProjectCompatibilityDetector {
                             planProperties.putAll(frameworkSystemProperties);
                             return new ExecutorPlan(
                                     plan.executionId(),
-                                    plan.includeClassNameRegexes(),
-                                    plan.excludeClassNameRegexes(),
+                                    selectionOverride.includes() == null
+                                            ? plan.includeClassNameRegexes() : selectionOverride.includes(),
+                                    selectionOverride.excludes() == null
+                                            ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
                                     plan.jvmArgs(),
                                     planProperties,
                                     plan.testFailureIgnore());
@@ -123,15 +130,61 @@ final class ProjectCompatibilityDetector {
         if (unsafe != null) reasons.add("Maven test-selection property '" + unsafe + "' is present and is not yet reproduced by ScenarioMesh discovery");
         if (!reasons.isEmpty()) return CompatibilityDecision.passThrough(String.join("; ", reasons));
 
-        List<String> includes = surefireAnalysis == null
-                ? SurefireCompatibility.defaultIncludeClassNameRegexes()
-                : surefireAnalysis.includeClassNameRegexes();
-        List<String> excludes = surefireAnalysis == null
-                ? SurefireCompatibility.defaultExcludeClassNameRegexes()
-                : surefireAnalysis.excludeClassNameRegexes();
+        SelectionOverride selectionOverride = selectionOverride(
+                properties, "surefire.includes", "surefire.excludes", "Surefire");
+        if (!selectionOverride.supported()) return CompatibilityDecision.passThrough(selectionOverride.reason());
+
+        List<String> includes = selectionOverride.includes() != null
+                ? selectionOverride.includes()
+                : surefireAnalysis == null
+                    ? SurefireCompatibility.defaultIncludeClassNameRegexes()
+                    : surefireAnalysis.includeClassNameRegexes();
+        List<String> excludes = selectionOverride.excludes() != null
+                ? selectionOverride.excludes()
+                : surefireAnalysis == null
+                    ? SurefireCompatibility.defaultExcludeClassNameRegexes()
+                    : surefireAnalysis.excludeClassNameRegexes();
+        Map<String, String> surefireSystemProperties = new LinkedHashMap<>();
+        if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
+        surefireSystemProperties.putAll(frameworkSystemProperties);
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), frameworkSystemProperties, false)));
+                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
+    }
+
+    private SelectionOverride selectionOverride(EffectivePropertyResolver properties,
+                                                String includesKey,
+                                                String excludesKey,
+                                                String executorName) {
+        List<String> includes = null;
+        List<String> excludes = null;
+        if (properties.present(includesKey)) {
+            String value = properties.resolve(includesKey);
+            if (value == null || value.isBlank()) {
+                return SelectionOverride.unsupported(executorName + " selection property '" + includesKey
+                        + "' is blank; ScenarioMesh will not guess Maven's collection binding semantics");
+            }
+            try {
+                includes = MavenClassNamePatterns.toRegexes(List.of(value));
+            } catch (IllegalArgumentException unsupported) {
+                return SelectionOverride.unsupported(executorName + " selection property '" + includesKey
+                        + "' is not in ScenarioMesh's proven Maven selector subset: " + unsupported.getMessage());
+            }
+        }
+        if (properties.present(excludesKey)) {
+            String value = properties.resolve(excludesKey);
+            if (value == null || value.isBlank()) {
+                return SelectionOverride.unsupported(executorName + " selection property '" + excludesKey
+                        + "' is blank; ScenarioMesh will not guess Maven's collection binding semantics");
+            }
+            try {
+                excludes = MavenClassNamePatterns.toRegexes(List.of(value));
+            } catch (IllegalArgumentException unsupported) {
+                return SelectionOverride.unsupported(executorName + " selection property '" + excludesKey
+                        + "' is not in ScenarioMesh's proven Maven selector subset: " + unsupported.getMessage());
+            }
+        }
+        return SelectionOverride.supported(includes, excludes);
     }
 
     private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
@@ -255,8 +308,18 @@ final class ProjectCompatibilityDetector {
         boolean testFailureIgnore() { return primaryPlan().testFailureIgnore(); }
     }
 
+    private record SelectionOverride(boolean supported, List<String> includes, List<String> excludes, String reason) {
+        private static SelectionOverride supported(List<String> includes, List<String> excludes) {
+            return new SelectionOverride(true,
+                    includes == null ? null : List.copyOf(includes),
+                    excludes == null ? null : List.copyOf(excludes), null);
+        }
+        private static SelectionOverride unsupported(String reason) {
+            return new SelectionOverride(false, null, null, reason);
+        }
+    }
+
     private record FrameworkSignals(boolean junitPlatform, boolean cucumberJUnit4, boolean testNg, boolean directJUnit4) {
-        boolean supported() { return junitPlatform || cucumberJUnit4 || testNg; }
         Set<String> names() {
             Set<String> names = new LinkedHashSet<>();
             if (junitPlatform) names.add("junit-platform");

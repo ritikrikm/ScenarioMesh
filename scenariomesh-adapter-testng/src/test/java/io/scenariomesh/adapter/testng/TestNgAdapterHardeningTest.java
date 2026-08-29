@@ -7,6 +7,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Domain.WorkerId;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
+import io.scenariomesh.core.TaskMetadata;
 import org.testng.Assert;
 import org.testng.SkipException;
 import org.testng.annotations.Test;
@@ -58,6 +59,26 @@ public class TestNgAdapterHardeningTest {
         } catch (IllegalStateException expected) {
             Assert.assertTrue(expected.getMessage().contains("invocationCount=2"), expected.getMessage());
         }
+    }
+
+    @Test
+    public void classLifecycleFailsClosedInsteadOfBeingRepeatedPerMethod() throws Exception {
+        try {
+            adapter.discover(discoveryContext(TestNgBeforeClassFixture.class));
+            Assert.fail("Expected class lifecycle discovery to fail closed");
+        } catch (IllegalStateException expected) {
+            Assert.assertTrue(expected.getMessage().contains("BeforeClass lifecycle"), expected.getMessage());
+        }
+    }
+
+    @Test
+    public void simpleMethodsPublishStableClassAffinity() throws Exception {
+        List<ScenarioTask> tasks = adapter.discover(discoveryContext(TestNgSimpleClassFixture.class));
+        Assert.assertEquals(tasks.size(), 2);
+        Set<String> scopes = tasks.stream()
+                .map(task -> task.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID))
+                .collect(java.util.stream.Collectors.toSet());
+        Assert.assertEquals(scopes, Set.of("testng-class:" + TestNgSimpleClassFixture.class.getName()));
     }
 
     @Test

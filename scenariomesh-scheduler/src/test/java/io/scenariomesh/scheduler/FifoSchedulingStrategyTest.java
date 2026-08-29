@@ -2,6 +2,7 @@ package io.scenariomesh.scheduler;
 
 import io.scenariomesh.core.Domain.ScenarioId;
 import io.scenariomesh.core.Domain.ScenarioTask;
+import io.scenariomesh.core.TaskMetadata;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -22,11 +23,11 @@ class FifoSchedulingStrategyTest {
         ScenarioTask eligible = task("eligible");
         scheduler.load(List.of(blocked, eligible));
 
-        ScenarioTask selected = scheduler.nextEligible(task -> task.id().value().equals("eligible"));
+        ScenarioTask selected = scheduler.nextEligible("test-lane", task -> task.id().value().equals("eligible"));
 
         assertEquals(eligible, selected);
         assertEquals(1, scheduler.queued());
-        assertEquals(blocked, scheduler.nextEligible(task -> true));
+        assertEquals(blocked, scheduler.nextEligible("test-lane", task -> true));
         assertEquals(0, scheduler.queued());
     }
 
@@ -37,9 +38,9 @@ class FifoSchedulingStrategyTest {
         ScenarioTask second = task("second");
         scheduler.load(List.of(first, second));
 
-        assertNull(scheduler.nextEligible(task -> false));
+        assertNull(scheduler.nextEligible("test-lane", task -> false));
         assertEquals(2, scheduler.queued());
-        assertEquals(first, scheduler.nextEligible(task -> true));
+        assertEquals(first, scheduler.nextEligible("test-lane", task -> true));
     }
 
     @Test
@@ -53,11 +54,11 @@ class FifoSchedulingStrategyTest {
 
         Thread laneOne = new Thread(() -> {
             await(start);
-            first.set(scheduler.nextEligible(task -> true));
+            first.set(scheduler.nextEligible("worker-1", task -> true));
         });
         Thread laneTwo = new Thread(() -> {
             await(start);
-            second.set(scheduler.nextEligible(task -> true));
+            second.set(scheduler.nextEligible("worker-2", task -> true));
         });
         laneOne.start();
         laneTwo.start();
@@ -71,14 +72,26 @@ class FifoSchedulingStrategyTest {
     }
 
     @Test
+    void stableLaneIdentityDoesNotDependOnCallingThread() {
+        FifoSchedulingStrategy scheduler = new FifoSchedulingStrategy();
+        ScenarioTask first = scopedTask("a", "class:LoginTest");
+        ScenarioTask second = scopedTask("b", "class:LoginTest");
+        scheduler.load(List.of(first, second));
+
+        assertEquals(first, scheduler.nextEligible("worker-7", task -> true));
+        assertNull(scheduler.nextEligible("worker-8", task -> true));
+        assertEquals(second, scheduler.nextEligible("worker-7", task -> true));
+    }
+
+    @Test
     void sameWorkerLaneReceivesRemainingLeavesFromItsClaimedScope() {
         FifoSchedulingStrategy scheduler = new FifoSchedulingStrategy();
         ScenarioTask first = scopedTask("a", "class:LoginTest");
         ScenarioTask second = scopedTask("b", "class:LoginTest");
         scheduler.load(List.of(first, second));
 
-        assertEquals(first, scheduler.nextEligible(task -> true));
-        assertEquals(second, scheduler.nextEligible(task -> true));
+        assertEquals(first, scheduler.nextEligible("worker-1", task -> true));
+        assertEquals(second, scheduler.nextEligible("worker-1", task -> true));
     }
 
     @Test
@@ -89,8 +102,8 @@ class FifoSchedulingStrategyTest {
         CountDownLatch start = new CountDownLatch(1);
         AtomicReference<ScenarioTask> first = new AtomicReference<>();
         AtomicReference<ScenarioTask> second = new AtomicReference<>();
-        Thread laneOne = new Thread(() -> { await(start); first.set(scheduler.nextEligible(task -> true)); });
-        Thread laneTwo = new Thread(() -> { await(start); second.set(scheduler.nextEligible(task -> true)); });
+        Thread laneOne = new Thread(() -> { await(start); first.set(scheduler.nextEligible("worker-1", task -> true)); });
+        Thread laneTwo = new Thread(() -> { await(start); second.set(scheduler.nextEligible("worker-2", task -> true)); });
         laneOne.start();
         laneTwo.start();
         start.countDown();
@@ -111,7 +124,7 @@ class FifoSchedulingStrategyTest {
     private ScenarioTask scopedTask(String id, String scopeId) {
         return new ScenarioTask(
                 new ScenarioId(id), id, "junit-platform", "junit5",
-                null, null, id, Set.of(), Map.of("executionScopeId", scopeId));
+                null, null, id, Set.of(), Map.of(TaskMetadata.EXECUTION_SCOPE_ID, scopeId));
     }
 
     private static void await(CountDownLatch latch) {

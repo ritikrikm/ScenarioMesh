@@ -33,4 +33,16 @@ public record TlsConfig(
     public static TlsConfig disabled() {
         return new TlsConfig(false, true, null, "", null, "");
     }
+
+    /** Never expose keystore/truststore passwords through generated record diagnostics. */
+    @Override
+    public String toString() {
+        return "TlsConfig[enabled=" + enabled
+                + ", requireClientAuth=" + requireClientAuth
+                + ", keyStore=" + keyStore
+                + ", keyStorePassword=" + (keyStorePassword.isBlank() ? "<unset>" : "<redacted>")
+                + ", trustStore=" + trustStore
+                + ", trustStorePassword=" + (trustStorePassword.isBlank() ? "<unset>" : "<redacted>")
+                + "]";
+    }
 }

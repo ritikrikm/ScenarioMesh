@@ -52,6 +52,17 @@ public record DistributedConfig(
         return mode == WorkerMode.REMOTE;
     }
 
+    /** Never expose the authentication token through diagnostics/logging of the config record. */
+    @Override
+    public String toString() {
+        return "DistributedConfig[mode=" + mode
+                + ", bindHost=" + bindHost
+                + ", bindPort=" + bindPort
+                + ", token=" + (token.isBlank() ? "<unset>" : "<redacted>")
+                + ", registrationTimeout=" + registrationTimeout
+                + ", tls=" + tls + "]";
+    }
+
     private static boolean isLoopbackHost(String host) {
         String normalized = host.trim().toLowerCase(Locale.ROOT);
         return normalized.equals("127.0.0.1") || normalized.equals("localhost") || normalized.equals("::1")

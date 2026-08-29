@@ -8,6 +8,7 @@ import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.TaskMetadata;
 import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.TestExecutionResult;
@@ -42,14 +43,14 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqu
 
 public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String ID = "junit-platform";
-    public static final String META_SCOPE_ID = "executionScopeId";
-    public static final String META_SCOPE_SELECTOR = "executionScopeSelector";
-    public static final String META_SCOPE_KIND = "executionScopeKind";
-    public static final String META_RUNTIME_MATERIALIZER = "runtimeMaterializer";
-    public static final String META_PARENT_MATERIALIZER_ID = "parentMaterializerId";
-    public static final String META_PARENT_MATERIALIZER_SELECTOR = "parentMaterializerSelector";
+    public static final String META_SCOPE_ID = TaskMetadata.EXECUTION_SCOPE_ID;
+    public static final String META_SCOPE_SELECTOR = TaskMetadata.EXECUTION_SCOPE_SELECTOR;
+    public static final String META_SCOPE_KIND = TaskMetadata.EXECUTION_SCOPE_KIND;
+    public static final String META_RUNTIME_MATERIALIZER = TaskMetadata.RUNTIME_MATERIALIZER;
+    public static final String META_PARENT_MATERIALIZER_ID = TaskMetadata.PARENT_MATERIALIZER_ID;
+    public static final String META_PARENT_MATERIALIZER_SELECTOR = TaskMetadata.PARENT_MATERIALIZER_SELECTOR;
     /** Generic scheduler requirement published by the adapter that owns JUnit UniqueId semantics. */
-    public static final String META_REQUIRED_ENGINE_ID = "requiredEngineId";
+    public static final String META_REQUIRED_ENGINE_ID = TaskMetadata.REQUIRED_ENGINE_ID;
 
     @Override public String id() { return ID; }
     @Override public String framework() { return "junit-platform"; }
@@ -205,9 +206,21 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         return outcome.toResult(task, context);
     }
 
+    /**
+     * Runtime materialization is currently a proven Jupiter capability only. Do not infer dynamic
+     * execution semantics from another engine merely because its UniqueId happens to reuse a
+     * segment name such as test-template/test-factory.
+     */
     private static boolean isRuntimeMaterializer(TestIdentifier identifier) {
         String id = identifier.getUniqueId();
-        return id.contains("[test-template:") || id.contains("[test-factory:");
+        String engineId;
+        try {
+            engineId = UniqueId.parse(id).getEngineId().orElse("");
+        } catch (RuntimeException invalid) {
+            return false;
+        }
+        return "junit-jupiter".equals(engineId)
+                && (id.contains("[test-template:") || id.contains("[test-factory:"));
     }
 
     private static boolean isMaterializer(ScenarioTask task) {

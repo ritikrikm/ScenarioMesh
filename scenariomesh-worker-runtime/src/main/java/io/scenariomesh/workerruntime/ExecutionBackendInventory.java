@@ -1,32 +1,24 @@
 package io.scenariomesh.workerruntime;
 
-import io.scenariomesh.adapter.junitplatform.MavenClassSelectionPostFilter;
-import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
-import org.junit.platform.engine.TestEngine;
-import org.junit.platform.engine.UniqueId;
-import org.junit.platform.launcher.Launcher;
-import org.junit.platform.launcher.TestIdentifier;
-import org.junit.platform.launcher.TestPlan;
-import org.junit.platform.launcher.core.LauncherConfig;
-import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
-import org.junit.platform.launcher.core.LauncherFactory;
 
+import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.ServiceLoader;
 import java.util.Set;
 
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
-
-/** Runtime inventory of executable test backends and their proven ScenarioMesh ownership granularity. */
+/**
+ * Framework-neutral facade for runtime backend inventory.
+ *
+ * <p>JUnit Platform probing is loaded reflectively from the target execution realm so worker-runtime
+ * does not bind to ScenarioMesh's own JUnit Platform version. If the adapter/probe is absent there
+ * is simply no JUnit Platform backend to inventory.</p>
+ */
 public final class ExecutionBackendInventory {
-    private static final Set<String> PROVEN_LEAF_OWNABLE_ENGINES = Set.of();
-    private static final Set<String> PROVEN_SCOPED_OWNABLE_ENGINES = Set.of(
-            "junit-jupiter", "cucumber", "junit-platform-suite");
+    private static final String JUNIT_PROBE =
+            "io.scenariomesh.adapter.junitplatform.JUnitPlatformBackendProbe";
 
     private ExecutionBackendInventory() {}
 
@@ -39,83 +31,51 @@ public final class ExecutionBackendInventory {
     public static Inventory inspect(ClassLoader targetClassLoader, List<Path> testRoots,
                                     List<String> includeClassNameRegexes, List<String> excludeClassNameRegexes,
                                     Set<String> adapterOwnedEngineIds) {
-        if (testRoots == null || testRoots.isEmpty()) {
-            return new Inventory(Ownership.NOT_DETECTED, List.of(), "no compiled test roots are available");
-        }
-
-        Set<String> additional = Set.copyOf(adapterOwnedEngineIds == null ? Set.of() : adapterOwnedEngineIds);
-        List<TestEngine> engines = loadEngines(targetClassLoader);
-        if (engines.isEmpty()) {
-            return new Inventory(Ownership.NOT_DETECTED, List.of(), "no JUnit Platform TestEngine was loaded from the target classpath");
-        }
-
-        ClassLoader previous = Thread.currentThread().getContextClassLoader();
         try {
-            Thread.currentThread().setContextClassLoader(targetClassLoader);
-            LauncherConfig config = LauncherConfig.builder()
-                    .enableTestEngineAutoRegistration(false)
-                    .addTestEngines(engines.toArray(TestEngine[]::new))
-                    .build();
-            Launcher launcher = LauncherFactory.create(config);
-
-            DiscoverySelection selection = new DiscoverySelection(includeClassNameRegexes, excludeClassNameRegexes);
-            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request()
-                    .selectors(selectClasspathRoots(new HashSet<>(testRoots)));
-            if (!selection.includeClassNameRegexes().isEmpty() || !selection.excludeClassNameRegexes().isEmpty()) {
-                request.filters(new MavenClassSelectionPostFilter(selection));
-            }
-
-            TestPlan plan = launcher.discover(request.build());
-            List<Backend> backends = new ArrayList<>();
-            boolean hasOwnableExecutable = false;
-            boolean hasUnownedExecutable = false;
-
-            for (TestIdentifier root : plan.getRoots()) {
-                String engineId = engineId(root);
-                long executableLeaves = plan.getDescendants(root).stream()
-                        .filter(TestIdentifier::isTest)
-                        .filter(identifier -> plan.getChildren(identifier).isEmpty())
-                        .count();
-
-                boolean leafOwnable = PROVEN_LEAF_OWNABLE_ENGINES.contains(engineId);
-                boolean scopedOwnable = PROVEN_SCOPED_OWNABLE_ENGINES.contains(engineId) || additional.contains(engineId);
-                boolean ownable = leafOwnable || scopedOwnable;
-                ExecutionGranularity granularity = leafOwnable
-                        ? ExecutionGranularity.LEAF
-                        : scopedOwnable ? ExecutionGranularity.CONTAINER_OR_RUN : ExecutionGranularity.UNKNOWN;
-                BackendOwnership backendOwnership = ownable ? BackendOwnership.OWNABLE : BackendOwnership.DETECTED_NOT_OWNABLE;
-                Set<Capability> capabilities = leafOwnable
-                        ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
-                                Capability.ISOLATED_LEAF_EXECUTION, Capability.FILTER_EQUIVALENCE)
-                        : scopedOwnable
-                            ? Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY,
-                                    Capability.LIFECYCLE_SCOPED_EXECUTION, Capability.FILTER_EQUIVALENCE)
-                            : Set.of(Capability.DISCOVERY, Capability.STABLE_LEAF_IDENTITY);
-
-                backends.add(new Backend(engineId, "junit-platform", executableLeaves,
-                        backendOwnership, granularity, capabilities));
-                if (executableLeaves > 0) {
-                    if (ownable) hasOwnableExecutable = true;
-                    else hasUnownedExecutable = true;
-                }
-            }
-
-            if (hasUnownedExecutable) {
-                return new Inventory(Ownership.DETECTED_NOT_OWNABLE, List.copyOf(backends),
-                        "one or more engines expose executable leaves but ScenarioMesh has no proven execution contract for their lifecycle granularity");
-            }
-            if (hasOwnableExecutable) {
-                return new Inventory(Ownership.OWNABLE, List.copyOf(backends),
-                        "all executable JUnit Platform engines have a proven leaf or lifecycle-scoped ScenarioMesh execution contract");
-            }
-            return new Inventory(Ownership.NOT_DETECTED, List.copyOf(backends),
-                    "JUnit Platform engines were loaded but none exposed executable leaves for this Maven selection");
-        } catch (RuntimeException | LinkageError exception) {
+            Class<?> probe = Class.forName(JUNIT_PROBE, true, targetClassLoader);
+            Method inspect = probe.getMethod("inspect", ClassLoader.class, List.class, List.class, List.class, Set.class);
+            Object raw = inspect.invoke(null, targetClassLoader,
+                    List.copyOf(testRoots == null ? List.of() : testRoots),
+                    List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes),
+                    List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes),
+                    Set.copyOf(adapterOwnedEngineIds == null ? Set.of() : adapterOwnedEngineIds));
+            return decode(raw);
+        } catch (ClassNotFoundException absent) {
+            return new Inventory(Ownership.NOT_DETECTED, List.of(),
+                    "JUnit Platform backend probe is not present in the target execution realm");
+        } catch (ReflectiveOperationException | LinkageError failure) {
             return new Inventory(Ownership.DETECTED_NOT_OWNABLE, List.of(),
-                    "JUnit Platform backend probing failed: " + message(exception));
-        } finally {
-            Thread.currentThread().setContextClassLoader(previous);
+                    "JUnit Platform backend probing failed across the adapter boundary: " + message(rootCause(failure)));
         }
+    }
+
+    private static Inventory decode(Object raw) throws ReflectiveOperationException {
+        if (raw == null) throw new IllegalStateException("target backend probe returned null");
+        Class<?> type = raw.getClass();
+        Ownership ownership = Ownership.valueOf(String.valueOf(type.getMethod("ownership").invoke(raw)));
+        String reason = String.valueOf(type.getMethod("reason").invoke(raw));
+        Object rawBackends = type.getMethod("backends").invoke(raw);
+        if (!(rawBackends instanceof List<?> values)) {
+            throw new IllegalStateException("target backend probe returned a non-list backend collection");
+        }
+        List<Backend> backends = new ArrayList<>();
+        for (Object value : values) backends.add(decodeBackend(value));
+        return new Inventory(ownership, List.copyOf(backends), reason);
+    }
+
+    private static Backend decodeBackend(Object raw) throws ReflectiveOperationException {
+        Class<?> type = raw.getClass();
+        String id = String.valueOf(type.getMethod("id").invoke(raw));
+        String provider = String.valueOf(type.getMethod("provider").invoke(raw));
+        long leaves = ((Number) type.getMethod("executableLeaves").invoke(raw)).longValue();
+        BackendOwnership ownership = BackendOwnership.valueOf(String.valueOf(type.getMethod("ownership").invoke(raw)));
+        ExecutionGranularity granularity = ExecutionGranularity.valueOf(String.valueOf(type.getMethod("granularity").invoke(raw)));
+        Object rawCapabilities = type.getMethod("capabilities").invoke(raw);
+        Set<Capability> capabilities = new LinkedHashSet<>();
+        if (rawCapabilities instanceof Set<?> values) {
+            for (Object value : values) capabilities.add(Capability.valueOf(String.valueOf(value)));
+        }
+        return new Backend(id, provider, leaves, ownership, granularity, Set.copyOf(capabilities));
     }
 
     private static Set<String> adapterOwnedEngineIds(ClassLoader classLoader) {
@@ -127,23 +87,10 @@ public final class ExecutionBackendInventory {
         return Set.copyOf(ids);
     }
 
-    private static List<TestEngine> loadEngines(ClassLoader classLoader) {
-        List<TestEngine> engines = new ArrayList<>();
-        Set<String> ids = new LinkedHashSet<>();
-        try {
-            for (TestEngine engine : ServiceLoader.load(TestEngine.class, classLoader)) {
-                if (!ids.add(engine.getId())) throw new IllegalStateException("duplicate JUnit Platform engine id '" + engine.getId() + "'");
-                engines.add(engine);
-            }
-            return List.copyOf(engines);
-        } catch (RuntimeException | LinkageError exception) {
-            throw new IllegalStateException("could not load JUnit Platform TestEngine services", exception);
-        }
-    }
-
-    private static String engineId(TestIdentifier root) {
-        try { return UniqueId.parse(root.getUniqueId()).getEngineId().orElse("unknown"); }
-        catch (RuntimeException exception) { return "unknown"; }
+    private static Throwable rootCause(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+        return current;
     }
 
     private static String message(Throwable throwable) {

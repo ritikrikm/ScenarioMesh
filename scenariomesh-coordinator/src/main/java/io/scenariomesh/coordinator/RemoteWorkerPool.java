@@ -133,6 +133,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     private void loop(RemoteWorkerSession initialSession, SchedulingStrategy scheduler, WorkPlan workPlan,
                       ConcurrentLinkedQueue<ExecutionResult> results, RunProgress progress) {
         RemoteWorkerSession session = initialSession;
+        String executionLaneId = "remote-lane:" + initialSession.registration().workerId();
         int tasksOnWorker = 0;
         for (;;) {
             try { refreshIdleLiveness(session); }
@@ -141,7 +142,8 @@ final class RemoteWorkerPool implements AutoCloseable {
                 return;
             }
             RemoteWorkerSession currentSession = session;
-            ScenarioTask representative = scheduler.nextEligible(candidate -> canRun(currentSession.registration(), candidate));
+            ScenarioTask representative = scheduler.nextEligible(
+                    executionLaneId, candidate -> canRun(currentSession.registration(), candidate));
             if (representative == null) { gracefulStop(session); return; }
             WorkUnit unit = workPlan.required(representative.id());
             String workerId = session.registration().workerId();
