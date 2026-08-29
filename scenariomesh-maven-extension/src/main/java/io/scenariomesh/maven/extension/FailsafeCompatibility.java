@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 final class FailsafeCompatibility {
     static final String INCLUDE_JUNIT5_ENGINES_PROPERTY = "includejunit5engines";
     static final String EXCLUDE_JUNIT5_ENGINES_PROPERTY = "excludejunit5engines";
+    static final String TESTNG_SUITE_XML_FILES_PROPERTY = SurefireCompatibility.TESTNG_SUITE_XML_FILES_PROPERTY;
     private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of("**/IT*.java", "**/*IT.java", "**/*ITCase.java");
     private static final List<String> DEFAULT_EXCLUDE_PATTERNS = List.of("**/*$*");
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
@@ -72,6 +73,9 @@ final class FailsafeCompatibility {
             }
             if (!settings.excludeJUnit5Engines.isEmpty()) {
                 settings.systemProperties.put(EXCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.excludeJUnit5Engines));
+            }
+            if (!settings.suiteXmlFiles.isEmpty()) {
+                settings.systemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
             }
 
             List<String> includes = settings.includes.isEmpty()
@@ -126,6 +130,8 @@ final class FailsafeCompatibility {
             case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
+            case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
+            case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
             case "skip", "skipITs", "skipTests" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (Boolean.TRUE.equals(value)) settings.explicitlySkipped = true;
@@ -145,6 +151,31 @@ final class FailsafeCompatibility {
                 if (value != null) settings.rerunFailingTestsCount = value;
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
+        }
+    }
+
+    private void readScalarSystemProperty(Xpp3Dom node, String location, EffectiveSettings settings,
+                                          List<String> reasons, Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " contains structured <" + node.getName() + "> group selection");
+            return;
+        }
+        String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (value == null) return;
+        if (value.isBlank()) settings.systemProperties.remove(node.getName());
+        else settings.systemProperties.put(node.getName(), value);
+    }
+
+    private void readSuiteXmlFiles(Xpp3Dom parent, String location, EffectiveSettings settings,
+                                   List<String> reasons, Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"suiteXmlFile".equals(item.getName()) || item.getChildCount() > 0) {
+                reasons.add(location + " contains unsupported TestNG suite selection inside <suiteXmlFiles>");
+                continue;
+            }
+            String value = resolve(item.getValue(), location + " <suiteXmlFile>", reasons, propertyResolver);
+            if (value == null || value.isBlank()) reasons.add(location + " contains an empty TestNG suite XML path");
+            else settings.suiteXmlFiles.add(value);
         }
     }
 
@@ -290,6 +321,7 @@ final class FailsafeCompatibility {
         private final Set<String> excludes = new LinkedHashSet<>();
         private final Set<String> includeJUnit5Engines = new LinkedHashSet<>();
         private final Set<String> excludeJUnit5Engines = new LinkedHashSet<>();
+        private final Set<String> suiteXmlFiles = new LinkedHashSet<>();
         private final List<String> jvmArgs = new ArrayList<>();
         private final Map<String, String> systemProperties = new LinkedHashMap<>();
         private boolean explicitlySkipped;
