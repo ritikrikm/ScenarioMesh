@@ -10,7 +10,6 @@ import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.TaskMetadata;
 import org.testng.Assert;
 import org.testng.SkipException;
-import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.lang.reflect.Method;
@@ -65,7 +64,7 @@ public class TestNgAdapterHardeningTest {
     @Test
     public void classLifecycleFailsClosedInsteadOfBeingRepeatedPerMethod() throws Exception {
         try {
-            adapter.discover(discoveryContext(BeforeClassFixture.class));
+            adapter.discover(discoveryContext(TestNgBeforeClassFixture.class));
             Assert.fail("Expected class lifecycle discovery to fail closed");
         } catch (IllegalStateException expected) {
             Assert.assertTrue(expected.getMessage().contains("BeforeClass lifecycle"), expected.getMessage());
@@ -74,12 +73,12 @@ public class TestNgAdapterHardeningTest {
 
     @Test
     public void simpleMethodsPublishStableClassAffinity() throws Exception {
-        List<ScenarioTask> tasks = adapter.discover(discoveryContext(SimpleClassFixture.class));
+        List<ScenarioTask> tasks = adapter.discover(discoveryContext(TestNgSimpleClassFixture.class));
         Assert.assertEquals(tasks.size(), 2);
         Set<String> scopes = tasks.stream()
                 .map(task -> task.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID))
                 .collect(java.util.stream.Collectors.toSet());
-        Assert.assertEquals(scopes, Set.of("testng-class:" + SimpleClassFixture.class.getName()));
+        Assert.assertEquals(scopes, Set.of("testng-class:" + TestNgSimpleClassFixture.class.getName()));
     }
 
     @Test
@@ -139,15 +138,5 @@ public class TestNgAdapterHardeningTest {
     public static final class DisabledFixture {
         private static final AtomicInteger executions = new AtomicInteger();
         @Test(enabled = false) public void disabled() { executions.incrementAndGet(); }
-    }
-
-    public static final class BeforeClassFixture {
-        @BeforeClass public void setupClass() { }
-        @Test public void test() { }
-    }
-
-    public static final class SimpleClassFixture {
-        @Test public void first() { }
-        @Test public void second() { }
     }
 }
