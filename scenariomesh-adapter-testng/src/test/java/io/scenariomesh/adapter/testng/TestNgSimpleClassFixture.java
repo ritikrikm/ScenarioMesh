@@ -3,6 +3,6 @@ package io.scenariomesh.adapter.testng;
 import org.testng.annotations.Test;
 
 public class TestNgSimpleClassFixture {
-    @Test public void first() { }
-    @Test public void second() { }
+    @Test(groups = {"smoke", "tier$1"}) public void first() { }
+    @Test(groups = {"regression"}) public void second() { }
 }
