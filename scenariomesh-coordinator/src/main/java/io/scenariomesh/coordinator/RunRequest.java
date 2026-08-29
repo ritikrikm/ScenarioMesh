@@ -75,6 +75,14 @@ public record RunRequest(Path projectDirectory,
                 true, Map.of(), Set.of(), projectDirectory);
     }
 
+    /**
+     * Process working directory exposed to discovery and worker JVMs. The source project directory
+     * remains available separately for non-process metadata.
+     */
+    @Override public Path projectDirectory() { return executorWorkingDirectory; }
+
+    public Path sourceProjectDirectory() { return projectDirectory; }
+
     /** Control-plane subprocesses launch from this classpath. */
     @Override public List<Path> runtimeClasspath() { return controlClasspath; }
 
@@ -84,6 +92,9 @@ public record RunRequest(Path projectDirectory,
     List<String> effectiveJvmArgs(){
         List<String> result=new ArrayList<>(config.workerJvmArgs());
         result.addAll(executorJvmArgs);
+        // JavaProcessSupport preserves the long-standing Surefire default by adding -ea.
+        // A later -da has the same effective assertion state as Surefire enableAssertions=false.
+        if (!enableAssertions) result.add("-da");
         return List.copyOf(result);
     }
 
