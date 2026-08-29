@@ -217,7 +217,15 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private boolean retryableUnit(WorkUnit unit, List<ExecutionResult> results) {
-        return InfrastructureRetryPolicy.retryable(unit.tasks().size(), results);
+        return !unit.scoped()
+                && unit.tasks().size() == 1
+                && results.size() == 1
+                && retryable(results.get(0));
+    }
+
+    private boolean retryable(ExecutionResult result) {
+        return result.status() == ResultStatus.WORKER_FAILURE
+                || result.status() == ResultStatus.INFRASTRUCTURE_FAILURE;
     }
 
     private boolean requiresWorkerRetirement(ExecutionResult result) {
