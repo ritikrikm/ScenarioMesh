@@ -47,16 +47,16 @@ final class ExternalSelectionFile {
             return Analysis.unsupported(parameterName + " contains selectors outside ScenarioMesh's proven class-only subset: "
                     + String.join("; ", parsed.unsupportedReasons()));
         }
-        return Analysis.supported(parsed.patterns().stream().map(MavenClassNamePatterns.CompiledPattern::regex).toList());
+        return Analysis.supported(patterns);
     }
 
-    record Analysis(boolean supported, List<String> regexes, String reason) {
+    record Analysis(boolean supported, List<String> patterns, String reason) {
         Analysis {
-            regexes = List.copyOf(regexes == null ? List.of() : regexes);
+            patterns = List.copyOf(patterns == null ? List.of() : patterns);
         }
 
-        static Analysis supported(List<String> regexes) {
-            return new Analysis(true, regexes, null);
+        static Analysis supported(List<String> patterns) {
+            return new Analysis(true, patterns, null);
         }
 
         static Analysis unsupported(String reason) {
