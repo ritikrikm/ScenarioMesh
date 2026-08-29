@@ -329,20 +329,19 @@ final class WorkerPool implements AutoCloseable {
         List<String> args = List.of(
                 "--host", host,
                 "--port", Integer.toString(port),
-                "--worker-id", id);
+                "--worker-id", id,
+                "--auth-token", token);
         List<String> command = JavaProcessSupport.command(
                 request.runtimeClasspath(), request.effectiveJvmArgs(), request.effectiveSystemProperties(),
                 WorkerMain.class.getName(), args);
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile())
                 .redirectErrorStream(true);
-        // Surefire creates the command line with inherited exclusions first and then overlays
-        // configured environmentVariables. Mirror that order exactly; ScenarioMesh's own
-        // transport token is internal and is installed last so target configuration cannot
-        // accidentally break worker authentication.
+        // Surefire removes inherited exclusions before applying configured environment variables.
+        // Keep ScenarioMesh bootstrap authentication out of the child environment entirely so
+        // target tests see the same environment that native Maven would expose.
         request.excludedEnvironmentVariables().forEach(builder.environment()::remove);
         builder.environment().putAll(request.executorEnvironmentVariables());
-        builder.environment().put("SCENARIOMESH_REMOTE_TOKEN", token);
         Process process = builder.start();
         processes.put(id, process);
 
