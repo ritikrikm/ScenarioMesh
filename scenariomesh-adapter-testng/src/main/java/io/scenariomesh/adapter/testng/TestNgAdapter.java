@@ -7,6 +7,7 @@ import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.TaskMetadata;
 import org.testng.IConfigurationListener;
 import org.testng.IMethodInstance;
 import org.testng.IMethodInterceptor;
@@ -19,6 +20,7 @@ import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 import java.io.IOException;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -35,6 +37,15 @@ import java.util.stream.Stream;
 
 public final class TestNgAdapter implements ScenarioAdapter {
     public static final String ID = "testng";
+    private static final Set<String> UNSAFE_CONFIGURATION_ANNOTATIONS = Set.of(
+            "org.testng.annotations.BeforeSuite",
+            "org.testng.annotations.AfterSuite",
+            "org.testng.annotations.BeforeTest",
+            "org.testng.annotations.AfterTest",
+            "org.testng.annotations.BeforeClass",
+            "org.testng.annotations.AfterClass",
+            "org.testng.annotations.BeforeGroups",
+            "org.testng.annotations.AfterGroups");
 
     @Override public String id() { return ID; }
     @Override public String framework() { return "testng"; }
@@ -114,6 +125,10 @@ public final class TestNgAdapter implements ScenarioAdapter {
             metadata.put("className", candidate.getName());
             metadata.put("methodName", method.getName());
             metadata.put("enabled", Boolean.toString(annotation.enabled()));
+            // Even simple TestNG methods can share class/static state. Keep a class on one execution lane;
+            // richer suite/context semantics remain fail-closed below until they can be reproduced exactly.
+            metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-class:" + candidate.getName());
+            metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-class");
             tasks.add(new ScenarioTask(
                     ScenarioIds.from(ID, selector), candidate.getName() + "." + method.getName(),
                     ID, framework(), null, null, selector, Set.of(annotation.groups()), Map.copyOf(metadata)));
@@ -121,20 +136,39 @@ public final class TestNgAdapter implements ScenarioAdapter {
     }
 
     private void rejectUnsupportedClassSemantics(Class<?> candidate) {
-        for (Constructor<?> constructor : candidate.getDeclaredConstructors()) {
-            if (constructor.isAnnotationPresent(Factory.class)) {
-                throw new IllegalStateException(
-                        "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
-                                + candidate.getName());
+        for (Class<?> type = candidate; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Constructor<?> constructor : type.getDeclaredConstructors()) {
+                if (constructor.isAnnotationPresent(Factory.class)) {
+                    throw new IllegalStateException(
+                            "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
+                                    + candidate.getName());
+                }
+            }
+            for (Method method : type.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(Factory.class)) {
+                    throw new IllegalStateException(
+                            "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
+                                    + candidate.getName() + "." + method.getName());
+                }
+                String unsafeLifecycle = unsafeConfigurationAnnotation(method);
+                if (unsafeLifecycle != null) {
+                    throw new IllegalStateException(
+                            "TestNG " + unsafeLifecycle
+                                    + " lifecycle is not yet supported safely for isolated method execution: "
+                                    + candidate.getName() + "." + method.getName());
+                }
             }
         }
-        for (Method method : candidate.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(Factory.class)) {
-                throw new IllegalStateException(
-                        "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
-                                + candidate.getName() + "." + method.getName());
+    }
+
+    private String unsafeConfigurationAnnotation(Method method) {
+        for (Annotation annotation : method.getDeclaredAnnotations()) {
+            String name = annotation.annotationType().getName();
+            if (UNSAFE_CONFIGURATION_ANNOTATIONS.contains(name)) {
+                return annotation.annotationType().getSimpleName();
             }
         }
+        return null;
     }
 
     private void rejectUnsupportedMultiplicity(Class<?> candidate, Method method, Test annotation) {
