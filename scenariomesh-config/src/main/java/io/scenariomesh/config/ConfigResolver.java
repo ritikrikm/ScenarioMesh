@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -86,25 +87,42 @@ public final class ConfigResolver {
                 booleanValue(value(ConfigKey.LOGGING_SHOW_PROGRESS, properties, environment, yaml), defaults.showProgress(), ConfigKey.LOGGING_SHOW_PROGRESS),
                 distributed,
                 schedulingMode(value(ConfigKey.SCHEDULING_STRATEGY, properties, environment, yaml), defaults.schedulingMode()));
-        return new ConfigResolution(resolved, loaded.source());
+        return new ConfigResolution(resolved, loaded.source(), provenance(properties, environment, yaml));
+    }
+
+    private Map<String, String> provenance(Map<String, String> properties,
+                                           Map<String, String> environment,
+                                           Map<String, Object> yaml) {
+        Map<String, String> sources = new LinkedHashMap<>();
+        for (ConfigKey key : ConfigKey.values()) {
+            sources.put(key.canonical(), sourceOf(key, properties, environment, yaml));
+        }
+        return Map.copyOf(sources);
+    }
+
+    private String sourceOf(ConfigKey key, Map<String, String> properties,
+                            Map<String, String> environment, Map<String, Object> yaml) {
+        for (String name : key.propertyNames()) {
+            if (properties.containsKey(name)) return "property:" + name;
+        }
+        for (String name : key.environmentNames()) {
+            if (environment.containsKey(name)) return "environment:" + name;
+        }
+        Optional<String> path = key.yamlPath();
+        if (path.isPresent() && yaml.containsKey(path.get())) return "yaml:" + path.get();
+        return "default";
     }
 
     private Object value(ConfigKey key, Map<String, String> properties,
                          Map<String, String> environment, Map<String, Object> yaml) {
         String external = rawExternal(key, properties, environment);
-        return external != null ? external : yaml.get(yamlPath(key));
+        return external != null ? external : key.yamlPath().map(yaml::get).orElse(null);
     }
 
     private String rawExternal(ConfigKey key, Map<String, String> properties, Map<String, String> environment) {
         for (String name : key.propertyNames()) { String value = properties.get(name); if (value != null) return value; }
         for (String name : key.environmentNames()) { String value = environment.get(name); if (value != null) return value; }
         return null;
-    }
-
-    private String yamlPath(ConfigKey key) {
-        String canonical = key.canonical();
-        String prefix = "scenariomesh.";
-        return canonical.startsWith(prefix) ? canonical.substring(prefix.length()) : canonical;
     }
 
     private boolean booleanValue(Object raw, boolean defaultValue, ConfigKey key) {
@@ -173,10 +191,22 @@ public final class ConfigResolver {
         return new IllegalArgumentException("Invalid configuration: " + key.canonical() + " " + reason);
     }
 
-    public record ConfigResolution(ScenarioMeshConfig config, Optional<Path> configFile) {
+    public record ConfigResolution(ScenarioMeshConfig config,
+                                   Optional<Path> configFile,
+                                   Map<String, String> provenance) {
         public ConfigResolution {
             Objects.requireNonNull(config, "config");
             configFile = configFile == null ? Optional.empty() : configFile;
+            provenance = Map.copyOf(provenance == null ? Map.of() : provenance);
+        }
+
+        /** Backward-compatible construction for integrations that do not yet publish provenance. */
+        public ConfigResolution(ScenarioMeshConfig config, Optional<Path> configFile) {
+            this(config, configFile, Map.of());
+        }
+
+        public String sourceOf(String canonicalProperty) {
+            return provenance.getOrDefault(canonicalProperty, "unknown");
         }
     }
 }
