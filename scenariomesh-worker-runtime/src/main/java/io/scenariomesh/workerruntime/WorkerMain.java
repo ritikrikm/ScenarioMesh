@@ -1,6 +1,6 @@
 package io.scenariomesh.workerruntime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import io.scenariomesh.controljson.ControlJsonCodec;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.ScenarioTask;
@@ -44,7 +44,6 @@ public final class WorkerMain {
         Arguments parsed = Arguments.parse(args);
         Map<String, String> environment = System.getenv();
         String token = RemoteWorkerTransport.authenticationToken(environment);
-        ObjectMapper mapper = JsonCodec.create();
         AdapterRegistry adapters = new AdapterRegistry();
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         List<WorkerTaskCleanup> cleanupHooks = ServiceLoader.load(WorkerTaskCleanup.class, classLoader)
@@ -69,7 +68,7 @@ public final class WorkerMain {
             Envelope hello = Envelope.hello(parsed.workerId, token, capabilities);
             trace("HELLO_SEND worker=" + parsed.workerId + " bootstrapProtocol=" + Protocol.BOOTSTRAP_VERSION
                     + " advertisedRange=[" + capabilities.minProtocolVersion() + "," + capabilities.maxProtocolVersion() + "]");
-            write(mapper, writer, hello, Protocol.BOOTSTRAP_VERSION);
+            write(writer, hello, Protocol.BOOTSTRAP_VERSION);
 
             trace("FIRST_COMMAND_WAIT worker=" + parsed.workerId);
             byte[] firstFrame = reader.readBlocking();
@@ -77,7 +76,7 @@ public final class WorkerMain {
                 trace("FIRST_COMMAND_EOF worker=" + parsed.workerId);
                 return;
             }
-            Envelope first = mapper.readValue(firstFrame, Envelope.class);
+            Envelope first = ControlJsonCodec.read(firstFrame, Envelope.class);
             traceEnvelope("IN_FIRST", parsed.workerId, first);
             int sessionProtocol = requireSupportedProtocol(first.protocolVersion());
             boolean negotiationAck = first.type() == Protocol.Type.ACK;
@@ -86,7 +85,7 @@ public final class WorkerMain {
 
             try (PresenceHeartbeatEmitter presence = PresenceHeartbeatEmitter.start(
                     parsed.workerId, WorkerMain::telemetry,
-                    heartbeat -> write(mapper, writer, heartbeat, sessionProtocol))) {
+                    heartbeat -> write(writer, heartbeat, sessionProtocol))) {
                 trace("PRESENCE_STARTED worker=" + parsed.workerId + " protocol=" + sessionProtocol);
                 boolean draining = false;
                 Envelope envelope = negotiationAck ? null : first;
@@ -97,7 +96,7 @@ public final class WorkerMain {
                             trace("COMMAND_EOF worker=" + parsed.workerId + " protocol=" + sessionProtocol);
                             break;
                         }
-                        envelope = mapper.readValue(frame, Envelope.class);
+                        envelope = ControlJsonCodec.read(frame, Envelope.class);
                         traceEnvelope("IN", parsed.workerId, envelope);
                     }
                     validate(envelope, sessionProtocol);
@@ -108,19 +107,19 @@ public final class WorkerMain {
                     if (envelope.type() == Protocol.Type.DRAIN) {
                         draining = true;
                         trace("DRAIN_ACCEPT worker=" + parsed.workerId + " protocol=" + sessionProtocol);
-                        write(mapper, writer, Envelope.ack(parsed.workerId), sessionProtocol);
+                        write(writer, Envelope.ack(parsed.workerId), sessionProtocol);
                         envelope = null;
                         continue;
                     }
                     if (envelope.type() == Protocol.Type.STOP) {
                         trace("STOP_ACCEPT worker=" + parsed.workerId + " protocol=" + sessionProtocol);
-                        write(mapper, writer, Envelope.ack(parsed.workerId), sessionProtocol);
+                        write(writer, Envelope.ack(parsed.workerId), sessionProtocol);
                         trace("STOPPED worker=" + parsed.workerId);
                         return;
                     }
                     if (draining && envelope.type() == Protocol.Type.RUN) {
                         trace("RUN_REJECT_DRAINING worker=" + parsed.workerId + " workUnit=" + value(envelope.workUnitId()));
-                        write(mapper, writer, Envelope.error(parsed.workerId,
+                        write(writer, Envelope.error(parsed.workerId,
                                 "Worker is draining and will not accept new work"), sessionProtocol);
                         envelope = null;
                         continue;
@@ -130,7 +129,7 @@ public final class WorkerMain {
                         trace("RUN_REJECT_INVALID worker=" + parsed.workerId + " type=" + envelope.type()
                                 + " attempt=" + envelope.attempt()
                                 + " tasks=" + (envelope.tasks() == null ? "null" : envelope.tasks().size()));
-                        write(mapper, writer, Envelope.error(parsed.workerId,
+                        write(writer, Envelope.error(parsed.workerId,
                                 "Expected RUN command with at least one task and a positive attempt"), sessionProtocol);
                         envelope = null;
                         continue;
@@ -149,7 +148,7 @@ public final class WorkerMain {
                     List<ExecutionResult> cleaned;
                     try (LeaseHeartbeatEmitter heartbeat = LeaseHeartbeatEmitter.start(
                             parsed.workerId, envelope, WorkerMain::telemetry,
-                            heartbeatEnvelope -> write(mapper, writer, heartbeatEnvelope, sessionProtocol))) {
+                            heartbeatEnvelope -> write(writer, heartbeatEnvelope, sessionProtocol))) {
                         trace("LEASE_HEARTBEAT_STARTED worker=" + parsed.workerId
                                 + " workUnit=" + value(envelope.workUnitId()) + " lease=" + value(envelope.leaseId()));
                         execution = executeWorkUnit(adapters, dispatched, context);
@@ -165,7 +164,7 @@ public final class WorkerMain {
                             + " workUnit=" + value(envelope.workUnitId())
                             + " lease=" + value(envelope.leaseId())
                             + " results=" + cleaned.size() + " unsuccessful=" + failed);
-                    write(mapper, writer, Envelope.resultBatch(parsed.workerId,
+                    write(writer, Envelope.resultBatch(parsed.workerId,
                             envelope.workUnitId(), envelope.leaseId(), execution.tasks(), cleaned, telemetry()),
                             sessionProtocol);
                     envelope = null;
@@ -312,12 +311,11 @@ public final class WorkerMain {
         }
     }
 
-    private static void write(ObjectMapper mapper, BufferedWriter writer, Envelope envelope,
-                              int protocolVersion) throws Exception {
+    private static void write(BufferedWriter writer, Envelope envelope, int protocolVersion) throws Exception {
         Envelope versioned = envelope.withProtocolVersion(protocolVersion);
         traceEnvelope("OUT", versioned.workerId(), versioned);
         synchronized (writer) {
-            writer.write(mapper.writeValueAsString(versioned));
+            writer.write(ControlJsonCodec.write(versioned));
             writer.newLine();
             writer.flush();
         }
