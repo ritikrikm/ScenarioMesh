@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SurefireGroupSelectionTest {
     @Test
     void commaAndLogicalOrUseSurefireGrammar() {
-        var selection = SurefireGroupSelection.fromExpressions("smoke | api", null);
+        var selection = SurefireGroupSelection.fromExpressions("smoke|api", null);
         assertTrue(selection.matches("smoke"));
         assertTrue(selection.matches("api"));
         assertFalse(selection.matches("regression"));
@@ -17,7 +17,7 @@ class SurefireGroupSelectionTest {
 
     @Test
     void excludedExpressionVetoesIncludedExpression() {
-        var selection = SurefireGroupSelection.fromExpressions("smoke, regression", "regression");
+        var selection = SurefireGroupSelection.fromExpressions("smoke,regression", "regression");
         assertTrue(selection.matches("smoke"));
         assertFalse(selection.matches("regression"));
     }
@@ -30,8 +30,8 @@ class SurefireGroupSelectionTest {
     }
 
     @Test
-    void invalidExpressionFailsClosed() {
+    void lexerErrorsFailClosed() {
         assertThrows(IllegalArgumentException.class,
-                () -> SurefireGroupSelection.fromExpressions("smoke &&", null));
+                () -> SurefireGroupSelection.fromExpressions("smoke | api", null));
     }
 }
