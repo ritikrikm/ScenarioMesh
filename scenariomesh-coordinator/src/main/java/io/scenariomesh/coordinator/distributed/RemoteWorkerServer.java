@@ -5,17 +5,15 @@ import io.scenariomesh.config.TlsConfig;
 import io.scenariomesh.config.TlsContextFactory;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
+import io.scenariomesh.protocol.ProtocolFrameReader;
 import io.scenariomesh.workerruntime.JsonCodec;
 
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
@@ -97,7 +95,8 @@ public final class RemoteWorkerServer implements AutoCloseable {
                             + " protocol=" + sslSocket.getSession().getProtocol()
                             + " cipher=" + sslSocket.getSession().getCipherSuite());
                 }
-                Handshake handshake = readHello(socket, Duration.ofNanos(remainingNanos));
+                ProtocolFrameReader reader = new ProtocolFrameReader(socket.getInputStream());
+                Handshake handshake = readHello(socket, reader, Duration.ofNanos(remainingNanos));
                 traceHello(handshake.hello(), socket);
                 RemoteWorkerRegistration registration = validator.requireRegistration(handshake.hello(), token);
                 int negotiated = WorkerRegistrationValidator.negotiatedProtocolVersion(registration);
@@ -141,15 +140,14 @@ public final class RemoteWorkerServer implements AutoCloseable {
         try { session.close(); } catch (Exception ignored) { }
     }
 
-    private Handshake readHello(Socket socket, Duration timeout) throws Exception {
+    private Handshake readHello(Socket socket, ProtocolFrameReader reader, Duration timeout) throws Exception {
         int originalTimeout = socket.getSoTimeout();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
         try {
             socket.setSoTimeout(Math.toIntExact(Math.max(1L, timeout.toMillis())));
             trace("HELLO_WAIT remote=" + socket.getRemoteSocketAddress() + " timeoutMs=" + Math.max(1L, timeout.toMillis()));
-            String line = reader.readLine();
-            if (line == null) throw new IllegalArgumentException("remote worker disconnected before HELLO");
-            Envelope hello = mapper.readValue(line, Envelope.class);
+            byte[] frame = reader.readBlocking();
+            if (frame == null) throw new IllegalArgumentException("remote worker disconnected before HELLO");
+            Envelope hello = mapper.readValue(frame, Envelope.class);
             return new Handshake(hello, reader);
         } finally {
             try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
@@ -174,7 +172,7 @@ public final class RemoteWorkerServer implements AutoCloseable {
                 + " engines=" + (capabilities == null ? "-" : capabilities.engineIds()));
     }
 
-    private record Handshake(Envelope hello, BufferedReader reader) { }
+    private record Handshake(Envelope hello, ProtocolFrameReader reader) { }
 
     private static String safeMessage(Exception exception) {
         String message = exception.getMessage();

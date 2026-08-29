@@ -15,6 +15,12 @@ public final class Protocol {
     public static final int VERSION = 9;
     public static final int MIN_SUPPORTED_VERSION = 8;
     public static final int BOOTSTRAP_VERSION = 8;
+    /**
+     * Upper bound for a single newline-delimited protocol frame before it is treated as malformed.
+     * This keeps a compromised or buggy peer from forcing the coordinator/worker runtime to buffer
+     * an unbounded JSON line in memory.
+     */
+    public static final int MAX_PROTOCOL_FRAME_BYTES = 4 * 1024 * 1024;
 
     private Protocol() {}
 

@@ -16,13 +16,12 @@ import io.scenariomesh.core.Ports.SchedulingStrategy;
 import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
+import io.scenariomesh.protocol.ProtocolFrameReader;
 import io.scenariomesh.scheduler.FifoSchedulingStrategy;
 import io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.WorkerMain;
 
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -575,20 +574,20 @@ final class WorkerPool implements AutoCloseable {
 
     private final class WorkerConnection implements AutoCloseable {
         private final Socket socket;
-        private final BufferedReader reader;
+        private final ProtocolFrameReader reader;
         private final BufferedWriter writer;
         private String workerId;
         private RemoteWorkerRegistration registration;
 
         private WorkerConnection(Socket socket) throws Exception {
             this.socket = socket;
-            this.reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+            this.reader = new ProtocolFrameReader(socket.getInputStream());
             this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
         }
 
         private Envelope read() throws Exception {
-            String line = reader.readLine();
-            return line == null ? null : mapper.readValue(line, Envelope.class);
+            byte[] frame = reader.readBlocking();
+            return frame == null ? null : mapper.readValue(frame, Envelope.class);
         }
 
         private Envelope read(Duration timeout) throws Exception {

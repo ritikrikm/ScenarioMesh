@@ -2,13 +2,10 @@ package io.scenariomesh.coordinator.distributed;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.protocol.Protocol.Envelope;
+import io.scenariomesh.protocol.ProtocolFrameReader;
 
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
@@ -19,24 +16,24 @@ public final class RemoteWorkerSession implements AutoCloseable {
 
     private final ObjectMapper mapper;
     private final Socket socket;
-    private final BufferedReader reader;
+    private final ProtocolFrameReader reader;
     private final BufferedWriter writer;
     private final RemoteWorkerRegistration registration;
     private final int protocolVersion;
 
     RemoteWorkerSession(ObjectMapper mapper, Socket socket, RemoteWorkerRegistration registration) throws Exception {
         this(mapper, socket, registration,
-                new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8)));
+                new ProtocolFrameReader(socket.getInputStream()));
     }
 
     RemoteWorkerSession(ObjectMapper mapper, Socket socket, RemoteWorkerRegistration registration,
-                        BufferedReader reader) throws Exception {
+                        ProtocolFrameReader reader) throws Exception {
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.socket = Objects.requireNonNull(socket, "socket");
         this.registration = Objects.requireNonNull(registration, "registration");
         this.protocolVersion = WorkerRegistrationValidator.negotiatedProtocolVersion(registration);
         this.reader = Objects.requireNonNull(reader, "reader");
-        this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
+        this.writer = new BufferedWriter(new java.io.OutputStreamWriter(socket.getOutputStream(), java.nio.charset.StandardCharsets.UTF_8));
         trace("SESSION_OPEN worker=" + registration.workerId()
                 + " protocol=" + protocolVersion
                 + " negotiationAware=" + WorkerRegistrationValidator.negotiationAware(registration)
@@ -71,12 +68,12 @@ public final class RemoteWorkerSession implements AutoCloseable {
         int originalTimeout = socket.getSoTimeout();
         try {
             socket.setSoTimeout(Math.toIntExact(Math.max(1L, timeout.toMillis())));
-            String line = reader.readLine();
-            if (line == null) {
+            byte[] frame = reader.readBlocking();
+            if (frame == null) {
                 trace("IN EOF worker=" + registration.workerId() + " protocol=" + protocolVersion);
                 return null;
             }
-            Envelope envelope = mapper.readValue(line, Envelope.class);
+            Envelope envelope = mapper.readValue(frame, Envelope.class);
             traceEnvelope("IN", envelope);
             return requireSessionVersion(envelope);
         } catch (Exception exception) {
@@ -90,14 +87,10 @@ public final class RemoteWorkerSession implements AutoCloseable {
 
     /** Non-blocking read used only by the owning scheduler lane to consume queued idle presence. */
     public Envelope readAvailable() throws Exception {
-        if (!reader.ready()) return null;
         try {
-            String line = reader.readLine();
-            if (line == null) {
-                trace("IN_AVAILABLE EOF worker=" + registration.workerId() + " protocol=" + protocolVersion);
-                return null;
-            }
-            Envelope envelope = mapper.readValue(line, Envelope.class);
+            byte[] frame = reader.readAvailable();
+            if (frame == null) return null;
+            Envelope envelope = mapper.readValue(frame, Envelope.class);
             traceEnvelope("IN_AVAILABLE", envelope);
             return requireSessionVersion(envelope);
         } catch (Exception exception) {

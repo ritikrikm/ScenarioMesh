@@ -12,11 +12,10 @@ import io.scenariomesh.protocol.Protocol;
 import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerCapabilities;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
+import io.scenariomesh.protocol.ProtocolFrameReader;
 import org.junit.platform.engine.TestEngine;
 
-import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
@@ -63,7 +62,7 @@ public final class WorkerMain {
                 + " engines=" + capabilities.engineIds());
 
         try (Socket socket = RemoteWorkerTransport.connect(parsed.host, parsed.port, environment);
-             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+             ProtocolFrameReader reader = new ProtocolFrameReader(socket.getInputStream());
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
             trace("CONNECTED worker=" + parsed.workerId + " local=" + socket.getLocalSocketAddress()
                     + " remote=" + socket.getRemoteSocketAddress());
@@ -73,12 +72,12 @@ public final class WorkerMain {
             write(mapper, writer, hello, Protocol.BOOTSTRAP_VERSION);
 
             trace("FIRST_COMMAND_WAIT worker=" + parsed.workerId);
-            String firstLine = reader.readLine();
-            if (firstLine == null) {
+            byte[] firstFrame = reader.readBlocking();
+            if (firstFrame == null) {
                 trace("FIRST_COMMAND_EOF worker=" + parsed.workerId);
                 return;
             }
-            Envelope first = mapper.readValue(firstLine, Envelope.class);
+            Envelope first = mapper.readValue(firstFrame, Envelope.class);
             traceEnvelope("IN_FIRST", parsed.workerId, first);
             int sessionProtocol = requireSupportedProtocol(first.protocolVersion());
             boolean negotiationAck = first.type() == Protocol.Type.ACK;
@@ -93,12 +92,12 @@ public final class WorkerMain {
                 Envelope envelope = negotiationAck ? null : first;
                 while (true) {
                     if (envelope == null) {
-                        String line = reader.readLine();
-                        if (line == null) {
+                        byte[] frame = reader.readBlocking();
+                        if (frame == null) {
                             trace("COMMAND_EOF worker=" + parsed.workerId + " protocol=" + sessionProtocol);
                             break;
                         }
-                        envelope = mapper.readValue(line, Envelope.class);
+                        envelope = mapper.readValue(frame, Envelope.class);
                         traceEnvelope("IN", parsed.workerId, envelope);
                     }
                     validate(envelope, sessionProtocol);

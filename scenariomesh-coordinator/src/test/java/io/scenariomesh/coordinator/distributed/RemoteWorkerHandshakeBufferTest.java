@@ -38,7 +38,7 @@ class RemoteWorkerHandshakeBufferTest {
             Envelope presence = Envelope.presence("legacy-worker", null)
                     .withProtocolVersion(Protocol.BOOTSTRAP_VERSION);
 
-            // One flush intentionally allows BufferedReader to read both lines into its buffer.
+            // One flush intentionally allows the server-side frame reader to observe both frames back-to-back.
             writer.write(mapper.writeValueAsString(hello));
             writer.newLine();
             writer.write(mapper.writeValueAsString(presence));
