@@ -83,26 +83,29 @@ public class TestNgAdapterHardeningTest {
     }
 
     @Test
-    public void includedGroupRegexAndExcludedGroupUseTestNgPrecedenceDuringDiscovery() throws Exception {
+    public void surefireLogicalGroupExpressionAndExcludedGroupUseProviderPrecedenceDuringDiscovery() throws Exception {
         List<ScenarioTask> tasks = adapter.discover(discoveryContext(
                 TestNgSimpleClassFixture.class,
-                Map.of("groups", "sm.*, regression", "excludedGroups", "regression")));
+                Map.of("groups", "smoke | regression", "excludedGroups", "regression")));
         Assert.assertEquals(tasks.size(), 1);
         Assert.assertTrue(tasks.get(0).displayName().endsWith(".first"));
         Assert.assertEquals(tasks.get(0).tags(), Set.of("smoke", "tier$1"));
     }
 
     @Test
-    public void dollarInGroupExpressionIsLiteralLikeTestNg() throws Exception {
-        List<ScenarioTask> tasks = adapter.discover(discoveryContext(
-                TestNgSimpleClassFixture.class, Map.of("groups", "tier$1")));
-        Assert.assertEquals(tasks.size(), 1);
-        Assert.assertTrue(tasks.get(0).displayName().endsWith(".first"));
+    public void invalidSurefireGroupExpressionFailsClosedDuringDiscovery() throws Exception {
+        try {
+            adapter.discover(discoveryContext(
+                    TestNgSimpleClassFixture.class, Map.of("groups", "smoke &&")));
+            Assert.fail("Expected invalid Surefire group expression to fail closed");
+        } catch (IllegalStateException expected) {
+            Assert.assertTrue(expected.getMessage().contains("Cannot parse Surefire group"), expected.getMessage());
+        }
     }
 
     @Test
-    public void discoveredGroupSelectionExecutesTheSameLogicalTest() throws Exception {
-        Map<String, String> properties = Map.of("groups", "sm.*", "excludedGroups", "regression");
+    public void discoveredGroupSelectionExecutesTheSameLogicalTestWithoutReinterpretingExpression() throws Exception {
+        Map<String, String> properties = Map.of("groups", "smoke | regression", "excludedGroups", "regression");
         List<ScenarioTask> tasks = adapter.discover(discoveryContext(TestNgSimpleClassFixture.class, properties));
         Assert.assertEquals(tasks.size(), 1);
         var result = adapter.execute(tasks.get(0), executionContext(properties));
@@ -155,7 +158,7 @@ public class TestNgAdapterHardeningTest {
     }
 
     @Test
-    public void pluginGroupSelectionOverridesSuiteXmlGroupsLikeTestNgCommandLineSelection() throws Exception {
+    public void testNgSuiteGroupOverrideCapabilityIsCoveredButMavenOwnershipIsGatedSeparately() throws Exception {
         Path suite = Path.of(getClass().getResource("/suite-groups.xml").toURI());
         Map<String, String> properties = Map.of(
                 "scenariomesh.testng.suiteXmlFiles", suite.toString(),
