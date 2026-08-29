@@ -6,19 +6,24 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 final class ContractRecorder {
-    private static final Path TRACE = Path.of("target", "maven-equivalence-events.log");
-
     private ContractRecorder() {}
 
     static synchronized void record(String event) {
         try {
-            Files.createDirectories(TRACE.getParent());
+            Path trace = Path.of(System.getProperty("contract.trace", "target/maven-equivalence-events.log"));
+            Files.createDirectories(trace.getParent());
             String line = String.join("|",
                     event,
                     "property=" + System.getProperty("contract.pom", "<missing>"),
+                    "precedence=" + System.getProperty("contract.precedence", "<missing>"),
                     "env=" + String.valueOf(System.getenv("CONTRACT_ENV")),
+                    "configured=" + String.valueOf(System.getenv("CONTRACT_CONFIGURED")),
+                    "excluded=" + String.valueOf(System.getenv("CONTRACT_EXCLUDED")),
+                    "overlay=" + String.valueOf(System.getenv("CONTRACT_OVERLAY")),
+                    "empty=" + String.valueOf(System.getenv("CONTRACT_EMPTY")),
+                    "assertions=" + AlphaContractTest.class.desiredAssertionStatus(),
                     "cwd=" + Path.of("").toAbsolutePath().normalize()) + System.lineSeparator();
-            Files.writeString(TRACE, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(trace, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException exception) {
             throw new IllegalStateException("Cannot record Maven equivalence event", exception);
         }

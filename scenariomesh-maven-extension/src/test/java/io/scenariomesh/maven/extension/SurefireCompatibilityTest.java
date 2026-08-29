@@ -1,11 +1,14 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -53,7 +56,6 @@ class SurefireCompatibilityTest {
         add(config, "parallel", "classes");
         add(config, "threadCount", "4");
         plugin.setConfiguration(config);
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
     }
@@ -94,7 +96,7 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void reproducesSurefireIncludesFromExecutionConfiguration() {
+    void delegatesConfiguredIncludesToExactSurefireMatcher() {
         PluginExecution execution = defaultTestExecution();
         Xpp3Dom config = new Xpp3Dom("configuration");
         Xpp3Dom includes = new Xpp3Dom("includes");
@@ -104,14 +106,17 @@ class SurefireCompatibilityTest {
 
         SurefireCompatibility.Analysis analysis = compatibility.analyze(pluginWith(execution));
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
-        assertTrue(analysis.includeClassNameRegexes().stream()
-                .anyMatch(regex -> Pattern.matches(regex, "example/SmokeCheckoutTest.class")));
-        assertFalse(analysis.includeClassNameRegexes().stream()
-                .anyMatch(regex -> Pattern.matches(regex, "example/CheckoutTest.class")));
+        assertEquals(List.of(".*"), analysis.includeClassNameRegexes(),
+                "explicit Surefire grammar must be broad-discovered and exact-post-filtered");
+        assertTrue(analysis.excludeClassNameRegexes().isEmpty());
+        assertEquals(List.of("**/Smoke*Test.java"), MavenSelectionCodec.decode(
+                analysis.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of("**/*$*"), MavenSelectionCodec.decode(
+                analysis.systemProperties().get(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS)));
     }
 
     @Test
-    void resolvesMavenPropertiesInsideSurefireIncludes() {
+    void resolvesMavenPropertiesInsideSurefireIncludesBeforeExactTransport() {
         Plugin plugin = pluginWith(defaultTestExecution());
         Xpp3Dom config = new Xpp3Dom("configuration");
         Xpp3Dom includes = new Xpp3Dom("includes");
@@ -122,8 +127,25 @@ class SurefireCompatibilityTest {
         SurefireCompatibility.Analysis analysis = compatibility.analyze(
                 plugin, Map.of("company.test.pattern", "**/*ContractTest.java")::get);
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
-        assertTrue(analysis.includeClassNameRegexes().stream()
-                .anyMatch(regex -> Pattern.matches(regex, "example/PaymentContractTest.class")));
+        assertEquals(List.of("**/*ContractTest.java"), MavenSelectionCodec.decode(
+                analysis.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+    }
+
+    @Test
+    void delegatesMethodAndNegationGrammarWithoutApproximation() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom includes = new Xpp3Dom("includes");
+        add(includes, "include", "**/CheckoutTest.java#happy*");
+        add(includes, "include", "!**/CheckoutTest.java#slow*");
+        config.addChild(includes);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals(List.of("**/CheckoutTest.java#happy*", "!**/CheckoutTest.java#slow*"),
+                MavenSelectionCodec.decode(analysis.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of(".*"), analysis.includeClassNameRegexes());
     }
 
     @Test
@@ -152,9 +174,7 @@ class SurefireCompatibilityTest {
                 + "junit.jupiter.testinstance.lifecycle.default = per_class");
         config.addChild(properties);
         plugin.setConfiguration(config);
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
         assertEquals("long", analysis.systemProperties().get("cucumber.junit-platform.naming-strategy"));
         assertEquals("per_class", analysis.systemProperties().get("junit.jupiter.testinstance.lifecycle.default"));
@@ -168,9 +188,7 @@ class SurefireCompatibilityTest {
         add(properties, "providerSpecificOption", "unsafe");
         config.addChild(properties);
         plugin.setConfiguration(config);
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("providerSpecificOption")));
     }
 
@@ -182,9 +200,7 @@ class SurefireCompatibilityTest {
         add(suites, "suiteXmlFile", "src/test/resources/suites/smoke.xml");
         config.addChild(suites);
         plugin.setConfiguration(config);
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
         assertEquals("src/test/resources/suites/smoke.xml",
                 analysis.systemProperties().get(SurefireCompatibility.TESTNG_SUITE_XML_FILES_PROPERTY));
@@ -198,7 +214,6 @@ class SurefireCompatibilityTest {
         add(properties, "baseUrl", "${missing.baseUrl}");
         config.addChild(properties);
         plugin.setConfiguration(config);
-
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin, ignored -> null);
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("unresolved Maven property")));
     }

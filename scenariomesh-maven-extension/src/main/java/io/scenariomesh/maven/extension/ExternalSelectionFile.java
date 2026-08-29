@@ -1,13 +1,13 @@
 package io.scenariomesh.maven.extension;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Reads Surefire/Failsafe selector files only when ScenarioMesh can reproduce every entry exactly. */
+/** Mirrors Surefire/Failsafe FileUtils.loadFile selector-file loading semantics. */
 final class ExternalSelectionFile {
     private ExternalSelectionFile() {}
 
@@ -21,46 +21,34 @@ final class ExternalSelectionFile {
 
         Path path;
         try {
-            Path configured = Path.of(configuredPath.trim());
+            Path configured = Path.of(configuredPath);
             path = configured.isAbsolute() ? configured.normalize() : projectBaseDir.resolve(configured).normalize();
         } catch (RuntimeException invalidPath) {
             return Analysis.unsupported(parameterName + " path is invalid: " + invalidPath.getMessage());
         }
 
-        if (!Files.isRegularFile(path)) {
+        if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
             return Analysis.unsupported(parameterName + " does not resolve to a readable regular file: " + path);
         }
 
         List<String> patterns = new ArrayList<>();
         try {
-            for (String rawLine : Files.readAllLines(path, StandardCharsets.UTF_8)) {
-                String line = rawLine.trim();
+            for (String line : Files.readAllLines(path, Charset.defaultCharset())) {
+                // Maven Shared Utils FileUtils.loadFile ignores only empty lines and lines whose
+                // first character is '#'. Preserve every other byte-level selector spelling for
+                // Surefire TestListResolver; do not approximate method/negation/%regex grammar.
                 if (line.isEmpty() || line.startsWith("#")) continue;
                 patterns.add(line);
             }
         } catch (IOException unreadable) {
             return Analysis.unsupported(parameterName + " could not be read: " + unreadable.getMessage());
         }
-
-        MavenClassNamePatterns.SelectionAnalysis parsed = MavenClassNamePatterns.analyze(patterns);
-        if (!parsed.supported()) {
-            return Analysis.unsupported(parameterName + " contains selectors outside ScenarioMesh's proven class-only subset: "
-                    + String.join("; ", parsed.unsupportedReasons()));
-        }
         return Analysis.supported(patterns);
     }
 
     record Analysis(boolean supported, List<String> patterns, String reason) {
-        Analysis {
-            patterns = List.copyOf(patterns == null ? List.of() : patterns);
-        }
-
-        static Analysis supported(List<String> patterns) {
-            return new Analysis(true, patterns, null);
-        }
-
-        static Analysis unsupported(String reason) {
-            return new Analysis(false, List.of(), reason);
-        }
+        Analysis { patterns = List.copyOf(patterns == null ? List.of() : patterns); }
+        static Analysis supported(List<String> patterns) { return new Analysis(true, patterns, null); }
+        static Analysis unsupported(String reason) { return new Analysis(false, List.of(), reason); }
     }
 }

@@ -1,5 +1,6 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
@@ -26,11 +27,12 @@ final class ProjectCompatibilityDetector {
     private static final Set<String> SUREFIRE_UNSAFE_SELECTION_PROPERTIES = Set.of(
             "dependenciesToScan");
     private static final Set<String> FAILSAFE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "suiteXmlFiles", "dependenciesToScan");
+            "dependenciesToScan");
     private static final Set<String> CUCUMBER_SELECTION_PROPERTIES = Set.of(
             "cucumber.filter.tags", "cucumber.filter.name", "cucumber.features");
     private static final List<String> FRAMEWORK_PROPERTY_PREFIXES = List.of(
             "cucumber.", "junit.", "testng.");
+    private static final Set<String> EXECUTOR_FRAMEWORK_PROPERTIES = Set.of("groups", "excludedGroups");
 
     private final SurefireCompatibility surefireCompatibility = new SurefireCompatibility();
     private final FailsafeCompatibility failsafeCompatibility = new FailsafeCompatibility();
@@ -41,15 +43,6 @@ final class ProjectCompatibilityDetector {
         if (projectSkipsTests(properties)) return CompatibilityDecision.passThrough("effective Maven configuration explicitly skips tests");
 
         FrameworkSignals frameworks = detectFrameworks(project);
-        if (frameworks.directJUnit4() && !frameworks.cucumberJUnit4()) {
-            return CompatibilityDecision.passThrough(
-                    "generic JUnit 4 is present, but the current product only supports JUnit 4 through the Cucumber JUnit 4 adapter");
-        }
-        if (properties.present("groups") || properties.present("excludedGroups")) {
-            return CompatibilityDecision.passThrough(
-                    "Maven group filtering is present; ScenarioMesh will not take over until discovery can reproduce group inclusion/exclusion exactly");
-        }
-
         if (frameworks.cucumberJUnit4() || frameworks.junitPlatform()) {
             String projectOnlySelection = firstProjectOnlyProperty(properties, CUCUMBER_SELECTION_PROPERTIES);
             if (projectOnlySelection != null) {
@@ -60,7 +53,13 @@ final class ProjectCompatibilityDetector {
             }
         }
 
-        Map<String, String> frameworkSystemProperties = invocationFrameworkSystemProperties(session);
+        Map<String, String> frameworkSystemProperties = new LinkedHashMap<>(
+                effectiveFrameworkSystemProperties(session, properties));
+        if (frameworks.cucumberJUnit4()) {
+            frameworkSystemProperties.put(RuntimePropertyNames.JUNIT_VINTAGE_DISABLED, "true");
+        }
+        frameworkSystemProperties = Map.copyOf(frameworkSystemProperties);
+
         Optional<MavenExecutionPlan> executionPlan = MavenExecutionPlan.from(session);
         if (executionPlan.isEmpty()) return CompatibilityDecision.passThrough("requested Maven lifecycle could not be determined safely");
 
@@ -99,7 +98,6 @@ final class ProjectCompatibilityDetector {
 
                 SelectionOverride selectionOverride;
                 if (commandSelection.present()) {
-                    // Failsafe's it.test parameter overrides configured includes and excludes.
                     selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
                 } else {
                     selectionOverride = selectionOverride(
@@ -108,11 +106,13 @@ final class ProjectCompatibilityDetector {
                 if (!selectionOverride.supported()) {
                     return CompatibilityDecision.passThrough(selectionOverride.reason());
                 }
+                Map<String, String> finalFrameworkSystemProperties = frameworkSystemProperties;
                 List<ExecutorPlan> plans = analysis.executionPlans().stream()
                         .filter(plan -> !plan.explicitlySkipped())
                         .map(plan -> {
                             Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
-                            planProperties.putAll(frameworkSystemProperties);
+                            planProperties.putAll(finalFrameworkSystemProperties);
+                            attachAdvancedSelection(planProperties, commandSelection);
                             return new ExecutorPlan(
                                     plan.executionId(),
                                     selectionOverride.includes() == null
@@ -151,7 +151,6 @@ final class ProjectCompatibilityDetector {
 
         SelectionOverride selectionOverride;
         if (commandSelection.present()) {
-            // Surefire's test parameter overrides configured includes and excludes.
             selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
         } else {
             selectionOverride = selectionOverride(
@@ -172,9 +171,17 @@ final class ProjectCompatibilityDetector {
         Map<String, String> surefireSystemProperties = new LinkedHashMap<>();
         if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
         surefireSystemProperties.putAll(frameworkSystemProperties);
+        attachAdvancedSelection(surefireSystemProperties, commandSelection);
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
                 List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
+    }
+
+    private void attachAdvancedSelection(Map<String, String> properties,
+                                         CommandLineClassSelection.Analysis selection) {
+        if (selection != null && selection.testListExpression() != null) {
+            properties.put(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION, selection.testListExpression());
+        }
     }
 
     private SelectionOverride selectionOverride(EffectivePropertyResolver properties,
@@ -212,10 +219,15 @@ final class ProjectCompatibilityDetector {
         return SelectionOverride.supported(includes, excludes);
     }
 
-    private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
+    private Map<String, String> effectiveFrameworkSystemProperties(
+            MavenSession session, EffectivePropertyResolver effectiveProperties) {
         Map<String, String> values = new LinkedHashMap<>();
         copyFrameworkProperties(session.getSystemProperties(), values);
         copyFrameworkProperties(session.getUserProperties(), values);
+        for (String key : EXECUTOR_FRAMEWORK_PROPERTIES) {
+            String value = effectiveProperties.resolve(key);
+            if (value != null && !value.isBlank()) values.put(key, value);
+        }
         return Map.copyOf(values);
     }
 
@@ -350,6 +362,7 @@ final class ProjectCompatibilityDetector {
             if (junitPlatform) names.add("junit-platform");
             if (cucumberJUnit4) names.add("cucumber-junit4");
             if (testNg) names.add("testng");
+            if (directJUnit4 && !cucumberJUnit4) names.add("junit4-vintage");
             return Set.copyOf(names);
         }
     }

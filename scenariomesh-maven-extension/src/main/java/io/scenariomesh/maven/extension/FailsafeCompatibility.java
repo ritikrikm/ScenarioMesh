@@ -1,5 +1,8 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
+import io.scenariomesh.maven.selection.SurefireTestSelection;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.cli.CommandLineUtils;
@@ -20,6 +23,7 @@ import java.util.regex.Pattern;
 final class FailsafeCompatibility {
     static final String INCLUDE_JUNIT5_ENGINES_PROPERTY = "includejunit5engines";
     static final String EXCLUDE_JUNIT5_ENGINES_PROPERTY = "excludejunit5engines";
+    static final String TESTNG_SUITE_XML_FILES_PROPERTY = SurefireCompatibility.TESTNG_SUITE_XML_FILES_PROPERTY;
     private static final List<String> DEFAULT_INCLUDE_PATTERNS = List.of("**/IT*.java", "**/*IT.java", "**/*ITCase.java");
     private static final List<String> DEFAULT_EXCLUDE_PATTERNS = List.of("**/*$*");
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
@@ -73,13 +77,33 @@ final class FailsafeCompatibility {
             if (!settings.excludeJUnit5Engines.isEmpty()) {
                 settings.systemProperties.put(EXCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.excludeJUnit5Engines));
             }
+            if (!settings.suiteXmlFiles.isEmpty()) {
+                settings.systemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
+            }
 
-            List<String> includes = settings.includes.isEmpty()
-                    ? MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS)
-                    : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
-            List<String> excludes = settings.excludes.isEmpty()
-                    ? MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS)
-                    : MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
+            boolean explicitSelection = !settings.includes.isEmpty() || !settings.excludes.isEmpty();
+            List<String> exactIncludes = settings.includes.isEmpty() ? DEFAULT_INCLUDE_PATTERNS : List.copyOf(settings.includes);
+            List<String> exactExcludes = settings.excludes.isEmpty() ? DEFAULT_EXCLUDE_PATTERNS : List.copyOf(settings.excludes);
+            List<String> includes;
+            List<String> excludes;
+            if (explicitSelection) {
+                try {
+                    SurefireTestSelection.fromPatterns(exactIncludes, exactExcludes);
+                    settings.systemProperties.put(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS,
+                            MavenSelectionCodec.encode(exactIncludes));
+                    settings.systemProperties.put(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS,
+                            MavenSelectionCodec.encode(exactExcludes));
+                    includes = List.of(".*");
+                    excludes = List.of();
+                } catch (RuntimeException invalidSelection) {
+                    allReasons.add("execution '" + executionId(execution)
+                            + "': Failsafe selection cannot be represented by Surefire TestListResolver: " + safeMessage(invalidSelection));
+                    continue;
+                }
+            } else {
+                includes = MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS);
+                excludes = MavenClassNamePatterns.toRegexes(DEFAULT_EXCLUDE_PATTERNS);
+            }
             plans.add(new ExecutionPlan(executionId(execution), false, includes, excludes,
                     List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties), settings.testFailureIgnore));
         }
@@ -126,6 +150,8 @@ final class FailsafeCompatibility {
             case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
+            case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
+            case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
             case "skip", "skipITs", "skipTests" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (Boolean.TRUE.equals(value)) settings.explicitlySkipped = true;
@@ -145,6 +171,31 @@ final class FailsafeCompatibility {
                 if (value != null) settings.rerunFailingTestsCount = value;
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
+        }
+    }
+
+    private void readScalarSystemProperty(Xpp3Dom node, String location, EffectiveSettings settings,
+                                          List<String> reasons, Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " contains structured <" + node.getName() + "> group selection");
+            return;
+        }
+        String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (value == null) return;
+        if (value.isBlank()) settings.systemProperties.remove(node.getName());
+        else settings.systemProperties.put(node.getName(), value);
+    }
+
+    private void readSuiteXmlFiles(Xpp3Dom parent, String location, EffectiveSettings settings,
+                                   List<String> reasons, Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"suiteXmlFile".equals(item.getName()) || item.getChildCount() > 0) {
+                reasons.add(location + " contains unsupported TestNG suite selection inside <suiteXmlFiles>");
+                continue;
+            }
+            String value = resolve(item.getValue(), location + " <suiteXmlFile>", reasons, propertyResolver);
+            if (value == null || value.isBlank()) reasons.add(location + " contains an empty TestNG suite XML path");
+            else settings.suiteXmlFiles.add(value);
         }
     }
 
@@ -226,10 +277,12 @@ final class FailsafeCompatibility {
             if (!"include".equals(item.getName()) && !"exclude".equals(item.getName())) {
                 reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">"); continue;
             }
+            if (item.getChildCount() > 0) {
+                reasons.add(location + " contains a structured selection pattern in <" + parent.getName() + ">"); continue;
+            }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
-            if (value == null || value.isBlank()) reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">");
-            else try { MavenClassNamePatterns.toRegex(value); destination.add(value); }
-            catch (IllegalArgumentException unsupportedPattern) { reasons.add(location + " uses unsupported Maven class selection pattern '" + value + "': " + unsupportedPattern.getMessage()); }
+            if (value == null || value.isBlank()) reasons.add(location + " contains an empty selection pattern in <" + parent.getName() + ">");
+            else destination.add(value);
         }
     }
 
@@ -263,6 +316,11 @@ final class FailsafeCompatibility {
         matcher.appendTail(resolved); return resolved.toString();
     }
 
+    private String safeMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message.replace('\n', ' ').replace('\r', ' ');
+    }
+
     static String mavenClassPatternToRegex(String pattern) { return MavenClassNamePatterns.toRegex(pattern); }
     private boolean meaningful(Xpp3Dom node) { return trim(node.getValue()) != null || node.getChildCount() > 0 || (node.getAttributeNames() != null && node.getAttributeNames().length > 0); }
     private String executionId(PluginExecution execution) { String id = trim(execution.getId()); return id == null ? "<unnamed>" : id; }
@@ -290,6 +348,7 @@ final class FailsafeCompatibility {
         private final Set<String> excludes = new LinkedHashSet<>();
         private final Set<String> includeJUnit5Engines = new LinkedHashSet<>();
         private final Set<String> excludeJUnit5Engines = new LinkedHashSet<>();
+        private final Set<String> suiteXmlFiles = new LinkedHashSet<>();
         private final List<String> jvmArgs = new ArrayList<>();
         private final Map<String, String> systemProperties = new LinkedHashMap<>();
         private boolean explicitlySkipped;

@@ -7,6 +7,7 @@
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-config</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-protocol</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-control-json</artifactId><version>${project.version}</version></dependency>
+    <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-maven-selection</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-adapter-junit-platform</artifactId><version>${project.version}</version><scope>runtime</scope></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-adapter-cucumber-junit4</artifactId><version>${project.version}</version><scope>runtime</scope></dependency>
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-adapter-testng</artifactId><version>${project.version}</version><scope>runtime</scope></dependency>

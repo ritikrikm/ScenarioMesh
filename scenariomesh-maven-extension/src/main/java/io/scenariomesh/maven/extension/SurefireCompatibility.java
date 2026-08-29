@@ -1,20 +1,23 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
+import io.scenariomesh.maven.selection.SurefireTestSelection;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
+import java.io.IOException;
+import java.io.StringReader;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.Properties;
-import java.io.StringReader;
-import java.io.IOException;
-import java.nio.file.Path;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -67,10 +70,34 @@ final class SurefireCompatibility {
             reasons.add("maven-surefire-plugin includes JUnit Vintage; generic JUnit 4 ownership is reserved for the P1 Vintage equivalence gate");
         }
 
-        List<String> includes = settings.includes.isEmpty()
-                ? defaultIncludeClassNameRegexes() : MavenClassNamePatterns.toRegexes(List.copyOf(settings.includes));
-        List<String> excludes = settings.excludes.isEmpty()
-                ? defaultExcludeClassNameRegexes() : MavenClassNamePatterns.toRegexes(List.copyOf(settings.excludes));
+        boolean explicitSelection = !settings.includes.isEmpty() || !settings.excludes.isEmpty();
+        List<String> exactIncludes = settings.includes.isEmpty() ? DEFAULT_INCLUDE_PATTERNS : List.copyOf(settings.includes);
+        List<String> exactExcludes = settings.excludes.isEmpty() ? DEFAULT_EXCLUDE_PATTERNS : List.copyOf(settings.excludes);
+        List<String> includes;
+        List<String> excludes;
+        if (explicitSelection) {
+            try {
+                // Validate and execute the complete public Surefire grammar with Surefire itself.
+                // Discovery deliberately over-selects classes; the exact post-filter owns method,
+                // negation, wildcard and %regex semantics without a ScenarioMesh parser.
+                SurefireTestSelection.fromPatterns(exactIncludes, exactExcludes);
+                settings.systemProperties.put(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS,
+                        MavenSelectionCodec.encode(exactIncludes));
+                settings.systemProperties.put(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS,
+                        MavenSelectionCodec.encode(exactExcludes));
+                includes = List.of(".*");
+                excludes = List.of();
+            } catch (RuntimeException invalidSelection) {
+                reasons.add("maven-surefire-plugin selection cannot be represented by Surefire TestListResolver: "
+                        + safeMessage(invalidSelection));
+                includes = List.of(".*");
+                excludes = List.of();
+            }
+        } else {
+            includes = defaultIncludeClassNameRegexes();
+            excludes = defaultExcludeClassNameRegexes();
+        }
+
         if (!settings.includeJUnit5Engines.isEmpty()) {
             settings.systemProperties.put(INCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.includeJUnit5Engines));
         }
@@ -120,6 +147,7 @@ final class SurefireCompatibility {
             case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
+            case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
             case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
             case "properties" -> readProviderProperties(child, location, settings, reasons, propertyResolver);
             case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
@@ -134,6 +162,18 @@ final class SurefireCompatibility {
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
+    }
+
+    private void readScalarSystemProperty(Xpp3Dom node, String location, EffectiveSettings settings,
+                                          List<String> reasons, Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " contains structured <" + node.getName() + "> group selection");
+            return;
+        }
+        String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (value == null) return;
+        if (value.isBlank()) settings.systemProperties.remove(node.getName());
+        else settings.systemProperties.put(node.getName(), value);
     }
 
     private void readEngineList(Xpp3Dom parent, Set<String> destination, String location,
@@ -210,16 +250,13 @@ final class SurefireCompatibility {
                 reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">"); continue;
             }
             if (item.getChildCount() > 0) {
-                reasons.add(location + " contains a structured class selection pattern in <" + parent.getName() + ">"); continue;
+                reasons.add(location + " contains a structured selection pattern in <" + parent.getName() + ">"); continue;
             }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
             if (value == null || value.isBlank()) {
-                reasons.add(location + " contains an empty class selection pattern in <" + parent.getName() + ">"); continue;
+                reasons.add(location + " contains an empty selection pattern in <" + parent.getName() + ">"); continue;
             }
-            try { MavenClassNamePatterns.toRegex(value); destination.add(value); }
-            catch (IllegalArgumentException unsupportedPattern) {
-                reasons.add(location + " uses unsupported Maven class selection pattern '" + value + "': " + unsupportedPattern.getMessage());
-            }
+            destination.add(value);
         }
     }
 
@@ -261,6 +298,11 @@ final class SurefireCompatibility {
         }
         matcher.appendTail(resolved);
         return resolved.toString();
+    }
+
+    private String safeMessage(Throwable throwable) {
+        String message = throwable.getMessage();
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message.replace('\n', ' ').replace('\r', ' ');
     }
 
     private Xpp3Dom asDom(Object configuration) { return configuration instanceof Xpp3Dom dom ? dom : null; }

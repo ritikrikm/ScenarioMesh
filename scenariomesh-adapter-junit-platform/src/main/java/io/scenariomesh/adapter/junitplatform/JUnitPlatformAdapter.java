@@ -3,6 +3,7 @@ package io.scenariomesh.adapter.junitplatform;
 import io.scenariomesh.core.Domain.ExecutionResult;
 import io.scenariomesh.core.Domain.ResultStatus;
 import io.scenariomesh.core.Domain.ScenarioTask;
+import io.scenariomesh.core.Ports.AdapterCapabilities;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
@@ -54,6 +55,14 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     @Override public String framework() { return "junit-platform"; }
 
     @Override
+    public AdapterCapabilities capabilities() {
+        return new AdapterCapabilities(
+                Set.of("junit-platform"),
+                Set.of("junit-jupiter", "junit-vintage", "cucumber", "junit-platform-suite"),
+                false);
+    }
+
+    @Override
     public boolean isAvailable(ClassLoader classLoader) {
         try {
             Class.forName("org.junit.platform.launcher.Launcher", false, classLoader);
@@ -71,7 +80,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                         .selectors(selectClasspathRoots(new HashSet<>(context.testRoots()))),
                 context.properties());
         if (!context.discoverySelection().includeClassNameRegexes().isEmpty()
-                || !context.discoverySelection().excludeClassNameRegexes().isEmpty()) {
+                || !context.discoverySelection().excludeClassNameRegexes().isEmpty()
+                || context.discoverySelection().hasMavenTestSelection()) {
             builder.filters(new MavenClassSelectionPostFilter(context.discoverySelection()));
         }
 
@@ -168,13 +178,25 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         Set<String> tags = new HashSet<>();
         for (TestTag tag : identifier.getTags()) tags.add(tag.getName());
         String engineId = requiredEngineId(uniqueId);
-        String framework = "cucumber".equals(engineId) ? "cucumber-junit-platform" : "junit5";
+        String framework = switch (engineId) {
+            case "cucumber" -> "cucumber-junit-platform";
+            case "junit-vintage" -> "junit4-vintage";
+            default -> "junit5";
+        };
         Map<String, String> metadata = new LinkedHashMap<>();
         metadata.put("uniqueId", uniqueId);
         metadata.put(META_REQUIRED_ENGINE_ID, engineId);
         metadata.put(META_SCOPE_ID, scope.id());
         metadata.put(META_SCOPE_SELECTOR, scope.selector());
         metadata.put(META_SCOPE_KIND, scope.kind());
+        identifier.getSource().ifPresent(source -> {
+            if (source instanceof org.junit.platform.engine.support.descriptor.MethodSource methodSource) {
+                metadata.put("className", methodSource.getClassName());
+                metadata.put("methodName", methodSource.getMethodName());
+            } else if (source instanceof ClassSource classSource) {
+                metadata.put("className", classSource.getClassName());
+            }
+        });
         if (isRuntimeMaterializer(identifier)) metadata.put(META_RUNTIME_MATERIALIZER, "true");
         if (parentMaterializer != null) {
             metadata.put(META_PARENT_MATERIALIZER_ID, parentMaterializer.id().value());

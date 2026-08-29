@@ -1,5 +1,7 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -187,11 +189,17 @@ class FailsafeCompatibilityTest {
 
         assertTrue(analysis.supported(), analysis.reason());
         assertEquals(2, analysis.executionPlans().size());
-        assertEquals("integration-tests", analysis.executionPlans().get(0).executionId());
-        assertEquals("regression-tests", analysis.executionPlans().get(1).executionId());
-        assertFalse(analysis.executionPlans().get(0).includeClassNameRegexes()
-                .equals(analysis.executionPlans().get(1).includeClassNameRegexes()));
-        assertEquals("staging", analysis.executionPlans().get(1).systemProperties().get("environment"));
+        var first = analysis.executionPlans().get(0);
+        var regression = analysis.executionPlans().get(1);
+        assertEquals("integration-tests", first.executionId());
+        assertEquals("regression-tests", regression.executionId());
+        assertEquals(List.of(".*"), first.includeClassNameRegexes());
+        assertEquals(List.of(".*"), regression.includeClassNameRegexes());
+        assertEquals(List.of("**/SmokeIT.java"), MavenSelectionCodec.decode(
+                first.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of("**/RegressionIT.java"), MavenSelectionCodec.decode(
+                regression.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals("staging", regression.systemProperties().get("environment"));
     }
 
     @Test

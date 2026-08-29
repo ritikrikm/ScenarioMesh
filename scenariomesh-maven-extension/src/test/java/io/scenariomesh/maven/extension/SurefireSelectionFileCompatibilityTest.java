@@ -1,5 +1,7 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -9,10 +11,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SurefireSelectionFileCompatibilityTest {
@@ -37,9 +39,12 @@ class SurefireSelectionFileCompatibilityTest {
                 plugin, Map.of("project.basedir", projectDir.toString())::get);
 
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
-        assertTrue(matches(analysis, "example/CheckoutSmokeTest.class"));
-        assertTrue(matches(analysis, "example/CheckoutContractTest.class"));
-        assertFalse(matches(analysis, "example/CheckoutTest.class"));
+        assertEquals(List.of(".*"), analysis.includeClassNameRegexes());
+        assertTrue(analysis.excludeClassNameRegexes().isEmpty());
+        assertEquals(List.of("**/*SmokeTest.java", "**/*ContractTest.java"),
+                MavenSelectionCodec.decode(analysis.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of("**/*$*"),
+                MavenSelectionCodec.decode(analysis.systemProperties().get(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS)));
     }
 
     @Test
@@ -58,12 +63,14 @@ class SurefireSelectionFileCompatibilityTest {
                 plugin, Map.of("project.basedir", projectDir.toString())::get);
 
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
-        assertTrue(matchesExclude(analysis, "example/CheckoutSlowTest.class"));
-        assertTrue(matchesExclude(analysis, "example/CheckoutFlakyTest.class"));
+        assertEquals(List.of(".*"), analysis.includeClassNameRegexes());
+        assertTrue(analysis.excludeClassNameRegexes().isEmpty());
+        assertEquals(List.of("**/*SlowTest.java", "**/*FlakyTest.java"),
+                MavenSelectionCodec.decode(analysis.systemProperties().get(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS)));
     }
 
     @Test
-    void methodSelectorInIncludesFileFailsClosed() throws IOException {
+    void methodSelectorInIncludesFileUsesExactSurefireMatcher() throws IOException {
         Files.writeString(projectDir.resolve("surefire-includes.txt"), "example.LoginTest#smoke\n");
 
         Plugin plugin = plugin();
@@ -72,8 +79,10 @@ class SurefireSelectionFileCompatibilityTest {
         SurefireCompatibility.Analysis analysis = compatibility.analyze(
                 plugin, Map.of("project.basedir", projectDir.toString())::get);
 
-        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("method selectors")),
-                () -> String.join("; ", analysis.reasons()));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals(List.of("example.LoginTest#smoke"),
+                MavenSelectionCodec.decode(analysis.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of(".*"), analysis.includeClassNameRegexes());
     }
 
     @Test
@@ -86,14 +95,6 @@ class SurefireSelectionFileCompatibilityTest {
 
         assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("readable regular file")),
                 () -> String.join("; ", analysis.reasons()));
-    }
-
-    private boolean matches(SurefireCompatibility.Analysis analysis, String classFilePath) {
-        return analysis.includeClassNameRegexes().stream().anyMatch(regex -> Pattern.matches(regex, classFilePath));
-    }
-
-    private boolean matchesExclude(SurefireCompatibility.Analysis analysis, String classFilePath) {
-        return analysis.excludeClassNameRegexes().stream().anyMatch(regex -> Pattern.matches(regex, classFilePath));
     }
 
     private Plugin plugin() {

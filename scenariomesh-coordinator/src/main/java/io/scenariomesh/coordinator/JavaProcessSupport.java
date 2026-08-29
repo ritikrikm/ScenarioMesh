@@ -1,5 +1,9 @@
 package io.scenariomesh.coordinator;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
+import io.scenariomesh.workerruntime.WorkerMain;
+
 import java.io.File;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -16,17 +20,16 @@ final class JavaProcessSupport {
                                 List<Path> classpath,
                                 List<String> jvmArgs,
                                 Map<String, String> properties,
+                                boolean enableAssertions,
                                 String mainClass,
                                 List<String> args) {
         List<String> command = new ArrayList<>();
         command.add((javaExecutable == null ? defaultJavaExecutable() : javaExecutable).toString());
-        // Maven Surefire enables assertions by default. ScenarioMesh child JVMs
-        // mirror that default unless a future compatibility layer explicitly
-        // reproduces a target project's enableAssertions override.
-        command.add("-ea");
+        if (enableAssertions) command.add("-ea");
         command.addAll(jvmArgs);
         properties.entrySet().stream()
                 .filter(entry -> !RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY.equals(entry.getKey()))
+                .filter(entry -> workerBootstrapPropertyAllowed(mainClass, entry.getKey()))
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
         command.add("-cp");
@@ -39,16 +42,43 @@ final class JavaProcessSupport {
         return command;
     }
 
+    private static boolean workerBootstrapPropertyAllowed(String mainClass, String propertyName) {
+        if (!WorkerMain.class.getName().equals(mainClass)) return true;
+        if (!propertyName.startsWith(RuntimePropertyNames.INTERNAL_PREFIX)) return true;
+        // The target classpath is a one-time worker bootstrap handoff. WorkerMain decodes and
+        // clears it before adapter discovery/execution, so target tests cannot observe it.
+        // Every other ScenarioMesh-internal property remains excluded from the target worker.
+        return TargetClasspathDescriptor.SYSTEM_PROPERTY.equals(propertyName);
+    }
+
+    static List<String> command(Path javaExecutable,
+                                List<Path> classpath,
+                                List<String> jvmArgs,
+                                Map<String, String> properties,
+                                String mainClass,
+                                List<String> args) {
+        return command(javaExecutable, classpath, jvmArgs, properties, true, mainClass, args);
+    }
+
     static List<String> command(List<Path> classpath,
                                 List<String> jvmArgs,
                                 Map<String, String> properties,
+                                boolean enableAssertions,
                                 String mainClass,
                                 List<String> args) {
         String selected = properties.get(RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY);
         Path javaExecutable = selected == null || selected.isBlank()
                 ? defaultJavaExecutable()
                 : Path.of(selected).toAbsolutePath().normalize();
-        return command(javaExecutable, classpath, jvmArgs, properties, mainClass, args);
+        return command(javaExecutable, classpath, jvmArgs, properties, enableAssertions, mainClass, args);
+    }
+
+    static List<String> command(List<Path> classpath,
+                                List<String> jvmArgs,
+                                Map<String, String> properties,
+                                String mainClass,
+                                List<String> args) {
+        return command(classpath, jvmArgs, properties, true, mainClass, args);
     }
 
     static void terminateProcessTree(Process process, Duration gracefulWait) {

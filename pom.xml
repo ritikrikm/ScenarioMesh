@@ -9,6 +9,7 @@
   <name>ScenarioMesh</name>
   <modules>
     <module>scenariomesh-core</module><module>scenariomesh-config</module><module>scenariomesh-protocol</module><module>scenariomesh-control-json</module><module>scenariomesh-scheduler</module>
+    <module>scenariomesh-maven-selection</module>
     <module>scenariomesh-adapter-junit-platform</module><module>scenariomesh-adapter-cucumber-junit4</module><module>scenariomesh-adapter-testng</module>
     <module>scenariomesh-worker-runtime</module><module>scenariomesh-coordinator</module><module>scenariomesh-reporting</module><module>scenariomesh-observability-opentelemetry</module>
     <module>scenariomesh-maven-plugin</module><module>scenariomesh-maven-extension</module><module>scenariomesh-cli</module>
@@ -17,7 +18,7 @@
     <maven.compiler.release>17</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <jackson.version>2.17.3</jackson.version><snakeyaml.version>2.3</snakeyaml.version><junit.jupiter.version>5.10.5</junit.jupiter.version><junit.platform.version>1.10.5</junit.platform.version>
     <junit4.version>4.13.2</junit4.version><testng.version>7.10.2</testng.version><slf4j.version>2.0.16</slf4j.version><opentelemetry.version>1.64.0</opentelemetry.version>
-    <maven.version>3.9.9</maven.version><maven.plugin.annotations.version>3.13.1</maven.plugin.annotations.version>
+    <maven.version>3.9.9</maven.version><maven.plugin.annotations.version>3.13.1</maven.plugin.annotations.version><maven.common.artifact.filters.version>3.4.0</maven.common.artifact.filters.version><surefire.api.version>3.5.2</surefire.api.version>
   </properties>
   <dependencyManagement><dependencies>
     <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>${jackson.version}</version></dependency>
@@ -25,6 +26,7 @@
     <dependency><groupId>org.yaml</groupId><artifactId>snakeyaml</artifactId><version>${snakeyaml.version}</version></dependency>
     <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>${slf4j.version}</version></dependency>
     <dependency><groupId>io.opentelemetry</groupId><artifactId>opentelemetry-api</artifactId><version>${opentelemetry.version}</version></dependency>
+    <dependency><groupId>org.apache.maven.surefire</groupId><artifactId>surefire-api</artifactId><version>${surefire.api.version}</version></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.jupiter.version}</version><scope>test</scope></dependency>
   </dependencies></dependencyManagement>
   <build><pluginManagement><plugins>

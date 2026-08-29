@@ -24,7 +24,7 @@ import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass
 public final class JUnitPlatformBackendProbe {
     private static final Set<String> PROVEN_LEAF_OWNABLE_ENGINES = Set.of();
     private static final Set<String> PROVEN_SCOPED_OWNABLE_ENGINES = Set.of(
-            "junit-jupiter", "cucumber", "junit-platform-suite");
+            "junit-jupiter", "junit-vintage", "cucumber", "junit-platform-suite");
 
     private JUnitPlatformBackendProbe() {}
 
