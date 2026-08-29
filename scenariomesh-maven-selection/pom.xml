@@ -4,6 +4,7 @@
   <artifactId>scenariomesh-maven-selection</artifactId>
   <dependencies>
     <dependency><groupId>org.apache.maven.surefire</groupId><artifactId>surefire-api</artifactId></dependency>
+    <dependency><groupId>org.apache.maven.surefire</groupId><artifactId>surefire-grouper</artifactId></dependency>
     <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><scope>test</scope></dependency>
   </dependencies>
 </project>
