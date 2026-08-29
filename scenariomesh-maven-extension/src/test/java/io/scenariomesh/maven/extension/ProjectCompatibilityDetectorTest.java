@@ -146,6 +146,17 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
+    void mixedProviderGroupFilteringStaysNativeUntilItsOwnEquivalenceGate() {
+        MavenProject project = project(
+                dependency("org.junit.jupiter", "junit-jupiter"),
+                dependency("org.testng", "testng"));
+        project.getProperties().setProperty("groups", "smoke");
+        var decision = detector.evaluate(session("test"), project);
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("pure TestNG provider set"), decision.reason());
+    }
+
+    @Test
     void cucumberCliTagFilterIsForwardedIntoDiscoveryAndWorkers() {
         MavenProject project = project(
                 dependency("io.cucumber", "cucumber-junit"),
