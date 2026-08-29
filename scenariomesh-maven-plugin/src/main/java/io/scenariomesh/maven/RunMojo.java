@@ -25,7 +25,6 @@ import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
 
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -84,9 +83,8 @@ public final class RunMojo extends AbstractMojo {
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         PreparedRemoteWorkers preparedRemoteWorkers = null;
         try {
-            Map<String, String> userProperties = stringProperties(session.getUserProperties());
-            Map<String, String> configProperties = stringProperties(session.getSystemProperties());
-            configProperties.putAll(userProperties);
+            Map<String, String> userProperties = EffectiveMavenProperties.user(session);
+            Map<String, String> configProperties = EffectiveMavenProperties.configuration(project, session);
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
             ConfigResolution resolution = new ConfigResolver().resolveDetailed(
                     projectDirectory, buildDirectory, configProperties, System.getenv());
@@ -215,11 +213,5 @@ public final class RunMojo extends AbstractMojo {
         if (!testFailureIgnore) return false;
         return outcome.results().stream()
                 .allMatch(result -> result.buildSuccessful() || result.status() == ResultStatus.TEST_FAILURE);
-    }
-
-    private Map<String, String> stringProperties(java.util.Properties properties) {
-        Map<String, String> values = new LinkedHashMap<>();
-        if (properties != null) properties.forEach((key, value) -> values.put(String.valueOf(key), String.valueOf(value)));
-        return values;
     }
 }
