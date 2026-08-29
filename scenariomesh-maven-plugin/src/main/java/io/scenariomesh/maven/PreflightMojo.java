@@ -2,6 +2,7 @@ package io.scenariomesh.maven;
 
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
+import io.scenariomesh.core.MavenOwnershipDiagnostic;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
 import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 import org.apache.maven.artifact.Artifact;
@@ -40,6 +41,7 @@ public final class PreflightMojo extends AbstractMojo {
     @Component private ToolchainManager toolchainManager;
     @Parameter(defaultValue = "surefire") private String takeoverExecutor;
     @Parameter(defaultValue = "false") private boolean knownModelFramework;
+    @Parameter private List<String> takeoverExecutionIds;
     @Parameter private List<String> includeClassNameRegexes;
     @Parameter private List<String> excludeClassNameRegexes;
     @Parameter private Map<String, String> executorSystemProperties;
@@ -52,7 +54,7 @@ public final class PreflightMojo extends AbstractMojo {
     public void execute() {
         RemotePreflightState.clear(getPluginContext());
         if (explicitlySkipped()) {
-            PreflightState.passThrough(project, "tests were explicitly skipped by Maven");
+            passThrough("tests were explicitly skipped by Maven");
             return;
         }
 
@@ -99,8 +101,10 @@ public final class PreflightMojo extends AbstractMojo {
                 return;
             }
 
+            String reason = "runtime ownership proven in Maven-selected test JVM; " + probe.summary();
             PreflightState.owned(project, probe.summary() + "; testJvm=" + javaExecutable);
             suppressNativeExecutor();
+            ownership(MavenOwnershipDiagnostic.Owner.SCENARIOMESH, reason);
             getLog().info("ScenarioMesh preflight: ownership proven in Maven-selected test JVM " + javaExecutable
                     + "; native " + normalizedExecutor() + " execution will be suppressed. Backend inventory: "
                     + probe.summary());
@@ -198,7 +202,17 @@ public final class PreflightMojo extends AbstractMojo {
     private void passThrough(String reason) {
         RemotePreflightState.clear(getPluginContext());
         PreflightState.passThrough(project, reason);
+        ownership(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, reason);
         getLog().info("ScenarioMesh preflight: native Maven pass-through - " + reason);
+    }
+
+    private void ownership(MavenOwnershipDiagnostic.Owner owner, String reason) {
+        List<String> executions = takeoverExecutionIds == null || takeoverExecutionIds.isEmpty()
+                ? List.of("none") : takeoverExecutionIds;
+        for (String execution : executions) {
+            getLog().info(MavenOwnershipDiagnostic.format(
+                    owner, project.getArtifactId(), normalizedExecutor(), execution, reason));
+        }
     }
 
     private void suppressNativeExecutor() {
