@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +107,7 @@ public final class PreflightProbeMain {
     static RuntimeRequirements runtimeRequirements(AdapterContext context, AdapterRegistry registry) throws Exception {
         Set<String> adapterIds = new LinkedHashSet<>();
         Set<String> engineIds = new LinkedHashSet<>();
+        Map<String, String> ownerByLogicalTest = new LinkedHashMap<>();
         SurefireTestSelection methodSelection = context.discoverySelection().hasTestListExpression()
                 ? new SurefireTestSelection(context.discoverySelection().testListExpression()) : null;
         for (ScenarioAdapter adapter : registry.available(context.classLoader())) {
@@ -119,8 +121,15 @@ public final class PreflightProbeMain {
             }
             if (tasks.isEmpty()) continue;
             adapterIds.add(adapter.id());
-            if ("junit-platform".equals(adapter.id())) {
-                for (ScenarioTask task : tasks) {
+            for (ScenarioTask task : tasks) {
+                String logicalKey = DiscoveryMain.logicalKey(task);
+                String previousOwner = ownerByLogicalTest.putIfAbsent(logicalKey, adapter.id());
+                if (previousOwner != null && !previousOwner.equals(adapter.id())) {
+                    throw new IllegalStateException("runtime ownership is ambiguous for logical test '" + logicalKey
+                            + "': adapters '" + previousOwner + "' and '" + adapter.id()
+                            + "' both discovered it; native Maven execution is retained");
+                }
+                if ("junit-platform".equals(adapter.id())) {
                     String engineId = task.metadata().get(TaskMetadata.REQUIRED_ENGINE_ID);
                     if (engineId == null || engineId.isBlank()) {
                         throw new IllegalStateException("Selected JUnit Platform task did not publish a required engine id: "
