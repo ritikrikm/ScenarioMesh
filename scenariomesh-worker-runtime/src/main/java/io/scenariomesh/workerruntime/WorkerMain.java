@@ -66,7 +66,10 @@ public final class WorkerMain {
 
     private static void run(Arguments parsed, ClassLoader classLoader) throws Exception {
         Map<String, String> environment = System.getenv();
-        String token = RemoteWorkerTransport.authenticationToken(environment);
+        boolean localBootstrap = parsed.authenticationToken != null;
+        String token = localBootstrap
+                ? parsed.authenticationToken
+                : RemoteWorkerTransport.authenticationToken(environment);
         AdapterRegistry adapters = new AdapterRegistry(classLoader);
         List<WorkerTaskCleanup> cleanupHooks = ServiceLoader.load(WorkerTaskCleanup.class, classLoader)
                 .stream().map(ServiceLoader.Provider::get).toList();
@@ -83,7 +86,9 @@ public final class WorkerMain {
                 + " adapters=" + capabilities.adapterIds()
                 + " engines=" + capabilities.engineIds());
 
-        try (Socket socket = RemoteWorkerTransport.connect(parsed.host, parsed.port, environment);
+        try (Socket socket = localBootstrap
+                    ? new Socket(InetAddress.getByName(parsed.host), parsed.port)
+                    : RemoteWorkerTransport.connect(parsed.host, parsed.port, environment);
              ProtocolFrameReader reader = new ProtocolFrameReader(socket.getInputStream());
              BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8))) {
             trace("CONNECTED worker=" + parsed.workerId + " local=" + socket.getLocalSocketAddress()
@@ -400,9 +405,9 @@ public final class WorkerMain {
         System.err.println(TRACE_PREFIX + " " + Instant.now() + " thread=" + Thread.currentThread().getName() + " " + message);
     }
 
-    private record Arguments(String host, int port, String workerId, Path targetClasspathFile) {
+    private record Arguments(String host, int port, String workerId, Path targetClasspathFile, String authenticationToken) {
         private static Arguments parse(String[] args) {
-            String host = null, workerId = null;
+            String host = null, workerId = null, authenticationToken = null;
             Integer port = null;
             Path targetClasspathFile = null;
             for (int i = 0; i < args.length; i++) {
@@ -414,13 +419,14 @@ public final class WorkerMain {
                     case "--port" -> port = Integer.parseInt(value);
                     case "--worker-id" -> workerId = value;
                     case "--target-classpath-file" -> targetClasspathFile = Path.of(value).toAbsolutePath().normalize();
+                    case "--auth-token" -> authenticationToken = value;
                     default -> throw new IllegalArgumentException("Unknown worker argument: " + key);
                 }
             }
             if (host == null || port == null || workerId == null) {
-                throw new IllegalArgumentException("--host, --port and --worker-id are required; authentication is provided through environment variables");
+                throw new IllegalArgumentException("--host, --port and --worker-id are required; remote authentication is supplied through environment variables");
             }
-            return new Arguments(host, port, workerId, targetClasspathFile);
+            return new Arguments(host, port, workerId, targetClasspathFile, authenticationToken);
         }
     }
 }
