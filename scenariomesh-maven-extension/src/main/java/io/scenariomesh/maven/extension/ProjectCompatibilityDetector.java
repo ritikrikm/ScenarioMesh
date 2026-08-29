@@ -1,5 +1,6 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
@@ -31,6 +32,7 @@ final class ProjectCompatibilityDetector {
             "cucumber.filter.tags", "cucumber.filter.name", "cucumber.features");
     private static final List<String> FRAMEWORK_PROPERTY_PREFIXES = List.of(
             "cucumber.", "junit.", "testng.");
+    private static final Set<String> EXECUTOR_FRAMEWORK_PROPERTIES = Set.of("groups", "excludedGroups");
 
     private final SurefireCompatibility surefireCompatibility = new SurefireCompatibility();
     private final FailsafeCompatibility failsafeCompatibility = new FailsafeCompatibility();
@@ -44,10 +46,6 @@ final class ProjectCompatibilityDetector {
         if (frameworks.directJUnit4() && !frameworks.cucumberJUnit4()) {
             return CompatibilityDecision.passThrough(
                     "generic JUnit 4 is present, but the current product only supports JUnit 4 through the Cucumber JUnit 4 adapter");
-        }
-        if (properties.present("groups") || properties.present("excludedGroups")) {
-            return CompatibilityDecision.passThrough(
-                    "Maven group filtering is present; ScenarioMesh will not take over until discovery can reproduce group inclusion/exclusion exactly");
         }
 
         if (frameworks.cucumberJUnit4() || frameworks.junitPlatform()) {
@@ -99,7 +97,6 @@ final class ProjectCompatibilityDetector {
 
                 SelectionOverride selectionOverride;
                 if (commandSelection.present()) {
-                    // Failsafe's it.test parameter overrides configured includes and excludes.
                     selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
                 } else {
                     selectionOverride = selectionOverride(
@@ -113,6 +110,7 @@ final class ProjectCompatibilityDetector {
                         .map(plan -> {
                             Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
                             planProperties.putAll(frameworkSystemProperties);
+                            attachAdvancedSelection(planProperties, commandSelection);
                             return new ExecutorPlan(
                                     plan.executionId(),
                                     selectionOverride.includes() == null
@@ -151,7 +149,6 @@ final class ProjectCompatibilityDetector {
 
         SelectionOverride selectionOverride;
         if (commandSelection.present()) {
-            // Surefire's test parameter overrides configured includes and excludes.
             selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
         } else {
             selectionOverride = selectionOverride(
@@ -172,9 +169,17 @@ final class ProjectCompatibilityDetector {
         Map<String, String> surefireSystemProperties = new LinkedHashMap<>();
         if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
         surefireSystemProperties.putAll(frameworkSystemProperties);
+        attachAdvancedSelection(surefireSystemProperties, commandSelection);
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
                 List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
+    }
+
+    private void attachAdvancedSelection(Map<String, String> properties,
+                                         CommandLineClassSelection.Analysis selection) {
+        if (selection != null && selection.testListExpression() != null) {
+            properties.put(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION, selection.testListExpression());
+        }
     }
 
     private SelectionOverride selectionOverride(EffectivePropertyResolver properties,
@@ -215,7 +220,9 @@ final class ProjectCompatibilityDetector {
     private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
         Map<String, String> values = new LinkedHashMap<>();
         copyFrameworkProperties(session.getSystemProperties(), values);
+        copyExecutorFrameworkProperties(session.getSystemProperties(), values);
         copyFrameworkProperties(session.getUserProperties(), values);
+        copyExecutorFrameworkProperties(session.getUserProperties(), values);
         return Map.copyOf(values);
     }
 
@@ -225,6 +232,14 @@ final class ProjectCompatibilityDetector {
             String key = String.valueOf(rawKey);
             if (FRAMEWORK_PROPERTY_PREFIXES.stream().anyMatch(key::startsWith)) target.put(key, String.valueOf(rawValue));
         });
+    }
+
+    private void copyExecutorFrameworkProperties(java.util.Properties source, Map<String, String> target) {
+        if (source == null) return;
+        for (String key : EXECUTOR_FRAMEWORK_PROPERTIES) {
+            String value = source.getProperty(key);
+            if (value != null) target.put(key, value);
+        }
     }
 
     private String firstProjectOnlyProperty(EffectivePropertyResolver properties, Set<String> keys) {
