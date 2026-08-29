@@ -58,7 +58,7 @@ final class ProjectCompatibilityDetector {
             }
         }
 
-        Map<String, String> frameworkSystemProperties = invocationFrameworkSystemProperties(session);
+        Map<String, String> frameworkSystemProperties = effectiveFrameworkSystemProperties(session, properties);
         Optional<MavenExecutionPlan> executionPlan = MavenExecutionPlan.from(session);
         if (executionPlan.isEmpty()) return CompatibilityDecision.passThrough("requested Maven lifecycle could not be determined safely");
 
@@ -217,12 +217,15 @@ final class ProjectCompatibilityDetector {
         return SelectionOverride.supported(includes, excludes);
     }
 
-    private Map<String, String> invocationFrameworkSystemProperties(MavenSession session) {
+    private Map<String, String> effectiveFrameworkSystemProperties(
+            MavenSession session, EffectivePropertyResolver effectiveProperties) {
         Map<String, String> values = new LinkedHashMap<>();
         copyFrameworkProperties(session.getSystemProperties(), values);
-        copyExecutorFrameworkProperties(session.getSystemProperties(), values);
         copyFrameworkProperties(session.getUserProperties(), values);
-        copyExecutorFrameworkProperties(session.getUserProperties(), values);
+        for (String key : EXECUTOR_FRAMEWORK_PROPERTIES) {
+            String value = effectiveProperties.resolve(key);
+            if (value != null && !value.isBlank()) values.put(key, value);
+        }
         return Map.copyOf(values);
     }
 
@@ -232,14 +235,6 @@ final class ProjectCompatibilityDetector {
             String key = String.valueOf(rawKey);
             if (FRAMEWORK_PROPERTY_PREFIXES.stream().anyMatch(key::startsWith)) target.put(key, String.valueOf(rawValue));
         });
-    }
-
-    private void copyExecutorFrameworkProperties(java.util.Properties source, Map<String, String> target) {
-        if (source == null) return;
-        for (String key : EXECUTOR_FRAMEWORK_PROPERTIES) {
-            String value = source.getProperty(key);
-            if (value != null) target.put(key, value);
-        }
     }
 
     private String firstProjectOnlyProperty(EffectivePropertyResolver properties, Set<String> keys) {
