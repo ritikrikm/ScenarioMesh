@@ -26,7 +26,7 @@ class SchedulerScaleTest {
         Set<String> seen = new HashSet<>();
         long previousEstimate = Long.MAX_VALUE;
         while (scheduler.queued() > 0) {
-            ScenarioTask task = scheduler.nextEligible(ignored -> true);
+            ScenarioTask task = scheduler.nextEligible("test-lane", ignored -> true);
             assertTrue(task != null);
             assertTrue(seen.add(task.id().value()), "duplicate scheduled task " + task.id().value());
             long estimate = Long.parseLong(task.metadata().get("estimatedDurationMillis"));
@@ -44,7 +44,7 @@ class SchedulerScaleTest {
         for (int i = 0; i < 5_000; i++) tasks.add(task("cold-" + i, null));
         scheduler.load(tasks);
         for (int i = 0; i < 5_000; i++) {
-            ScenarioTask task = scheduler.nextEligible(ignored -> true);
+            ScenarioTask task = scheduler.nextEligible("test-lane", ignored -> true);
             assertEquals("cold-" + i, task.id().value());
         }
     }

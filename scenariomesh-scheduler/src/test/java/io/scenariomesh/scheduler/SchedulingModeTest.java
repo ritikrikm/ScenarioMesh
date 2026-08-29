@@ -18,8 +18,8 @@ class SchedulingModeTest {
         ScenarioTask longTask = task("long", 1000);
         scheduler.load(List.of(shortTask, longTask));
 
-        assertEquals(longTask, scheduler.nextEligible(task -> true));
-        assertEquals(shortTask, scheduler.nextEligible(task -> true));
+        assertEquals(longTask, scheduler.nextEligible("test-lane", task -> true));
+        assertEquals(shortTask, scheduler.nextEligible("test-lane", task -> true));
     }
 
     @Test
@@ -29,8 +29,8 @@ class SchedulingModeTest {
         ScenarioTask longTask = task("long", 1000);
         scheduler.load(List.of(shortTask, longTask));
 
-        assertEquals(shortTask, scheduler.nextEligible(task -> true));
-        assertEquals(longTask, scheduler.nextEligible(task -> true));
+        assertEquals(shortTask, scheduler.nextEligible("test-lane", task -> true));
+        assertEquals(longTask, scheduler.nextEligible("test-lane", task -> true));
     }
 
     private ScenarioTask task(String id, long estimateMillis) {

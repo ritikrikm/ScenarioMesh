@@ -23,11 +23,11 @@ class FifoSchedulingStrategyTest {
         ScenarioTask eligible = task("eligible");
         scheduler.load(List.of(blocked, eligible));
 
-        ScenarioTask selected = scheduler.nextEligible(task -> task.id().value().equals("eligible"));
+        ScenarioTask selected = scheduler.nextEligible("test-lane", task -> task.id().value().equals("eligible"));
 
         assertEquals(eligible, selected);
         assertEquals(1, scheduler.queued());
-        assertEquals(blocked, scheduler.nextEligible(task -> true));
+        assertEquals(blocked, scheduler.nextEligible("test-lane", task -> true));
         assertEquals(0, scheduler.queued());
     }
 
@@ -38,9 +38,9 @@ class FifoSchedulingStrategyTest {
         ScenarioTask second = task("second");
         scheduler.load(List.of(first, second));
 
-        assertNull(scheduler.nextEligible(task -> false));
+        assertNull(scheduler.nextEligible("test-lane", task -> false));
         assertEquals(2, scheduler.queued());
-        assertEquals(first, scheduler.nextEligible(task -> true));
+        assertEquals(first, scheduler.nextEligible("test-lane", task -> true));
     }
 
     @Test

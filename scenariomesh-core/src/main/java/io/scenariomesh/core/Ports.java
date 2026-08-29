@@ -99,14 +99,6 @@ public final class Ports {
          */
         ScenarioTask nextEligible(String executionLaneId, Predicate<ScenarioTask> eligible);
 
-        /**
-         * Backward-compatible convenience for callers that do not yet expose a stable lane id.
-         * Production coordinator paths should always call the lane-aware overload.
-         */
-        default ScenarioTask nextEligible(Predicate<ScenarioTask> eligible) {
-            return nextEligible("thread:" + Thread.currentThread().getId(), eligible);
-        }
-
         void requeue(ScenarioTask task);
         int queued();
     }
