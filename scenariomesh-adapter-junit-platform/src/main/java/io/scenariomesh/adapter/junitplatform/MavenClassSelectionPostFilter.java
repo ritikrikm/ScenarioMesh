@@ -12,15 +12,21 @@ import org.junit.platform.launcher.PostDiscoveryFilter;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Applies normalized Maven class selection and optional Surefire class+method selection. */
+/** Applies normalized Maven class selection and Surefire's public class+method predicate. */
 public final class MavenClassSelectionPostFilter implements PostDiscoveryFilter {
     private final DiscoverySelection selection;
     private final SurefireTestSelection testSelection;
 
     public MavenClassSelectionPostFilter(DiscoverySelection selection) {
         this.selection = Objects.requireNonNull(selection, "selection");
-        this.testSelection = selection.hasTestListExpression()
-                ? new SurefireTestSelection(selection.testListExpression()) : null;
+        if (selection.hasTestListExpression()) {
+            this.testSelection = new SurefireTestSelection(selection.testListExpression());
+        } else if (selection.hasConfiguredTestPatterns()) {
+            this.testSelection = new SurefireTestSelection(
+                    selection.includedTestPatterns(), selection.excludedTestPatterns());
+        } else {
+            this.testSelection = null;
+        }
     }
 
     @Override
@@ -28,12 +34,8 @@ public final class MavenClassSelectionPostFilter implements PostDiscoveryFilter 
         Optional<TestSource> source = descriptor.getSource();
         if (source.isEmpty()) return FilterResult.included("descriptor has no class source");
         TestSource value = source.get();
-        if (value instanceof MethodSource methodSource) {
-            return methodResult(methodSource.getClassName(), methodSource.getMethodName());
-        }
-        if (value instanceof ClassSource classSource) {
-            return classResult(classSource.getClassName());
-        }
+        if (value instanceof MethodSource methodSource) return methodResult(methodSource.getClassName(), methodSource.getMethodName());
+        if (value instanceof ClassSource classSource) return classResult(classSource.getClassName());
         return FilterResult.included("non-class test source");
     }
 
