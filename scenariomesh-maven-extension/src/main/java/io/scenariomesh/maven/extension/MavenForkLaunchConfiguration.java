@@ -29,8 +29,10 @@ final class MavenForkLaunchConfiguration {
             Function<String, String> propertyResolver,
             Function<String, String> userPropertyResolver) {
         if (plugin == null) {
-            LaunchSettings defaults = LaunchSettings.defaults();
-            return Analysis.supported(Map.of("default-test", defaults));
+            MutableSettings defaults = new MutableSettings();
+            applyUserOverrides(defaults, executorKind == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE
+                    ? "failsafe" : "surefire", new ArrayList<>(), userPropertyResolver);
+            return Analysis.supported(Map.of("default-test", defaults.freeze()));
         }
 
         List<String> reasons = new ArrayList<>();
@@ -89,14 +91,12 @@ final class MavenForkLaunchConfiguration {
         }
         String value = resolve(node.getValue(), location + " <enableAssertions>", reasons, propertyResolver);
         if (value == null) return;
-        if (value.isBlank()) {
-            settings.enableAssertions = false;
-        } else if ("true".equalsIgnoreCase(value)) {
+        if ("true".equalsIgnoreCase(value.trim())) {
             settings.enableAssertions = true;
-        } else if ("false".equalsIgnoreCase(value)) {
+        } else if ("false".equalsIgnoreCase(value.trim())) {
             settings.enableAssertions = false;
         } else {
-            reasons.add(location + " uses non-boolean <enableAssertions> value; ScenarioMesh will not guess Maven conversion semantics");
+            reasons.add(location + " uses a non-boolean or blank <enableAssertions> value; ScenarioMesh will not guess Maven conversion semantics");
         }
     }
 
@@ -137,7 +137,10 @@ final class MavenForkLaunchConfiguration {
             return;
         }
         String value = resolve(node.getValue(), location + " <workingDirectory>", reasons, propertyResolver);
-        if (value == null) return;
+        if (value == null || value.isBlank()) {
+            reasons.add(location + " uses a blank <workingDirectory>; ScenarioMesh will not guess Maven File conversion semantics");
+            return;
+        }
         String baseDir = propertyResolver.apply("project.basedir");
         if (baseDir == null || baseDir.isBlank()) {
             reasons.add(location + " uses <workingDirectory> but Maven project.basedir is unavailable");
@@ -160,6 +163,18 @@ final class MavenForkLaunchConfiguration {
             if ("true".equalsIgnoreCase(assertions.trim())) settings.enableAssertions = true;
             else if ("false".equalsIgnoreCase(assertions.trim())) settings.enableAssertions = false;
             else reasons.add("Maven user property 'enableAssertions' is non-boolean; ScenarioMesh will not guess Maven conversion semantics");
+        }
+
+        String basedirOverride = userPropertyResolver.apply("basedir");
+        if (basedirOverride != null) {
+            try {
+                Path path = Path.of(basedirOverride.trim());
+                if (!path.isAbsolute()) {
+                    reasons.add("Maven user property 'basedir' is relative; ScenarioMesh will not guess Maven File converter resolution");
+                } else settings.workingDirectory = path.toAbsolutePath().normalize();
+            } catch (RuntimeException invalid) {
+                reasons.add("Maven user property 'basedir' is not a valid path");
+            }
         }
 
         String excluded = userPropertyResolver.apply(executorName + ".excludedEnvironmentVariables");
@@ -201,8 +216,7 @@ final class MavenForkLaunchConfiguration {
     }
 
     private boolean meaningful(Xpp3Dom node) {
-        return (node.getValue() != null && !node.getValue().trim().isEmpty())
-                || node.getChildCount() > 0
+        return node.getValue() != null || node.getChildCount() > 0
                 || (node.getAttributeNames() != null && node.getAttributeNames().length > 0);
     }
 
