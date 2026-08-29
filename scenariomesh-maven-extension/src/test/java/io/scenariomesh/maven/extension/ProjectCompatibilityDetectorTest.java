@@ -83,13 +83,14 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
-    void junit5PlusDirectJUnit4PassesThroughUntilVintageGateIsEnabled() {
+    void directJUnit4IsOnlyACandidateUntilRuntimePreflightProvesVintageOwnership() {
         MavenProject project = project(
                 dependency("org.junit.jupiter", "junit-jupiter"),
                 dependency("junit", "junit"));
         var decision = detector.evaluate(session("test"), project);
-        assertFalse(decision.compatible());
-        assertTrue(decision.reason().contains("generic JUnit 4"), decision.reason());
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals(Set.of("junit-platform"), decision.frameworks());
+        assertTrue(decision.reason().contains("runtime preflight"), decision.reason());
     }
 
     @Test
