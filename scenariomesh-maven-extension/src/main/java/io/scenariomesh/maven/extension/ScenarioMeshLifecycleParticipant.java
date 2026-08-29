@@ -3,6 +3,7 @@ package io.scenariomesh.maven.extension;
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ConfigResolver.ConfigResolution;
 import io.scenariomesh.config.ScenarioMeshConfig;
+import io.scenariomesh.core.MavenOwnershipDiagnostic;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
@@ -42,7 +43,15 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
-        if (booleanProperty(session, "skipTests") || booleanProperty(session, "maven.test.skip")) return;
+        if (booleanProperty(session, "skipTests") || booleanProperty(session, "maven.test.skip")) {
+            for (MavenProject project : session.getProjects()) {
+                if (!"pom".equals(project.getPackaging())) {
+                    diagnostic(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project,
+                            "none", "none", "tests were explicitly skipped by Maven");
+                }
+            }
+            return;
+        }
         Map<String, String> configProperties = stringProperties(session.getSystemProperties());
         configProperties.putAll(stringProperties(session.getUserProperties()));
 
@@ -62,12 +71,16 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             }
 
             if (!config.enabled()) {
+                diagnostic(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project,
+                        "none", "none", "ScenarioMesh configuration is disabled");
                 info("ScenarioMesh: disabled for " + project.getArtifactId() + "; normal Maven execution remains active.");
                 continue;
             }
 
             ProjectCompatibilityDetector.CompatibilityDecision decision = compatibilityDetector.evaluate(session, project);
             if (!decision.compatible()) {
+                diagnostic(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project,
+                        "none", "none", decision.reason());
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + decision.reason());
                 continue;
             }
@@ -82,6 +95,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                     effectiveProperties::resolve,
                     effectiveProperties::userProperty);
             if (!launchAnalysis.supported()) {
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision,
+                        "Maven fork launch configuration cannot be reproduced safely: " + launchAnalysis.reason());
                 info("ScenarioMesh: pass-through for " + project.getArtifactId()
                         + " - Maven fork launch configuration cannot be reproduced safely: " + launchAnalysis.reason());
                 continue;
@@ -90,6 +105,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             DownstreamLifecycleCompatibility.Analysis lifecycleAnalysis =
                     downstreamLifecycleCompatibility.analyze(project, decision.executorKind());
             if (!lifecycleAnalysis.supported()) {
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, lifecycleAnalysis.reason());
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + lifecycleAnalysis.reason());
                 continue;
             }
@@ -97,13 +113,15 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             String reportInvocationId = UUID.randomUUID().toString();
             DownstreamReportCompatibility.Analysis reportAnalysis = downstreamReportCompatibility.prepare(project, reportInvocationId);
             if (reportAnalysis.present() && !reportAnalysis.supported()) {
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, reportAnalysis.reason());
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + reportAnalysis.reason());
                 continue;
             }
             if (reportAnalysis.present() && decision.executorPlans().size() > 1) {
-                info("ScenarioMesh: pass-through for " + project.getArtifactId()
-                        + " - multiple Maven test executions are reproducible, but the detected downstream report consumer "
-                        + "has a single mutable input directory; ScenarioMesh will not merge distinct execution reports implicitly.");
+                String reason = "multiple Maven test executions are reproducible, but the detected downstream report consumer "
+                        + "has a single mutable input directory; ScenarioMesh will not merge distinct execution reports implicitly";
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, reason);
+                info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + reason + ".");
                 continue;
             }
 
@@ -147,6 +165,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         Xpp3Dom preflightConfig = new Xpp3Dom("configuration");
         addValue(preflightConfig, "takeoverExecutor", decision.executorKind().name().toLowerCase());
         addValue(preflightConfig, "knownModelFramework", Boolean.toString(!decision.frameworks().isEmpty()));
+        addList(preflightConfig, "takeoverExecutionIds", "executionId",
+                decision.executorPlans().stream().map(ProjectCompatibilityDetector.ExecutorPlan::executionId).toList());
         if (decision.executorPlans().size() == 1) {
             ProjectCompatibilityDetector.ExecutorPlan plan = decision.executorPlans().get(0);
             addList(preflightConfig, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
@@ -261,6 +281,27 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             map.addChild(item);
         });
         root.addChild(map);
+    }
+
+    private void diagnosePlans(MavenOwnershipDiagnostic.Owner owner,
+                               MavenProject project,
+                               ProjectCompatibilityDetector.CompatibilityDecision decision,
+                               String reason) {
+        if (decision.executorPlans().isEmpty()) {
+            diagnostic(owner, project, decision.executorKind().name().toLowerCase(), "none", reason);
+            return;
+        }
+        for (ProjectCompatibilityDetector.ExecutorPlan plan : decision.executorPlans()) {
+            diagnostic(owner, project, decision.executorKind().name().toLowerCase(), plan.executionId(), reason);
+        }
+    }
+
+    private void diagnostic(MavenOwnershipDiagnostic.Owner owner,
+                            MavenProject project,
+                            String executor,
+                            String execution,
+                            String reason) {
+        info(MavenOwnershipDiagnostic.format(owner, project.getArtifactId(), executor, execution, reason));
     }
 
     private boolean booleanProperty(MavenSession session, String key) {
