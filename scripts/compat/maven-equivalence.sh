@@ -28,10 +28,17 @@ if [ ! -f "$extension_file" ]; then
   exit 2
 fi
 
+run_contract() {
+  CONTRACT_ENV=equivalence-env \
+  CONTRACT_EXCLUDED=inherited-excluded \
+  CONTRACT_OVERLAY=inherited-overlay \
+  mvn -B clean test "$@"
+}
+
 mv "$extension_file" "$extension_backup"
 (
   cd "$project_dir"
-  CONTRACT_ENV=equivalence-env mvn -B clean test "$@"
+  run_contract "$@"
 )
 test -f "$trace_file"
 sort "$trace_file" > "$native_trace"
@@ -39,7 +46,7 @@ sort "$trace_file" > "$native_trace"
 mv "$extension_backup" "$extension_file"
 (
   cd "$project_dir"
-  CONTRACT_ENV=equivalence-env mvn -B clean test "$@"
+  run_contract "$@"
 )
 test -f "$trace_file"
 sort "$trace_file" > "$mesh_trace"
