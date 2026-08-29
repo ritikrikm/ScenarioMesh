@@ -58,3 +58,14 @@ jobs:
         run: |
           bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
             -Pselection-files -Dcontract.value=cli
+      - name: Native and ScenarioMesh fork process context is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            -Pfork-context -Dtest=AlphaContractTest -Dcontract.value=cli -Dcontract.precedence=cli
+          grep -Fq 'precedence=cli' examples/maven-equivalence-example/target/maven-equivalence-events.log
+          grep -Fq 'configured=configured-value' examples/maven-equivalence-example/target/maven-equivalence-events.log
+          grep -Fq 'excluded=null' examples/maven-equivalence-example/target/maven-equivalence-events.log
+          grep -Fq 'overlay=configured-overlay' examples/maven-equivalence-example/target/maven-equivalence-events.log
+          grep -Fq 'empty=' examples/maven-equivalence-example/target/maven-equivalence-events.log
+          grep -Fq 'assertions=false' examples/maven-equivalence-example/target/maven-equivalence-events.log
+          grep -Fq 'cwd='"$(cd examples/maven-equivalence-example/target && pwd)" examples/maven-equivalence-example/target/maven-equivalence-events.log
