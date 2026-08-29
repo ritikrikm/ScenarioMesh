@@ -89,7 +89,7 @@ class ProjectCompatibilityDetectorTest {
                 dependency("junit", "junit"));
         var decision = detector.evaluate(session("test"), project);
         assertTrue(decision.compatible(), decision.reason());
-        assertEquals(Set.of("junit-platform", "junit4-vintage"), decision.frameworks());
+        assertEquals(Set.of("junit-platform"), decision.frameworks());
         assertTrue(decision.reason().contains("runtime preflight"), decision.reason());
     }
 
