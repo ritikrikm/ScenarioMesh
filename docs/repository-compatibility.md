@@ -156,7 +156,7 @@ If ScenarioMesh cannot reproduce the semantics safely, the correct behavior is p
 
 ## 7. Important current Failsafe/Surefire safety behavior
 
-The current MVP deliberately treats compatibility conservatively. Supported settings are translated into typed ScenarioMesh execution settings rather than copied as arbitrary maps.
+The current product deliberately treats compatibility conservatively. Supported settings are translated into typed ScenarioMesh execution settings rather than copied as arbitrary maps.
 
 For example:
 
@@ -390,7 +390,7 @@ The scheduler does not contain Cucumber, Maven, ProcessBuilder, or TestNG logic.
 - browser/capability-aware assignment;
 - historical failure-aware ordering.
 
-Those are future strategies, not claims that the current MVP already implements them.
+Those are future strategies, not claims that the current product already implements them.
 
 ## 17. Logging/reporting compatibility
 
@@ -433,7 +433,7 @@ CI provider-specific behavior should not be hard-coded into scheduler/core modul
 
 ## 19. Current supported path summary
 
-The current MVP is intended to support, within the implemented compatibility checks:
+The current product is intended to support, within the implemented compatibility checks:
 
 - Maven lifecycle integration through the ScenarioMesh extension/plugin architecture;
 - standard Maven commands rather than a mandatory wrapper command;
@@ -453,9 +453,9 @@ The current MVP is intended to support, within the implemented compatibility che
 
 "Supported" is always subject to the actual effective Maven/framework semantics being within the implementation's compatibility envelope. ScenarioMesh should not claim support merely because the repository contains a named dependency.
 
-## 20. Not currently guaranteed / deliberate MVP boundaries
+## 20. Not currently guaranteed / deliberate product boundaries
 
-The MVP does not claim universal support for:
+The product does not claim universal support for:
 
 - Gradle lifecycle integration;
 - arbitrary proprietary test frameworks without an adapter;

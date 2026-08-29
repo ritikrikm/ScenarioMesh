@@ -43,7 +43,7 @@ final class ProjectCompatibilityDetector {
         FrameworkSignals frameworks = detectFrameworks(project);
         if (frameworks.directJUnit4() && !frameworks.cucumberJUnit4()) {
             return CompatibilityDecision.passThrough(
-                    "generic JUnit 4 is present, but the MVP only supports JUnit 4 through the Cucumber JUnit 4 adapter");
+                    "generic JUnit 4 is present, but the current product only supports JUnit 4 through the Cucumber JUnit 4 adapter");
         }
         if (properties.present("groups") || properties.present("excludedGroups")) {
             return CompatibilityDecision.passThrough(

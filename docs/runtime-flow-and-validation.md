@@ -54,7 +54,7 @@ This document describes the **current implemented behavior** on `agent/mvp-runti
 ║    testng owner is signaled by:                                              ║
 ║      org.testng:testng                                                       ║
 ║                                                                              ║
-║ D. Generic direct JUnit 4 is NOT supported by the MVP.                       ║
+║ D. Generic direct JUnit 4 is NOT supported by the current product.           ║
 ║    If direct junit:junit is present without Cucumber JUnit4, pass through.   ║
 ║                                                                              ║
 ║ E. More than ONE supported owner is currently treated as ambiguous.          ║
@@ -117,7 +117,7 @@ This document describes the **current implemented behavior** on `agent/mvp-runti
 ║        └─> testng adapter                                                     ║
 ║                                                                              ║
 ║   Generic JUnit 4 without Cucumber                                            ║
-║        └─> NOT supported by current MVP                                       ║
+║        └─> NOT supported by current product                                    ║
 ║                                                                              ║
 ║ AUTO mode behavior:                                                          ║
 ║                                                                              ║

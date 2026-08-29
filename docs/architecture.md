@@ -2,7 +2,7 @@
 
 ## Current product boundary
 
-The original MVP slice has grown into the current product surface. ScenarioMesh now includes transparent Maven execution, distributed worker ownership, negotiated protocol compatibility, history-aware scheduling, reporting, diagnostics, and CLI tooling. The remaining roadmap still covers daemonization, deeper recycling policies, advanced orchestration targets, and broader framework coverage.
+The original minimal slice has grown into the current product surface. ScenarioMesh now includes transparent Maven execution, distributed worker ownership, negotiated protocol compatibility, history-aware scheduling, reporting, diagnostics, and CLI tooling. The remaining roadmap still covers daemonization, deeper recycling policies, advanced orchestration targets, and broader framework coverage.
 
 ## Dependency direction
 
@@ -10,7 +10,7 @@ The original MVP slice has grown into the current product surface. ScenarioMesh 
 
 ## Discovery
 
-The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucumber running on JUnit Platform is therefore discovered by its own engine. The legacy Cucumber/JUnit 4 adapter asks JUnit for the Cucumber runner's `Description` tree and schedules executable leaf tests; it does not parse `.feature` files and it does not assume one runner equals one scenario. A generated runner is treated as an execution container. If different runners expose the same framework description identity, the MVP fails discovery as ambiguous rather than silently duplicating or dropping execution. TestNG MVP discovery is limited to standard method-level `@Test` classes.
+The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucumber running on JUnit Platform is therefore discovered by its own engine. The legacy Cucumber/JUnit 4 adapter asks JUnit for the Cucumber runner's `Description` tree and schedules executable leaf tests; it does not parse `.feature` files and it does not assume one runner equals one scenario. A generated runner is treated as an execution container. If different runners expose the same framework description identity, the product fails discovery as ambiguous rather than silently duplicating or dropping execution. TestNG discovery is limited to standard method-level `@Test` classes.
 
 ## Isolation and scheduling
 

@@ -19,7 +19,7 @@ The same precedence is used everywhere ScenarioMesh resolves configuration:
 
 Command-line properties are therefore suitable for one-off CI/local overrides without editing the repository file.
 
-## Complete MVP configuration
+## Complete product configuration
 
 ```yaml
 scenariomesh:
@@ -107,7 +107,7 @@ Equivalent override: `-Dscenariomesh.execution.adapterMismatchPolicy=use-detecte
 
 Equivalent override: `-Dscenariomesh.workers.count=8`.
 
-For backward compatibility, the earlier MVP property `-Dscenariomesh.workers=8` remains an alias.
+For backward compatibility, the earlier compatibility property `-Dscenariomesh.workers=8` remains an alias.
 
 ### `workers.startupTimeout`
 

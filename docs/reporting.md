@@ -67,4 +67,4 @@ These values are also emitted into `summary.json` so CI/reporting integrations c
 
 ## Future measured baseline mode
 
-A future benchmark-only mode may deliberately execute an explicit sequential control run and compare it with a ScenarioMesh run. Such a mode must be opt-in because repeating stateful integration scenarios can be unsafe and expensive. It is not part of the normal MVP execution path.
+A future benchmark-only mode may deliberately execute an explicit sequential control run and compare it with a ScenarioMesh run. Such a mode must be opt-in because repeating stateful integration scenarios can be unsafe and expensive. It is not part of the normal product execution path.

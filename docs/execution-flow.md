@@ -447,7 +447,7 @@ Worker output can independently be streamed to the Maven/Jenkins console and/or 
 
 ### Current scheduling strategy: dynamic FIFO
 
-The current MVP supports FIFO dynamic assignment.
+The current product supports FIFO dynamic assignment.
 
 ```text
 queue: Task1 Task2 Task3 Task4 Task5 Task6 ...
