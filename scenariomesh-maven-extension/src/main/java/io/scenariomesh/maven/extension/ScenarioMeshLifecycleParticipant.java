@@ -14,7 +14,9 @@ import org.codehaus.plexus.component.annotations.Requirement;
 import org.codehaus.plexus.logging.Logger;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +30,11 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private static final String PREFLIGHT_EXECUTION_ID = "scenariomesh-preflight";
     private static final String RUN_EXECUTION_ID = "scenariomesh-run";
     private static final String VERIFY_EXECUTION_ID = "scenariomesh-verify";
+    private static final String SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin";
+    private static final String FAILSAFE = "org.apache.maven.plugins:maven-failsafe-plugin";
 
     private final ProjectCompatibilityDetector compatibilityDetector = new ProjectCompatibilityDetector();
+    private final MavenForkLaunchConfiguration forkLaunchConfiguration = new MavenForkLaunchConfiguration();
     private final DownstreamReportCompatibility downstreamReportCompatibility = new DownstreamReportCompatibility();
     private final DownstreamLifecycleCompatibility downstreamLifecycleCompatibility = new DownstreamLifecycleCompatibility();
     private final ConfigResolver configResolver = new ConfigResolver();
@@ -67,6 +72,21 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
+            EffectivePropertyResolver effectiveProperties = new EffectivePropertyResolver(session, project);
+            Plugin nativeExecutor = project.getPlugin(
+                    decision.executorKind() == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE ? FAILSAFE : SUREFIRE);
+            MavenForkLaunchConfiguration.Analysis launchAnalysis = forkLaunchConfiguration.analyze(
+                    nativeExecutor,
+                    decision.executorKind(),
+                    decision.executorPlans().stream().map(ProjectCompatibilityDetector.ExecutorPlan::executionId).toList(),
+                    effectiveProperties::resolve,
+                    effectiveProperties::userProperty);
+            if (!launchAnalysis.supported()) {
+                info("ScenarioMesh: pass-through for " + project.getArtifactId()
+                        + " - Maven fork launch configuration cannot be reproduced safely: " + launchAnalysis.reason());
+                continue;
+            }
+
             DownstreamLifecycleCompatibility.Analysis lifecycleAnalysis =
                     downstreamLifecycleCompatibility.analyze(project, decision.executorKind());
             if (!lifecycleAnalysis.supported()) {
@@ -87,11 +107,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
-            // Do NOT suppress Surefire/Failsafe while projects are merely being read. Test classes
-            // do not exist yet, so dynamic engine ownership cannot be proven here. A dedicated
-            // process-test-classes preflight will suppress the native executor only after runtime
-            // backend/engine discovery succeeds. If preflight cannot prove ownership, Maven stays native.
-            injectScenarioMesh(project, decision, reportInvocationId, reportAnalysis.runtimeProperties());
+            injectScenarioMesh(project, decision, launchAnalysis, reportInvocationId, reportAnalysis.runtimeProperties());
             String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
             info("ScenarioMesh: takeover candidate for " + project.getArtifactId()
                     + " (executor=" + decision.executorKind().name().toLowerCase()
@@ -110,6 +126,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private void injectScenarioMesh(
             MavenProject project,
             ProjectCompatibilityDetector.CompatibilityDecision decision,
+            MavenForkLaunchConfiguration.Analysis launchAnalysis,
             String singlePlanInvocationId,
             Map<String, String> downstreamRuntimeProperties) {
         Plugin plugin = project.getPlugin(GROUP_ID + ":" + PLUGIN_ARTIFACT_ID);
@@ -121,15 +138,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             project.getBuild().addPlugin(plugin);
         }
 
-        // Remove only ScenarioMesh-managed execution IDs so a repeated model mutation cannot
-        // leave stale plans behind. User Maven executions are never altered here.
         plugin.getExecutions().removeIf(execution -> isManagedExecutionId(execution.getId()));
 
-        // One project-wide preflight deliberately evaluates every selected runtime family before
-        // setting Maven's global skipTests/skipITs flag. For the common single-plan case we pass
-        // the exact same class-selection boundary into preflight and execution. Multi-execution
-        // projects remain deliberately conservative: preflight sees the full compiled test universe
-        // until each Maven execution can be probed independently without globally suppressing another.
         PluginExecution preflight = new PluginExecution();
         preflight.setId(PREFLIGHT_EXECUTION_ID);
         preflight.setPhase("process-test-classes");
@@ -142,6 +152,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             addList(preflightConfig, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
             addList(preflightConfig, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
             addMap(preflightConfig, "executorSystemProperties", plan.executorSystemProperties());
+            addLaunchConfiguration(preflightConfig, launchAnalysis.required(plan.executionId()));
         }
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);
@@ -156,7 +167,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             run.setId(RUN_EXECUTION_ID + suffix);
             run.setPhase(decision.takeoverPhase());
             run.addGoal("run");
-            run.setConfiguration(runConfiguration(decision, plan, invocationId,
+            run.setConfiguration(runConfiguration(decision, plan, launchAnalysis.required(plan.executionId()), invocationId,
                     single ? downstreamRuntimeProperties : Map.of()));
             plugin.addExecution(run);
 
@@ -187,6 +198,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private Xpp3Dom runConfiguration(
             ProjectCompatibilityDetector.CompatibilityDecision decision,
             ProjectCompatibilityDetector.ExecutorPlan plan,
+            MavenForkLaunchConfiguration.LaunchSettings launchSettings,
             String invocationId,
             Map<String, String> downstreamRuntimeProperties) {
         Xpp3Dom root = new Xpp3Dom("configuration");
@@ -200,7 +212,27 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         Map<String, String> systemProperties = new LinkedHashMap<>(plan.executorSystemProperties());
         systemProperties.putAll(downstreamRuntimeProperties);
         addMap(root, "executorSystemProperties", systemProperties);
+        addLaunchConfiguration(root, launchSettings);
         return root;
+    }
+
+    private void addLaunchConfiguration(Xpp3Dom root, MavenForkLaunchConfiguration.LaunchSettings settings) {
+        addValue(root, "enableAssertions", Boolean.toString(settings.enableAssertions()));
+        if (!settings.environmentVariables().isEmpty()) {
+            List<String> entries = settings.environmentVariables().entrySet().stream()
+                    .map(entry -> encode(entry.getKey()) + ":" + encode(entry.getValue()))
+                    .toList();
+            addList(root, "executorEnvironmentEntries", "entry", entries);
+        }
+        addList(root, "excludedEnvironmentVariables", "name", settings.excludedEnvironmentVariables().stream().toList());
+        if (settings.workingDirectory() != null) {
+            addValue(root, "executorWorkingDirectory", settings.workingDirectory().toString());
+        }
+    }
+
+    private String encode(String value) {
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private void addValue(Xpp3Dom root, String name, String value) {
