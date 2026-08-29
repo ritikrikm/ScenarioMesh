@@ -1,12 +1,13 @@
 package io.scenariomesh.workerruntime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
-import org.junit.platform.engine.UniqueId;
+import io.scenariomesh.core.TaskMetadata;
 
+import java.io.BufferedWriter;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -14,10 +15,13 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 
 /** Runs Maven ownership preflight inside the exact JVM selected for target tests. */
 public final class PreflightProbeMain {
+    private static final String SET_SEPARATOR = "\u001f";
+
     private PreflightProbeMain() {}
 
     public static void main(String[] args) throws Exception {
@@ -39,10 +43,50 @@ public final class PreflightProbeMain {
         RuntimeRequirements requirements = runtimeRequirements(context, registry);
 
         Files.createDirectories(parsed.output.getParent());
-        ObjectMapper mapper = JsonCodec.create();
-        mapper.writerWithDefaultPrettyPrinter().writeValue(parsed.output.toFile(),
-                new ProbeResult(inventory.ownership().name(), inventory.summary(),
-                        requirements.adapterIds(), requirements.engineIds()));
+        writeResult(parsed.output, new ProbeResult(
+                inventory.ownership().name(), inventory.summary(),
+                requirements.adapterIds(), requirements.engineIds()));
+    }
+
+    /**
+     * The preflight bootstrap deliberately uses only JDK classes for its result format. The target
+     * project is allowed to carry any Jackson version; that dependency must never determine whether
+     * ScenarioMesh can report the outcome of its own ownership probe.
+     */
+    public static void writeResult(Path output, ProbeResult result) throws Exception {
+        Properties values = new Properties();
+        values.setProperty("ownership", result.ownership());
+        values.setProperty("summary", result.summary() == null ? "" : result.summary());
+        values.setProperty("requiredAdapterIds", String.join(SET_SEPARATOR, result.requiredAdapterIds()));
+        values.setProperty("requiredEngineIds", String.join(SET_SEPARATOR, result.requiredEngineIds()));
+        try (BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8)) {
+            values.store(writer, "ScenarioMesh selected-JVM ownership probe");
+        }
+    }
+
+    public static ProbeResult readResult(Path input) throws Exception {
+        Properties values = new Properties();
+        try (var reader = Files.newBufferedReader(input, StandardCharsets.UTF_8)) {
+            values.load(reader);
+        }
+        return new ProbeResult(
+                require(values, "ownership"),
+                values.getProperty("summary", ""),
+                splitSet(values.getProperty("requiredAdapterIds", "")),
+                splitSet(values.getProperty("requiredEngineIds", "")));
+    }
+
+    private static Set<String> splitSet(String value) {
+        if (value == null || value.isBlank()) return Set.of();
+        return Set.of(value.split(SET_SEPARATOR, -1));
+    }
+
+    private static String require(Properties values, String key) {
+        String value = values.getProperty(key);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("Preflight result is missing required field '" + key + "'");
+        }
+        return value;
     }
 
     static RuntimeRequirements runtimeRequirements(AdapterContext context, AdapterRegistry registry) throws Exception {
@@ -54,12 +98,12 @@ public final class PreflightProbeMain {
             adapterIds.add(adapter.id());
             if ("junit-platform".equals(adapter.id())) {
                 for (ScenarioTask task : tasks) {
-                    try {
-                        UniqueId.parse(task.selector()).getEngineId().ifPresent(engineIds::add);
-                    } catch (RuntimeException exception) {
-                        throw new IllegalStateException("Selected JUnit Platform task has an invalid UniqueId selector: "
-                                + task.selector(), exception);
+                    String engineId = task.metadata().get(TaskMetadata.REQUIRED_ENGINE_ID);
+                    if (engineId == null || engineId.isBlank()) {
+                        throw new IllegalStateException("Selected JUnit Platform task did not publish a required engine id: "
+                                + task.selector());
                     }
+                    engineIds.add(engineId);
                 }
             }
         }
