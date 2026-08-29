@@ -1,6 +1,7 @@
 package io.scenariomesh.coordinator;
 
 import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 import io.scenariomesh.workerruntime.WorkerMain;
 
 import java.io.File;
@@ -28,8 +29,7 @@ final class JavaProcessSupport {
         command.addAll(jvmArgs);
         properties.entrySet().stream()
                 .filter(entry -> !RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY.equals(entry.getKey()))
-                .filter(entry -> !WorkerMain.class.getName().equals(mainClass)
-                        || !entry.getKey().startsWith(RuntimePropertyNames.INTERNAL_PREFIX))
+                .filter(entry -> workerBootstrapPropertyAllowed(mainClass, entry.getKey()))
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
         command.add("-cp");
@@ -40,6 +40,15 @@ final class JavaProcessSupport {
         command.add(mainClass);
         command.addAll(args);
         return command;
+    }
+
+    private static boolean workerBootstrapPropertyAllowed(String mainClass, String propertyName) {
+        if (!WorkerMain.class.getName().equals(mainClass)) return true;
+        if (!propertyName.startsWith(RuntimePropertyNames.INTERNAL_PREFIX)) return true;
+        // The target classpath is a one-time worker bootstrap handoff. WorkerMain decodes and
+        // clears it before adapter discovery/execution, so target tests cannot observe it.
+        // Every other ScenarioMesh-internal property remains excluded from the target worker.
+        return TargetClasspathDescriptor.SYSTEM_PROPERTY.equals(propertyName);
     }
 
     static List<String> command(Path javaExecutable,
