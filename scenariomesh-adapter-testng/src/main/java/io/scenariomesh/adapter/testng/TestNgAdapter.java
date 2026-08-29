@@ -29,11 +29,13 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public final class TestNgAdapter implements ScenarioAdapter {
@@ -73,6 +75,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
                     .map(this::suiteTask)
                     .toList();
         }
+        GroupSelection groupSelection = GroupSelection.from(context.properties());
         List<ScenarioTask> tasks = new ArrayList<>();
         List<String> inspectionFailures = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -92,7 +95,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
                     if (!context.discoverySelection().matchesClassName(className)) continue;
                     try {
                         Class<?> candidate = Class.forName(className, false, context.classLoader());
-                        discoverMethods(candidate, tasks, seen);
+                        discoverMethods(candidate, tasks, seen, groupSelection);
                     } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
                         inspectionFailures.add(className + " -> " + message(exception));
                     }
@@ -119,7 +122,8 @@ public final class TestNgAdapter implements ScenarioAdapter {
                 "suite:" + suiteXmlFile, Set.of(), Map.copyOf(metadata));
     }
 
-    private void discoverMethods(Class<?> candidate, List<ScenarioTask> tasks, Set<String> seen) {
+    private void discoverMethods(Class<?> candidate, List<ScenarioTask> tasks, Set<String> seen,
+                                 GroupSelection groupSelection) {
         rejectUnsupportedClassSemantics(candidate);
 
         Test classAnnotation = candidate.getAnnotation(Test.class);
@@ -139,6 +143,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
                         "TestNG dependency ordering is not yet supported safely for isolated method execution: "
                                 + candidate.getName() + "." + method.getName());
             }
+            if (!groupSelection.includes(annotation.groups())) continue;
 
             String selector = candidate.getName() + "#" + method.toGenericString();
             if (!seen.add(selector)) continue;
@@ -147,8 +152,6 @@ public final class TestNgAdapter implements ScenarioAdapter {
             metadata.put("className", candidate.getName());
             metadata.put("methodName", method.getName());
             metadata.put("enabled", Boolean.toString(annotation.enabled()));
-            // Even simple TestNG methods can share class/static state. Keep a class on one execution lane;
-            // richer suite/context semantics remain fail-closed below until they can be reproduced exactly.
             metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-class:" + candidate.getName());
             metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-class");
             tasks.add(new ScenarioTask(
@@ -234,11 +237,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
         testNg.setUseDefaultListeners(false);
         testNg.setVerbose(0);
         testNg.setTestClasses(new Class<?>[]{clazz});
-
-        String groups = context.properties().get("groups");
-        String excludedGroups = context.properties().get("excludedGroups");
-        if (groups != null && !groups.isBlank()) testNg.setGroups(groups);
-        if (excludedGroups != null && !excludedGroups.isBlank()) testNg.setExcludedGroups(excludedGroups);
+        applyGroupSelection(testNg, context.properties());
 
         testNg.setMethodInterceptor(new ExactMethodInterceptor(generic));
         CapturingListener listener = new CapturingListener();
@@ -267,6 +266,7 @@ public final class TestNgAdapter implements ScenarioAdapter {
         testNg.setUseDefaultListeners(false);
         testNg.setVerbose(0);
         testNg.setTestSuites(List.of(suiteXmlFile));
+        applyGroupSelection(testNg, context.properties());
         SuiteCapturingListener listener = new SuiteCapturingListener();
         testNg.addListener((ITestListener) listener);
         testNg.addListener((IConfigurationListener) listener);
@@ -404,6 +404,53 @@ public final class TestNgAdapter implements ScenarioAdapter {
     private static String message(Throwable throwable) {
         String detail = throwable.getMessage();
         return detail == null || detail.isBlank() ? throwable.getClass().getName() : detail;
+    }
+
+    private static void applyGroupSelection(TestNG testNg, Map<String, String> properties) {
+        String groups = properties.get("groups");
+        String excludedGroups = properties.get("excludedGroups");
+        if (groups != null && !groups.isEmpty()) testNg.setGroups(groups);
+        if (excludedGroups != null && !excludedGroups.isEmpty()) testNg.setExcludedGroups(excludedGroups);
+    }
+
+    /**
+     * Mirrors TestNG's public group-selection behavior without depending on TestNG internals:
+     * comma-separated values are trimmed, each entry is a full Java regular expression, '$' is
+     * literal unless already escaped, and excluded groups win over included groups. TestNG method
+     * dependencies are rejected above, so no group dependency closure needs to be recreated here.
+     */
+    private record GroupSelection(List<Pattern> included, List<Pattern> excluded) {
+        private static GroupSelection from(Map<String, String> properties) {
+            return new GroupSelection(patterns(properties.get("groups")),
+                    patterns(properties.get("excludedGroups")));
+        }
+
+        private boolean includes(String[] groups) {
+            boolean includedByGroup = included.isEmpty() || matches(included, groups);
+            return includedByGroup && !matches(excluded, groups);
+        }
+
+        private static boolean matches(List<Pattern> patterns, String[] groups) {
+            for (String group : groups) {
+                for (Pattern pattern : patterns) {
+                    if (pattern.matcher(group).matches()) return true;
+                }
+            }
+            return false;
+        }
+
+        private static List<Pattern> patterns(String raw) {
+            if (raw == null || raw.isEmpty()) return List.of();
+            return Arrays.stream(raw.split(",", -1))
+                    .map(String::trim)
+                    .map(GroupSelection::asTestNgRegexp)
+                    .map(Pattern::compile)
+                    .toList();
+        }
+
+        private static String asTestNgRegexp(String group) {
+            return group.contains("\\$") ? group : group.replace("$", "\\$");
+        }
     }
 
     private static final class ExactMethodInterceptor implements IMethodInterceptor {
