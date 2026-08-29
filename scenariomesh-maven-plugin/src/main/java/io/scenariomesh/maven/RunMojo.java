@@ -184,7 +184,7 @@ public final class RunMojo extends AbstractMojo {
         Base64.Decoder decoder = Base64.getUrlDecoder();
         for (String encoded : encodedEntries) {
             int separator = encoded == null ? -1 : encoded.indexOf(':');
-            if (separator <= 0 || separator == encoded.length() - 1) {
+            if (separator <= 0) {
                 throw new IllegalArgumentException("Invalid internal Maven environment entry encoding");
             }
             String key = new String(decoder.decode(encoded.substring(0, separator)), StandardCharsets.UTF_8);
