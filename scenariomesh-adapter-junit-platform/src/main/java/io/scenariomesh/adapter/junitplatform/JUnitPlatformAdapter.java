@@ -86,8 +86,9 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             }
         }
 
+        List<TestIdentifier> mergedCandidates = new DiscoveredExecutionMerger().merge(candidates);
         List<ScenarioTask> tasks = new ArrayList<>();
-        for (TestIdentifier identifier : candidates) {
+        for (TestIdentifier identifier : mergedCandidates) {
             ExecutionScope scope = executionScope(plan, identifier);
             tasks.add(taskFor(identifier, scope, null));
         }
