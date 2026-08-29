@@ -46,6 +46,22 @@ public record RunRequest(Path projectDirectory,
                 .toAbsolutePath().normalize();
     }
 
+    /** Backward-compatible constructor for callers already using split control/target classpaths. */
+    public RunRequest(Path projectDirectory,
+                      List<Path> runtimeClasspath,
+                      List<Path> controlClasspath,
+                      List<Path> testRoots,
+                      Map<String,String> userProperties,
+                      ScenarioMeshConfig config,
+                      DiscoverySelection discoverySelection,
+                      List<String> executorJvmArgs,
+                      Map<String,String> executorSystemProperties,
+                      Path javaExecutable) {
+        this(projectDirectory, runtimeClasspath, controlClasspath, testRoots, userProperties, config,
+                discoverySelection, executorJvmArgs, executorSystemProperties, javaExecutable,
+                true, Map.of(), Set.of(), projectDirectory);
+    }
+
     /** Backward-compatible constructor used by integrations that still provide one mixed classpath. */
     public RunRequest(Path projectDirectory,
                       List<Path> runtimeClasspath,
@@ -92,8 +108,6 @@ public record RunRequest(Path projectDirectory,
     List<String> effectiveJvmArgs(){
         List<String> result=new ArrayList<>(config.workerJvmArgs());
         result.addAll(executorJvmArgs);
-        // JavaProcessSupport preserves the long-standing Surefire default by adding -ea.
-        // A later -da has the same effective assertion state as Surefire enableAssertions=false.
         if (!enableAssertions) result.add("-da");
         return List.copyOf(result);
     }
