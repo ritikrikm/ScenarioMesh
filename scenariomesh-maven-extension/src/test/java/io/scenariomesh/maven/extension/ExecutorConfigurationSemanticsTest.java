@@ -15,14 +15,24 @@ class ExecutorConfigurationSemanticsTest {
     }
 
     @Test
+    void implementedClasspathFeaturesAreRoutedToScenarioMeshOwner() {
+        assertEquals(ExecutorConfigurationSemantics.Kind.REPLACED_BY_SCENARIOMESH,
+                ExecutorConfigurationSemantics.forSurefire("additionalClasspathElements").kind());
+        assertEquals(ExecutorConfigurationSemantics.Kind.REPLACED_BY_SCENARIOMESH,
+                ExecutorConfigurationSemantics.forSurefire("classpathDependencyExcludes").kind());
+        assertEquals(ExecutorConfigurationSemantics.Kind.REPLACED_BY_SCENARIOMESH,
+                ExecutorConfigurationSemantics.forFailsafe("classpathDependencyScopeExclude").kind());
+    }
+
+    @Test
     void knownUnsupportedFeaturesNameTheirRequiredCapability() {
         var groups = ExecutorConfigurationSemantics.forFailsafe("groups");
         assertEquals(ExecutorConfigurationSemantics.Kind.REQUIRES_CAPABILITY, groups.kind());
         assertEquals("framework-group-selection", groups.capability());
 
-        var classpath = ExecutorConfigurationSemantics.forSurefire("additionalClasspathDependencies");
-        assertEquals(ExecutorConfigurationSemantics.Kind.REQUIRES_CAPABILITY, classpath.kind());
-        assertEquals("executor-classpath-extension", classpath.capability());
+        var scan = ExecutorConfigurationSemantics.forSurefire("dependenciesToScan");
+        assertEquals(ExecutorConfigurationSemantics.Kind.REQUIRES_CAPABILITY, scan.kind());
+        assertEquals("dependency-test-scanning", scan.capability());
     }
 
     @Test
