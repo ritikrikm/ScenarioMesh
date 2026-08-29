@@ -6,6 +6,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
+import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
 import io.scenariomesh.core.TaskMetadata;
 import junit.framework.TestCase;
@@ -14,6 +15,7 @@ import org.junit.runner.Description;
 import org.junit.runner.JUnitCore;
 import org.junit.runner.Request;
 import org.junit.runner.Result;
+import org.junit.runner.notification.Failure;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
@@ -63,6 +65,7 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
                 metadata.put("runnerClass", runner.getName());
                 metadata.put("frameworkDescription", leaf.semanticKey());
                 metadata.put("executionIdentity", selector);
+                metadata.put(TaskMetadata.RUNTIME_MATERIALIZER, "true");
                 metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, featureScopeId(runner, leaf));
                 metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "cucumber-feature");
                 tasks.add(new ScenarioTask(
@@ -91,10 +94,35 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         Class<?> runnerClass = Class.forName(selector.runnerClass(), false, context.classLoader());
         return jsonReportIsolation.execute(
                 task, context, runnerClass,
-                () -> executeSelected(task, context, selector, runnerClass));
+                () -> executeSelected(task, context, selector, runnerClass).primary());
     }
 
-    private ExecutionResult executeSelected(
+    @Override
+    public WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
+        List<ScenarioTask> materializedTasks = new ArrayList<>();
+        List<ExecutionResult> materializedResults = new ArrayList<>();
+        for (ScenarioTask task : tasks) {
+            Selector selector = Selector.parse(task.selector());
+            Class<?> runnerClass = Class.forName(selector.runnerClass(), false, context.classLoader());
+            ExecutionAttempt attempt = jsonReportIsolation.execute(
+                    task, context, runnerClass,
+                    () -> executeSelected(task, context, selector, runnerClass));
+            if (attempt.failures().size() <= 1) {
+                materializedTasks.add(task);
+                materializedResults.add(attempt.primary());
+                continue;
+            }
+            for (int index = 0; index < attempt.failures().size(); index++) {
+                Failure failure = attempt.failures().get(index);
+                ScenarioTask child = failureTask(task, failure, index);
+                materializedTasks.add(child);
+                materializedResults.add(failureResult(child, attempt.primary(), failure));
+            }
+        }
+        return new WorkUnitExecution(materializedTasks, materializedResults);
+    }
+
+    private ExecutionAttempt executeSelected(
             ScenarioTask task,
             ExecutionContext context,
             Selector selector,
@@ -104,11 +132,11 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
         Description selected = resolveSelectedDescription(root, selector);
         if (selected == null) {
             Instant now = Instant.now();
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+            return new ExecutionAttempt(new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                     Duration.ZERO, context.workerId(), context.attempt(), now, now,
                     "Could not safely resolve JUnit 4 scenario selector " + task.selector()
                             + "; the runner description tree changed or the semantic identity became ambiguous",
-                    "SelectionFailure");
+                    "SelectionFailure"), List.of());
         }
 
         Instant started = Instant.now();
@@ -118,33 +146,52 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
 
         if (result.getFailureCount() > 0) {
             Throwable failure = result.getFailures().isEmpty() ? null : result.getFailures().get(0).getException();
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE,
+            return new ExecutionAttempt(new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE,
                     duration, context.workerId(), context.attempt(), started, finished,
                     failure == null ? result.getFailures().toString() : safeMessage(failure),
-                    failure == null ? null : failure.getClass().getName());
+                    failure == null ? null : failure.getClass().getName()), List.copyOf(result.getFailures()));
         }
 
         int assumptions = result.getAssumptionFailureCount();
         int ignored = result.getIgnoreCount();
         if (assumptions > 0 || ignored > 0) {
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED,
+            return new ExecutionAttempt(new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED,
                     duration, context.workerId(), context.attempt(), started, finished,
                     assumptions > 0
                             ? "JUnit 4 skipped the selected scenario because an assumption failed"
                             : "JUnit 4 ignored the selected scenario",
-                    assumptions > 0 ? "JUnit4AssumptionSkipped" : "JUnit4Ignored");
+                    assumptions > 0 ? "JUnit4AssumptionSkipped" : "JUnit4Ignored"), List.of());
         }
 
         if (result.getRunCount() != 1) {
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
+            return new ExecutionAttempt(new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE,
                     duration, context.workerId(), context.attempt(), started, finished,
                     "JUnit 4 selected scenario produced " + result.getRunCount()
                             + " executed tests; ScenarioMesh requires exactly one terminal execution per task",
-                    "SelectionMultiplicityFailure");
+                    "SelectionMultiplicityFailure"), List.of());
         }
 
-        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED,
-                duration, context.workerId(), context.attempt(), started, finished, null, null);
+        return new ExecutionAttempt(new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED,
+                duration, context.workerId(), context.attempt(), started, finished, null, null), List.of());
+    }
+
+    private ScenarioTask failureTask(ScenarioTask parent, Failure failure, int index) {
+        String selector = parent.selector() + "/failure-" + index;
+        Map<String, String> metadata = new LinkedHashMap<>(parent.metadata());
+        metadata.put(TaskMetadata.PARENT_MATERIALIZER_ID, parent.id().value());
+        metadata.put(TaskMetadata.PARENT_MATERIALIZER_SELECTOR, parent.selector());
+        String suffix = failure.getDescription() == null ? "failure " + (index + 1)
+                : failure.getDescription().getDisplayName();
+        return new ScenarioTask(ScenarioIds.from(ID, selector), parent.displayName() + " - " + suffix,
+                ID, framework(), parent.source(), parent.line(), selector, parent.tags(), Map.copyOf(metadata));
+    }
+
+    private ExecutionResult failureResult(ScenarioTask task, ExecutionResult primary, Failure failure) {
+        Throwable cause = failure.getException();
+        return new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE,
+                primary.duration(), primary.workerId(), primary.attempt(), primary.startedAt(), primary.finishedAt(),
+                cause == null ? failure.getMessage() : safeMessage(cause),
+                cause == null ? null : cause.getClass().getName());
     }
 
     private Description resolveSelectedDescription(Description root, Selector selector) {
@@ -260,6 +307,12 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
                     ? new String(Base64.getUrlDecoder().decode(parts[2]), StandardCharsets.UTF_8)
                     : null;
             return new Selector(parts[0], path, semantic);
+        }
+    }
+
+    private record ExecutionAttempt(ExecutionResult primary, List<Failure> failures) {
+        private ExecutionAttempt {
+            failures = List.copyOf(failures == null ? List.of() : failures);
         }
     }
 }

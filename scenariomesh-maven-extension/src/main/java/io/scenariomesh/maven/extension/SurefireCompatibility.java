@@ -11,6 +11,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Properties;
+import java.io.StringReader;
+import java.io.IOException;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -20,6 +23,7 @@ import java.util.regex.Pattern;
  * default lifecycle execution with a user-defined custom execution.
  */
 final class SurefireCompatibility {
+    static final String TESTNG_SUITE_XML_FILES_PROPERTY = "scenariomesh.testng.suiteXmlFiles";
     private static final String DEFAULT_TEST_EXECUTION_ID = "default-test";
     private static final String TEST_PHASE = "test";
     private static final String TEST_GOAL = "test";
@@ -139,6 +143,8 @@ final class SurefireCompatibility {
             case "includes" -> readPatternList(child, settings.includes, location, reasons, propertyResolver);
             case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
             case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
+            case "properties" -> readProviderProperties(child, location, settings, reasons, propertyResolver);
+            case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
             case "skip", "skipTests" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (Boolean.TRUE.equals(value)) settings.explicitlySkipsTests = true;
@@ -151,6 +157,55 @@ final class SurefireCompatibility {
                 }
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
+        }
+    }
+
+    private void readProviderProperties(Xpp3Dom parent,
+                                        String location,
+                                        EffectiveSettings settings,
+                                        List<String> reasons,
+                                        Function<String, String> propertyResolver) {
+        for (Xpp3Dom property : parent.getChildren()) {
+            if (!"configurationParameters".equals(property.getName()) || property.getChildCount() > 0) {
+                reasons.add(location + " contains unsupported Surefire provider property <"
+                        + property.getName() + ">");
+                continue;
+            }
+            String value = resolve(property.getValue(), location + " <configurationParameters>", reasons, propertyResolver);
+            if (value == null) continue;
+            Properties parsed = new Properties();
+            try {
+                parsed.load(new StringReader(value));
+            } catch (IOException | IllegalArgumentException invalid) {
+                reasons.add(location + " contains invalid Java-properties syntax in <configurationParameters>: "
+                        + invalid.getMessage());
+                continue;
+            }
+            parsed.forEach((key, configuredValue) ->
+                    settings.systemProperties.put(String.valueOf(key), String.valueOf(configuredValue)));
+        }
+    }
+
+    private void readSuiteXmlFiles(Xpp3Dom parent,
+                                   String location,
+                                   EffectiveSettings settings,
+                                   List<String> reasons,
+                                   Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"suiteXmlFile".equals(item.getName()) || item.getChildCount() > 0) {
+                reasons.add(location + " contains unsupported TestNG suite selection inside <suiteXmlFiles>");
+                continue;
+            }
+            String value = resolve(item.getValue(), location + " <suiteXmlFile>", reasons, propertyResolver);
+            if (value == null || value.isBlank()) {
+                reasons.add(location + " contains an empty TestNG suite XML path");
+            } else {
+                settings.suiteXmlFiles.add(value);
+            }
+        }
+        if (!settings.suiteXmlFiles.isEmpty()) {
+            settings.systemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY,
+                    String.join("\n", settings.suiteXmlFiles));
         }
     }
 
@@ -283,6 +338,7 @@ final class SurefireCompatibility {
         private final Set<String> includes = new LinkedHashSet<>();
         private final Set<String> excludes = new LinkedHashSet<>();
         private final Map<String, String> systemProperties = new LinkedHashMap<>();
+        private final Set<String> suiteXmlFiles = new LinkedHashSet<>();
         private boolean explicitlySkipsTests;
     }
 }

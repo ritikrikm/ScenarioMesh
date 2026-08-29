@@ -7,6 +7,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Domain.WorkerId;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
+import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.TaskMetadata;
 import org.testng.Assert;
 import org.testng.SkipException;
@@ -107,6 +108,23 @@ public class TestNgAdapterHardeningTest {
             Assert.assertTrue(expected.getMessage().contains("broken.BrokenTest"), expected.getMessage());
             Assert.assertTrue(expected.getMessage().contains("missing/Dependency"), expected.getMessage());
         }
+    }
+
+    @Test
+    public void suiteXmlSelectionIsExecutedAsOneLifecycleScopeAndMaterialized() throws Exception {
+        Path suite = Path.of(getClass().getResource("/suite-selection.xml").toURI());
+        AdapterContext context = new AdapterContext(getClass().getClassLoader(), List.of(),
+                Map.of("scenariomesh.testng.suiteXmlFiles", suite.toString()), DiscoverySelection.all());
+
+        List<ScenarioTask> discovered = adapter.discover(context);
+        Assert.assertEquals(discovered.size(), 1);
+        Assert.assertEquals(discovered.get(0).metadata().get(TaskMetadata.RUNTIME_MATERIALIZER), "true");
+
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.tasks().size(), 1);
+        Assert.assertEquals(execution.results().size(), 1);
+        Assert.assertTrue(execution.tasks().get(0).displayName().endsWith(".second"));
+        Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
     }
 
     private AdapterContext discoveryContext(Class<?> fixture) throws Exception {

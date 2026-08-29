@@ -6,6 +6,7 @@ import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
+import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
 import io.scenariomesh.core.TaskMetadata;
 import org.testng.IConfigurationListener;
@@ -37,6 +38,7 @@ import java.util.stream.Stream;
 
 public final class TestNgAdapter implements ScenarioAdapter {
     public static final String ID = "testng";
+    private static final String SUITE_XML_FILES_PROPERTY = "scenariomesh.testng.suiteXmlFiles";
     private static final Set<String> UNSAFE_CONFIGURATION_ANNOTATIONS = Set.of(
             "org.testng.annotations.BeforeSuite",
             "org.testng.annotations.AfterSuite",
@@ -62,6 +64,15 @@ public final class TestNgAdapter implements ScenarioAdapter {
 
     @Override
     public List<ScenarioTask> discover(AdapterContext context) throws IOException {
+        String suiteFiles = context.properties().get(SUITE_XML_FILES_PROPERTY);
+        if (suiteFiles != null && !suiteFiles.isBlank()) {
+            return Stream.of(suiteFiles.split("\\R"))
+                    .map(String::trim)
+                    .filter(value -> !value.isEmpty())
+                    .distinct()
+                    .map(this::suiteTask)
+                    .toList();
+        }
         List<ScenarioTask> tasks = new ArrayList<>();
         List<String> inspectionFailures = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -95,6 +106,17 @@ public final class TestNgAdapter implements ScenarioAdapter {
                             + String.join("; ", inspectionFailures));
         }
         return List.copyOf(tasks);
+    }
+
+    private ScenarioTask suiteTask(String suiteXmlFile) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("suiteXmlFile", suiteXmlFile);
+        metadata.put(TaskMetadata.RUNTIME_MATERIALIZER, "true");
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-suite:" + suiteXmlFile);
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
+        return new ScenarioTask(ScenarioIds.from(ID, "suite:" + suiteXmlFile),
+                "TestNG suite " + suiteXmlFile, ID, framework(), null, null,
+                "suite:" + suiteXmlFile, Set.of(), Map.copyOf(metadata));
     }
 
     private void discoverMethods(Class<?> candidate, List<ScenarioTask> tasks, Set<String> seen) {
@@ -190,6 +212,13 @@ public final class TestNgAdapter implements ScenarioAdapter {
 
     @Override
     public ExecutionResult execute(ScenarioTask task, ExecutionContext context) throws Exception {
+        if (isSuiteMaterializer(task)) {
+            WorkUnitExecution execution = executeSuite(task, context);
+            if (execution.results().size() != 1) {
+                throw new IllegalStateException("TestNG suite materializers must be executed through executeWorkUnit");
+            }
+            return execution.results().get(0);
+        }
         Instant started = Instant.now();
         if ("false".equalsIgnoreCase(task.metadata().get("enabled"))) {
             Instant finished = Instant.now();
@@ -218,6 +247,114 @@ public final class TestNgAdapter implements ScenarioAdapter {
         testNg.run();
         Instant finished = Instant.now();
         return classify(task, context, started, finished, listener);
+    }
+
+    @Override
+    public WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
+        if (tasks.size() == 1 && isSuiteMaterializer(tasks.get(0))) {
+            return executeSuite(tasks.get(0), context);
+        }
+        return ScenarioAdapter.super.executeWorkUnit(tasks, context);
+    }
+
+    private boolean isSuiteMaterializer(ScenarioTask task) {
+        return Boolean.parseBoolean(task.metadata().getOrDefault(TaskMetadata.RUNTIME_MATERIALIZER, "false"));
+    }
+
+    private WorkUnitExecution executeSuite(ScenarioTask parent, ExecutionContext context) {
+        String suiteXmlFile = parent.metadata().get("suiteXmlFile");
+        TestNG testNg = new TestNG(false);
+        testNg.setUseDefaultListeners(false);
+        testNg.setVerbose(0);
+        testNg.setTestSuites(List.of(suiteXmlFile));
+        SuiteCapturingListener listener = new SuiteCapturingListener();
+        testNg.addListener((ITestListener) listener);
+        testNg.addListener((IConfigurationListener) listener);
+        testNg.run();
+
+        List<ScenarioTask> concreteTasks = new ArrayList<>();
+        List<ExecutionResult> concreteResults = new ArrayList<>();
+        int index = 0;
+        for (ITestResult outcome : listener.outcomes) {
+            String className = outcome.getTestClass() == null
+                    ? "unknown" : outcome.getTestClass().getName();
+            String methodName = outcome.getMethod() == null
+                    ? "unknown" : outcome.getMethod().getMethodName();
+            String selector = parent.selector() + "/" + className + "/" + methodName + "/" + index++;
+            Map<String, String> metadata = new LinkedHashMap<>();
+            metadata.put("className", className);
+            metadata.put("methodName", methodName);
+            metadata.put(TaskMetadata.PARENT_MATERIALIZER_ID, parent.id().value());
+            metadata.put(TaskMetadata.PARENT_MATERIALIZER_SELECTOR, parent.selector());
+            metadata.put(TaskMetadata.EXECUTION_SCOPE_ID,
+                    parent.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID));
+            metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
+            ScenarioTask concrete = new ScenarioTask(ScenarioIds.from(ID, selector),
+                    className + "." + methodName, ID, framework(), null, null,
+                    selector, Set.of(outcome.getMethod() == null ? new String[0] : outcome.getMethod().getGroups()),
+                    Map.copyOf(metadata));
+            concreteTasks.add(concrete);
+            concreteResults.add(suiteResult(concrete, outcome, context));
+        }
+        for (ITestResult configurationFailure : listener.configurationFailures) {
+            String methodName = configurationFailure.getMethod() == null
+                    ? "configuration" : configurationFailure.getMethod().getMethodName();
+            String selector = parent.selector() + "/configuration/" + methodName + "/" + index++;
+            Map<String, String> metadata = new LinkedHashMap<>();
+            metadata.put(TaskMetadata.PARENT_MATERIALIZER_ID, parent.id().value());
+            metadata.put(TaskMetadata.PARENT_MATERIALIZER_SELECTOR, parent.selector());
+            metadata.put(TaskMetadata.EXECUTION_SCOPE_ID,
+                    parent.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID));
+            metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
+            ScenarioTask concrete = new ScenarioTask(ScenarioIds.from(ID, selector),
+                    "TestNG configuration " + methodName, ID, framework(), null, null,
+                    selector, Set.of(), Map.copyOf(metadata));
+            Throwable failure = configurationFailure.getThrowable();
+            Instant started = Instant.ofEpochMilli(Math.max(0L, configurationFailure.getStartMillis()));
+            Instant finished = Instant.ofEpochMilli(Math.max(
+                    configurationFailure.getStartMillis(), configurationFailure.getEndMillis()));
+            concreteTasks.add(concrete);
+            concreteResults.add(new ExecutionResult(concrete.id(), concrete.displayName(),
+                    ResultStatus.TEST_FAILURE, Duration.between(started, finished),
+                    context.workerId(), context.attempt(), started, finished,
+                    failure == null ? "TestNG suite configuration failed" : message(failure),
+                    failure == null ? "TestNGConfigurationFailure" : failure.getClass().getName()));
+        }
+
+        if (concreteTasks.isEmpty()) {
+            Instant now = Instant.now();
+            String detail = listener.configurationFailures.isEmpty()
+                    ? "TestNG suite produced no test outcomes: " + suiteXmlFile
+                    : "TestNG suite configuration failed: " + message(listener.configurationFailures.get(0).getThrowable());
+            ExecutionResult failure = new ExecutionResult(parent.id(), parent.displayName(),
+                    ResultStatus.INFRASTRUCTURE_FAILURE, Duration.ZERO, context.workerId(), context.attempt(),
+                    now, now, detail, "TestNgSuiteExecutionFailure");
+            return new WorkUnitExecution(List.of(parent), List.of(failure));
+        }
+        return new WorkUnitExecution(concreteTasks, concreteResults);
+    }
+
+    private ExecutionResult suiteResult(ScenarioTask task, ITestResult outcome, ExecutionContext context) {
+        Instant started = Instant.ofEpochMilli(Math.max(0L, outcome.getStartMillis()));
+        Instant finished = Instant.ofEpochMilli(Math.max(outcome.getStartMillis(), outcome.getEndMillis()));
+        ResultStatus status;
+        String detail = null;
+        String type = null;
+        Throwable failure = outcome.getThrowable();
+        if (outcome.getStatus() == ITestResult.SUCCESS) {
+            status = ResultStatus.PASSED;
+        } else if (outcome.getStatus() == ITestResult.SKIP) {
+            status = ResultStatus.SKIPPED;
+            detail = failure == null ? "TestNG skipped the selected test" : message(failure);
+            type = failure == null ? "TestNGSkipped" : failure.getClass().getName();
+        } else {
+            status = ResultStatus.TEST_FAILURE;
+            detail = failure == null ? "TestNG test failed" : message(failure);
+            type = failure == null ? null : failure.getClass().getName();
+        }
+        return new ExecutionResult(task.id(), task.displayName(), status,
+                Duration.between(started, finished), context.workerId(), context.attempt(),
+                started, finished, detail, type);
     }
 
     private ExecutionResult classify(ScenarioTask task, ExecutionContext context,
@@ -298,5 +435,14 @@ public final class TestNgAdapter implements ScenarioAdapter {
         @Override public void onConfigurationFailure(ITestResult result) {
             if (configurationFailure == null) configurationFailure = result.getThrowable();
         }
+    }
+
+    private static final class SuiteCapturingListener implements ITestListener, IConfigurationListener {
+        private final List<ITestResult> outcomes = new ArrayList<>();
+        private final List<ITestResult> configurationFailures = new ArrayList<>();
+        @Override public void onTestSuccess(ITestResult result) { outcomes.add(result); }
+        @Override public void onTestFailure(ITestResult result) { outcomes.add(result); }
+        @Override public void onTestSkipped(ITestResult result) { outcomes.add(result); }
+        @Override public void onConfigurationFailure(ITestResult result) { configurationFailures.add(result); }
     }
 }

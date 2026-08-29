@@ -25,7 +25,7 @@ Currently proven examples include:
 - `surefire.includes`, `surefire.excludes`, `failsafe.includes`, and `failsafe.excludes` user properties in the same proven subset.
 - `systemPropertyVariables` with Maven user properties (`-D`) taking precedence on collisions, matching Surefire/Failsafe provider-property ordering.
 
-Complex selectors such as `-Dtest=Class#method`, inline negation that has not been modeled, suite XML, provider-specific dependency scanning, and unknown future options remain pass-through until exact equivalence is proven.
+Complex selectors such as `-Dtest=Class#method`, inline negation that has not been modeled, provider-specific dependency scanning, and unknown future options remain pass-through until exact equivalence is proven. Surefire TestNG `suiteXmlFiles` are supported as atomic native TestNG lifecycle scopes, and documented JUnit Platform `configurationParameters` are preserved using Java-properties syntax.
 
 ## Invariant
 

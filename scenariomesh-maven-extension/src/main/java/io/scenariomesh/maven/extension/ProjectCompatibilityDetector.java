@@ -24,7 +24,7 @@ final class ProjectCompatibilityDetector {
             "test", "prepare-package", "package", "pre-integration-test",
             "integration-test", "post-integration-test", "verify", "install", "deploy");
     private static final Set<String> SUREFIRE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "test", "suiteXmlFiles", "dependenciesToScan");
+            "test", "dependenciesToScan");
     private static final Set<String> FAILSAFE_UNSAFE_SELECTION_PROPERTIES = Set.of(
             "it.test", "suiteXmlFiles", "dependenciesToScan");
     private static final Set<String> CUCUMBER_SELECTION_PROPERTIES = Set.of(

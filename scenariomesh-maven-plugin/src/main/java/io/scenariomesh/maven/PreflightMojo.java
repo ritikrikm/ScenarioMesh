@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -39,6 +40,7 @@ public final class PreflightMojo extends AbstractMojo {
     @Parameter(defaultValue = "false") private boolean knownModelFramework;
     @Parameter private List<String> includeClassNameRegexes;
     @Parameter private List<String> excludeClassNameRegexes;
+    @Parameter private Map<String, String> executorSystemProperties;
 
     @Override
     public void execute() {
@@ -57,7 +59,9 @@ public final class PreflightMojo extends AbstractMojo {
             RuntimeClasspathResolver.RuntimeClasspaths classpaths =
                     new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
             List<Path> testRoots = new TestRootResolver().resolve(project);
-            Map<String, String> properties = EffectiveMavenProperties.configuration(project, session);
+            Map<String, String> properties = new LinkedHashMap<>(
+                    EffectiveMavenProperties.configuration(project, session));
+            if (executorSystemProperties != null) properties.putAll(executorSystemProperties);
             List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
             List<String> excludes = excludeClassNameRegexes == null ? List.of() : List.copyOf(excludeClassNameRegexes);
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);

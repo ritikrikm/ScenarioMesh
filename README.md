@@ -20,7 +20,8 @@ ScenarioMesh is not a Selenium framework, WebDriver proxy, Gherkin parser, repla
 | Compatible Maven Failsafe `integration-test` / `verify` execution | Supported; unsupported semantics pass through |
 | Standard method-level TestNG `@Test` | Supported |
 | Generic JUnit 4 without Cucumber | Native Maven pass-through |
-| TestNG XML-suite-only / factory-heavy models | Pass-through when ScenarioMesh cannot prove equivalent semantics |
+| TestNG `suiteXmlFiles` | Supported as atomic TestNG lifecycle scopes; individual outcomes are materialized after native TestNG execution |
+| Factory-heavy TestNG discovered without a suite XML | Pass-through when ScenarioMesh cannot prove equivalent isolated semantics |
 | Gradle | Not supported yet |
 
 Target-project libraries such as Selenium, REST Assured, Jackson, listeners, resources, and internal libraries are loaded from Maven's resolved test runtime classpath rather than hard-coded into ScenarioMesh.
@@ -90,7 +91,7 @@ Coordinator JVM
 
 This isolates heap/static/singleton/framework state and is especially useful for older automation frameworks with global mutable state.
 
-The Maven integration preserves the selected test JVM, including supported Surefire/Failsafe JVM and toolchain configuration. Worker processes receive the target project's resolved runtime classpath and compatible execution properties.
+The Maven integration preserves the selected test JVM, including supported Surefire/Failsafe JVM and toolchain configuration. Worker processes receive the target project's resolved runtime classpath and compatible execution properties. Surefire's documented `<properties><configurationParameters>` values are parsed with Java `Properties` syntax and forwarded to JUnit Platform; unknown provider properties remain pass-through.
 
 ## Scheduling
 

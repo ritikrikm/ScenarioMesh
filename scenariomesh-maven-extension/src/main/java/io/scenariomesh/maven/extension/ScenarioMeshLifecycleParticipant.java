@@ -141,6 +141,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             ProjectCompatibilityDetector.ExecutorPlan plan = decision.executorPlans().get(0);
             addList(preflightConfig, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
             addList(preflightConfig, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
+            addMap(preflightConfig, "executorSystemProperties", plan.executorSystemProperties());
         }
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);

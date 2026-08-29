@@ -1,0 +1,12 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="ScenarioMesh suite contract">
+  <test name="selected class">
+    <classes>
+      <class name="io.scenariomesh.adapter.testng.TestNgSimpleClassFixture">
+        <methods>
+          <include name="second"/>
+        </methods>
+      </class>
+    </classes>
+  </test>
+</suite>

@@ -144,6 +144,53 @@ class SurefireCompatibilityTest {
     }
 
     @Test
+    void reproducesDocumentedJUnitPlatformConfigurationParameters() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom properties = new Xpp3Dom("properties");
+        add(properties, "configurationParameters", "cucumber.junit-platform.naming-strategy=long\n"
+                + "junit.jupiter.testinstance.lifecycle.default = per_class");
+        config.addChild(properties);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("long", analysis.systemProperties().get("cucumber.junit-platform.naming-strategy"));
+        assertEquals("per_class", analysis.systemProperties().get("junit.jupiter.testinstance.lifecycle.default"));
+    }
+
+    @Test
+    void rejectsUnknownSurefireProviderProperties() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom properties = new Xpp3Dom("properties");
+        add(properties, "providerSpecificOption", "unsafe");
+        config.addChild(properties);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("providerSpecificOption")));
+    }
+
+    @Test
+    void carriesTestNgSuiteXmlFilesIntoTheRuntimePlan() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        Xpp3Dom suites = new Xpp3Dom("suiteXmlFiles");
+        add(suites, "suiteXmlFile", "src/test/resources/suites/smoke.xml");
+        config.addChild(suites);
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("src/test/resources/suites/smoke.xml",
+                analysis.systemProperties().get(SurefireCompatibility.TESTNG_SUITE_XML_FILES_PROPERTY));
+    }
+
+    @Test
     void unresolvedSurefireSystemPropertyFailsClosed() {
         Plugin plugin = pluginWith(defaultTestExecution());
         Xpp3Dom config = new Xpp3Dom("configuration");

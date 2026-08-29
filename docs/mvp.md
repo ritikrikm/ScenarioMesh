@@ -27,6 +27,6 @@
 - Selenium Grid-aware scheduling
 - report merging with every framework-specific third-party reporter
 - generic non-Cucumber JUnit 4
-- advanced TestNG XML/factory discovery
+- factory-heavy TestNG discovery without an explicit suite XML lifecycle scope
 
 The deferred features have extension seams in the current design but are not all claimed to be production-ready or generally supported yet.

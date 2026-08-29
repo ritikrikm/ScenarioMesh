@@ -28,7 +28,7 @@ final class ExecutorConfigurationSemantics {
             "skip", "skipTests", "useModulePath");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
-            "includes", "excludes", "systemPropertyVariables");
+            "includes", "excludes", "systemPropertyVariables", "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "argLine", "systemPropertyVariables",
@@ -38,7 +38,6 @@ final class ExecutorConfigurationSemantics {
             Map.entry("enableAssertions", "assertion-mode-parity"),
             Map.entry("groups", "framework-group-selection"),
             Map.entry("excludedGroups", "framework-group-selection"),
-            Map.entry("suiteXmlFiles", "suite-xml-selection"),
             Map.entry("dependenciesToScan", "dependency-test-scanning"),
             Map.entry("additionalClasspathElements", "executor-classpath-extension"),
             Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),

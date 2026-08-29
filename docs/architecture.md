@@ -10,7 +10,7 @@ The original minimal slice has grown into the current product surface. ScenarioM
 
 ## Discovery
 
-The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucumber running on JUnit Platform is therefore discovered by its own engine. The legacy Cucumber/JUnit 4 adapter asks JUnit for the Cucumber runner's `Description` tree and schedules executable leaf tests; it does not parse `.feature` files and it does not assume one runner equals one scenario. A generated runner is treated as an execution container. If different runners expose the same framework description identity, the product fails discovery as ambiguous rather than silently duplicating or dropping execution. TestNG discovery is limited to standard method-level `@Test` classes.
+The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucumber running on JUnit Platform is therefore discovered by its own engine. The legacy Cucumber/JUnit 4 adapter asks JUnit for the Cucumber runner's `Description` tree and schedules executable leaf tests; it does not parse `.feature` files and it does not assume one runner equals one scenario. A generated runner is treated as an execution container. If different runners expose the same framework description identity, the product fails discovery as ambiguous rather than silently duplicating or dropping execution. TestNG classpath discovery is limited to safe method-level `@Test` classes. Explicit TestNG suite XML files are instead executed as atomic lifecycle scopes by TestNG itself, preserving suite parameters, groups, listeners, factories, dependencies, and configuration hooks before ScenarioMesh materializes the resulting test outcomes.
 
 ## Isolation and scheduling
 
