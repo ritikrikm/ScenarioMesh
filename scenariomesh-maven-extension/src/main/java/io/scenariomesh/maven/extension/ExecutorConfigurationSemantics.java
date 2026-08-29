@@ -21,9 +21,10 @@ final class ExecutorConfigurationSemantics {
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
             "jvm", "jdkToolchain",
-            // These settings are reproduced by MavenForkLaunchConfiguration plus
-            // the selected-JVM preflight/discovery/worker launch path.
-            "enableAssertions", "workingDirectory");
+            // Exact local-process reproduction is implemented by MavenForkLaunchConfiguration,
+            // PreflightMojo, DiscoveryProcess and WorkerPool. Remote takeover remains fail-closed
+            // in preflight when any non-default process context is present.
+            "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
@@ -45,11 +46,7 @@ final class ExecutorConfigurationSemantics {
             Map.entry("additionalClasspathElements", "executor-classpath-extension"),
             Map.entry("additionalClasspathDependencies", "executor-classpath-extension"),
             Map.entry("classpathDependencyExcludes", "executor-classpath-filtering"),
-            Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"),
-            // These remain fail-closed until local and remote worker process environments
-            // can both reproduce Surefire/Failsafe's inherited-environment overlay exactly.
-            Map.entry("environmentVariables", "fork-environment-reproduction"),
-            Map.entry("excludedEnvironmentVariables", "fork-environment-reproduction"));
+            Map.entry("classpathDependencyScopeExclude", "executor-classpath-filtering"));
 
     static Classification forSurefire(String name) {
         if (CONCURRENCY_OR_LAUNCH_OWNED.contains(name)) return Classification.replaced();
