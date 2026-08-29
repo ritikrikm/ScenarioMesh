@@ -14,6 +14,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectCompatibilityDetectorTest {
@@ -28,6 +29,45 @@ class ProjectCompatibilityDetectorTest {
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(ProjectCompatibilityDetector.ExecutorKind.SUREFIRE, decision.executorKind());
         assertFalse(decision.includeClassNameRegexes().isEmpty());
+    }
+
+    @Test
+    void surefireIncludeAndExcludeUserPropertiesAreTranslatedThroughTheProvenPatternParser() {
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"));
+        MavenSession session = session("test");
+        session.getUserProperties().setProperty("surefire.includes", "**/*SmokeTest.java,**/*ApiTest.java");
+        session.getUserProperties().setProperty("surefire.excludes", "**/*SlowTest.java");
+
+        var decision = detector.evaluate(session, project);
+
+        assertTrue(decision.compatible(), decision.reason());
+        assertEquals(2, decision.includeClassNameRegexes().size());
+        assertEquals(1, decision.excludeClassNameRegexes().size());
+        assertNotEquals(SurefireCompatibility.defaultIncludeClassNameRegexes(), decision.includeClassNameRegexes());
+    }
+
+    @Test
+    void unsupportedSurefireIncludePropertyFailsClosed() {
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"));
+        MavenSession session = session("test");
+        session.getUserProperties().setProperty("surefire.includes", "!Unstable*");
+
+        var decision = detector.evaluate(session, project);
+
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("proven Maven selector subset"), decision.reason());
+    }
+
+    @Test
+    void methodLevelTestSelectorStillPassesThroughUntilProviderSemanticsAreReproduced() {
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"));
+        MavenSession session = session("test");
+        session.getUserProperties().setProperty("test", "LoginTest#happyPath");
+
+        var decision = detector.evaluate(session, project);
+
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("test-selection property 'test'"), decision.reason());
     }
 
     @Test
@@ -159,9 +199,7 @@ class ProjectCompatibilityDetectorTest {
         model.setArtifactId("fixture");
         model.setVersion("1.0");
         model.setBuild(new Build());
-        for (Dependency dependency : dependencies) {
-            model.addDependency(dependency);
-        }
+        for (Dependency dependency : dependencies) model.addDependency(dependency);
         return new MavenProject(model);
     }
 
