@@ -7,6 +7,7 @@ import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.TaskMetadata;
 import junit.framework.TestCase;
 import org.junit.Test;
 import org.junit.runner.Description;
@@ -25,6 +26,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,15 +59,30 @@ public final class CucumberJUnit4Adapter implements ScenarioAdapter {
             for (JUnit4DescriptionLeaves.Leaf leaf : descriptionLeaves.collect(root)) {
                 String selector = new Selector(runner.getName(), leaf.selectorPath(), leaf.semanticKey()).encode();
                 Description description = leaf.description();
+                Map<String, String> metadata = new LinkedHashMap<>();
+                metadata.put("runnerClass", runner.getName());
+                metadata.put("frameworkDescription", leaf.semanticKey());
+                metadata.put("executionIdentity", selector);
+                metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, featureScopeId(runner, leaf));
+                metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "cucumber-feature");
                 tasks.add(new ScenarioTask(
                         ScenarioIds.from(ID, selector), description.getDisplayName(), ID, framework(),
-                        null, null, selector, Set.of(),
-                        Map.of("runnerClass", runner.getName(),
-                                "frameworkDescription", leaf.semanticKey(),
-                                "executionIdentity", selector)));
+                        null, null, selector, Set.of(), Map.copyOf(metadata)));
             }
         }
         return List.copyOf(tasks);
+    }
+
+    /**
+     * Cucumber's JUnit4 parallel contract groups scenarios by feature. Preserve that boundary even
+     * though JUnit exposes individual Description leaves: leaves from the same feature may be
+     * selected independently, but ScenarioMesh must not distribute them across execution lanes.
+     */
+    private String featureScopeId(Class<?> runner, JUnit4DescriptionLeaves.Leaf leaf) {
+        String featureIdentity = leaf.semanticPath().isEmpty()
+                ? leaf.semanticKey()
+                : leaf.semanticPath().get(0);
+        return runner.getName() + "#feature#" + featureIdentity;
     }
 
     @Override
