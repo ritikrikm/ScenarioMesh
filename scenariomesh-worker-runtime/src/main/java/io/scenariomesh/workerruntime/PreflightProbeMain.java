@@ -4,7 +4,9 @@ import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ScenarioTask;
 import io.scenariomesh.core.Ports.AdapterContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
+import io.scenariomesh.core.RuntimePropertyNames;
 import io.scenariomesh.core.TaskMetadata;
+import io.scenariomesh.maven.selection.SurefireTestSelection;
 
 import java.io.BufferedWriter;
 import java.nio.charset.StandardCharsets;
@@ -45,7 +47,8 @@ public final class PreflightProbeMain {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
         properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
-        DiscoverySelection selection = new DiscoverySelection(parsed.includes, parsed.excludes);
+        String testListExpression = properties.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
+        DiscoverySelection selection = new DiscoverySelection(parsed.includes, parsed.excludes, testListExpression);
         AdapterContext context = new AdapterContext(loader, parsed.testRoots, properties, selection);
         AdapterRegistry registry = new AdapterRegistry(loader);
 
@@ -103,8 +106,17 @@ public final class PreflightProbeMain {
     static RuntimeRequirements runtimeRequirements(AdapterContext context, AdapterRegistry registry) throws Exception {
         Set<String> adapterIds = new LinkedHashSet<>();
         Set<String> engineIds = new LinkedHashSet<>();
+        SurefireTestSelection methodSelection = context.discoverySelection().hasTestListExpression()
+                ? new SurefireTestSelection(context.discoverySelection().testListExpression()) : null;
         for (ScenarioAdapter adapter : registry.available(context.classLoader())) {
             List<ScenarioTask> tasks = adapter.discover(context);
+            if (methodSelection != null && "testng".equals(adapter.id())) {
+                tasks = tasks.stream().filter(task -> {
+                    String className = task.metadata().get("className");
+                    String methodName = task.metadata().get("methodName");
+                    return className == null || methodName == null || methodSelection.matches(className, methodName);
+                }).toList();
+            }
             if (tasks.isEmpty()) continue;
             adapterIds.add(adapter.id());
             if ("junit-platform".equals(adapter.id())) {
