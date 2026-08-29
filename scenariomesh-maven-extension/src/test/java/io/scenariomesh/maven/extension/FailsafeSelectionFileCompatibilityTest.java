@@ -1,5 +1,7 @@
 package io.scenariomesh.maven.extension;
 
+import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.maven.selection.MavenSelectionCodec;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -10,8 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -35,10 +37,13 @@ class FailsafeSelectionFileCompatibilityTest {
         FailsafeCompatibility.Analysis analysis = analyze(plugin);
 
         assertTrue(analysis.supported(), analysis.reason());
-        List<String> regexes = analysis.executionPlans().get(0).includeClassNameRegexes();
-        assertTrue(matches(regexes, "example/SmokeIT.class"));
-        assertTrue(matches(regexes, "example/RegressionIT.class"));
-        assertFalse(matches(regexes, "example/OtherIT.class"));
+        FailsafeCompatibility.ExecutionPlan plan = analysis.executionPlans().get(0);
+        assertEquals(List.of(".*"), plan.includeClassNameRegexes());
+        assertTrue(plan.excludeClassNameRegexes().isEmpty());
+        assertEquals(List.of("**/SmokeIT.java", "**/RegressionIT.java"),
+                MavenSelectionCodec.decode(plan.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of("**/*$*"),
+                MavenSelectionCodec.decode(plan.systemProperties().get(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS)));
     }
 
     @Test
@@ -60,9 +65,11 @@ class FailsafeSelectionFileCompatibilityTest {
         FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, properties::get);
 
         assertTrue(analysis.supported(), analysis.reason());
-        List<String> regexes = analysis.executionPlans().get(0).excludeClassNameRegexes();
-        assertTrue(matches(regexes, "example/CheckoutSlowIT.class"));
-        assertTrue(matches(regexes, "example/CheckoutDatabaseIT.class"));
+        FailsafeCompatibility.ExecutionPlan plan = analysis.executionPlans().get(0);
+        assertEquals(List.of(".*"), plan.includeClassNameRegexes());
+        assertTrue(plan.excludeClassNameRegexes().isEmpty());
+        assertEquals(List.of("**/*SlowIT.java", "**/*DatabaseIT.java"),
+                MavenSelectionCodec.decode(plan.systemProperties().get(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS)));
     }
 
     @Test
@@ -79,7 +86,7 @@ class FailsafeSelectionFileCompatibilityTest {
     }
 
     @Test
-    void methodSelectorInFailsafeSelectionFileRemainsNativeMaven() throws Exception {
+    void methodSelectorInFailsafeSelectionFileUsesExactSurefireMatcher() throws Exception {
         Files.writeString(tempDir.resolve("includes.txt"), "CheckoutIT#createsOrder\n");
         Plugin plugin = plugin();
         Xpp3Dom config = new Xpp3Dom("configuration");
@@ -88,8 +95,11 @@ class FailsafeSelectionFileCompatibilityTest {
 
         FailsafeCompatibility.Analysis analysis = analyze(plugin);
 
-        assertFalse(analysis.supported());
-        assertTrue(analysis.reason().contains("method selectors"), analysis.reason());
+        assertTrue(analysis.supported(), analysis.reason());
+        FailsafeCompatibility.ExecutionPlan plan = analysis.executionPlans().get(0);
+        assertEquals(List.of("CheckoutIT#createsOrder"),
+                MavenSelectionCodec.decode(plan.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
+        assertEquals(List.of(".*"), plan.includeClassNameRegexes());
     }
 
     private FailsafeCompatibility.Analysis analyze(Plugin plugin) {
@@ -99,10 +109,6 @@ class FailsafeSelectionFileCompatibilityTest {
                 plugin,
                 participation,
                 key -> "project.basedir".equals(key) ? tempDir.toString() : null);
-    }
-
-    private boolean matches(List<String> regexes, String classFile) {
-        return regexes.stream().anyMatch(regex -> Pattern.matches(regex, classFile));
     }
 
     private Plugin plugin() {
