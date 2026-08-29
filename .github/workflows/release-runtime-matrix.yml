@@ -55,7 +55,6 @@ jobs:
           grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
 
   maven-4-preview:
-    continue-on-error: true
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -74,5 +73,41 @@ jobs:
           echo "$RUNNER_TEMP/apache-maven-4.0.0-rc-6/bin" >> "$GITHUB_PATH"
       - name: Verify preview version
         run: mvn -version | grep -Fq 'Apache Maven 4.0.0-rc-6'
-      - name: Maven 4 preview compatibility probe
+      - name: Build ScenarioMesh on Maven 4 preview
         run: mvn -B clean install
+      - name: Maven 4 JUnit takeover and hostile-classpath contract
+        run: |
+          (
+            cd examples/junit5-example
+            mvn -B clean test
+            grep -Fq '"passed" : 6' target/scenariomesh-yaml/summary.json
+            grep -Fq '"skipped" : 2' target/scenariomesh-yaml/summary.json
+          )
+          (
+            cd examples/junit5-conflicting-jackson-example
+            mvn -B clean test
+            grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          )
+      - name: Maven 4 framework and lifecycle compatibility laboratory
+        if: matrix.java == '21'
+        run: |
+          for fixture in cucumber-junit-platform-example cucumber-junit4-example testng-example; do
+            (
+              cd "examples/$fixture"
+              mvn -B clean test
+              test -f target/scenariomesh/summary.json
+              grep -Fq '"failed" : 0' target/scenariomesh/summary.json
+            )
+          done
+          (
+            cd examples/failsafe-junit5-example
+            mvn -B clean verify
+            grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+            test -f target/scenariomesh/deferred-verification.properties
+          )
+          (
+            cd examples/unsupported-junit4-example
+            mvn -B clean test
+            test -f target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
+            test ! -e target/scenariomesh/report.html
+          )

@@ -291,7 +291,7 @@ See [`docs/configuration.md`](docs/configuration.md) and [`scenariomesh.example.
 - Java 17 and 21 are primary compatibility gates.
 - Java 25 LTS is covered by the release smoke matrix.
 - Maven 3.9.x is the production support line and the release matrix pins Maven 3.9.16.
-- Maven 4 remains a preview lane until its upstream GA line is explicitly promoted through semantic-equivalence testing.
+- Maven 4.0.0-rc-6 is a blocking preview gate on Java 17, 21, and 25 with representative takeover, hostile-classpath, Failsafe, framework, and native pass-through tests. Maven 4 remains a preview claim until its upstream GA line is pinned and qualified.
 - Snapshot builds are not production releases.
 
 A repository/runtime combination is promoted from native pass-through to ScenarioMesh takeover only after semantic equivalence is proven for selected logical tests, stable identities, pass/fail/skip outcomes, lifecycle behavior, build exit semantics, and required downstream reports.
