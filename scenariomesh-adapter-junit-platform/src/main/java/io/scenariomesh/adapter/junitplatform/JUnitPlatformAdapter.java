@@ -16,7 +16,6 @@ import org.junit.platform.engine.TestSource;
 import org.junit.platform.engine.TestTag;
 import org.junit.platform.engine.UniqueId;
 import org.junit.platform.engine.support.descriptor.ClassSource;
-import org.junit.platform.launcher.EngineFilter;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
 import org.junit.platform.launcher.TestExecutionListener;
@@ -49,7 +48,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     public static final String META_RUNTIME_MATERIALIZER = TaskMetadata.RUNTIME_MATERIALIZER;
     public static final String META_PARENT_MATERIALIZER_ID = TaskMetadata.PARENT_MATERIALIZER_ID;
     public static final String META_PARENT_MATERIALIZER_SELECTOR = TaskMetadata.PARENT_MATERIALIZER_SELECTOR;
-    /** Generic scheduler requirement published by the adapter that owns JUnit UniqueId semantics. */
     public static final String META_REQUIRED_ENGINE_ID = TaskMetadata.REQUIRED_ENGINE_ID;
 
     @Override public String id() { return ID; }
@@ -68,9 +66,10 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     @Override
     public List<ScenarioTask> discover(AdapterContext context) {
         if (context.testRoots().isEmpty()) return List.of();
-        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectClasspathRoots(new HashSet<>(context.testRoots())))
-                .filters(EngineFilter.excludeEngines("junit-vintage"));
+        LauncherDiscoveryRequestBuilder builder = JUnitEngineSelection.apply(
+                LauncherDiscoveryRequestBuilder.request()
+                        .selectors(selectClasspathRoots(new HashSet<>(context.testRoots()))),
+                context.properties());
         if (!context.discoverySelection().includeClassNameRegexes().isEmpty()
                 || !context.discoverySelection().excludeClassNameRegexes().isEmpty()) {
             builder.filters(new MavenClassSelectionPostFilter(context.discoverySelection()));
@@ -109,7 +108,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
     @Override
     public WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) {
         validateScope(tasks);
-        ScopeExecution execution = executeScope(tasks);
+        ScopeExecution execution = executeScope(tasks, context.properties());
         List<ScenarioTask> concreteTasks = new ArrayList<>();
         List<ExecutionResult> concreteResults = new ArrayList<>();
 
@@ -152,12 +151,12 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         }
     }
 
-    private ScopeExecution executeScope(List<ScenarioTask> tasks) {
+    private ScopeExecution executeScope(List<ScenarioTask> tasks, Map<String, String> properties) {
         ScopedResultListener listener = new ScopedResultListener();
         List<DiscoverySelector> selectors = tasks.stream()
                 .map(task -> (DiscoverySelector) selectUniqueId(task.selector())).toList();
-        LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectors).filters(EngineFilter.excludeEngines("junit-vintage")).build();
+        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request().selectors(selectors);
+        LauncherDiscoveryRequest request = JUnitEngineSelection.apply(builder, properties).build();
         Launcher launcher = LauncherFactory.create();
         launcher.registerTestExecutionListeners(listener);
         launcher.execute(request);
@@ -207,11 +206,6 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         return outcome.toResult(task, context);
     }
 
-    /**
-     * Runtime materialization is currently a proven Jupiter capability only. Do not infer dynamic
-     * execution semantics from another engine merely because its UniqueId happens to reuse a
-     * segment name such as test-template/test-factory.
-     */
     private static boolean isRuntimeMaterializer(TestIdentifier identifier) {
         String id = identifier.getUniqueId();
         String engineId;

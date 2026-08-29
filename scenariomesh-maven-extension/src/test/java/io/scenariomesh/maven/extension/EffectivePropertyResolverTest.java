@@ -28,6 +28,20 @@ class EffectivePropertyResolverTest {
     }
 
     @Test
+    void userPropertyExposesOnlyMavenInvocationOverride() {
+        MavenProject project = project();
+        project.getProperties().setProperty("test", "ProjectOnlyTest");
+        MavenSession session = session();
+        session.getSystemProperties().setProperty("test", "SystemTest");
+
+        EffectivePropertyResolver resolver = new EffectivePropertyResolver(session, project);
+
+        assertNull(resolver.userProperty("test"));
+        session.getUserProperties().setProperty("test", "LoginTest");
+        assertEquals("LoginTest", resolver.userProperty("test"));
+    }
+
+    @Test
     void effectiveProjectPropertiesAreResolvedWhenNoInvocationOverrideExists() {
         MavenProject project = project();
         // MavenProject properties are the effective-model view at lifecycle-participant time;

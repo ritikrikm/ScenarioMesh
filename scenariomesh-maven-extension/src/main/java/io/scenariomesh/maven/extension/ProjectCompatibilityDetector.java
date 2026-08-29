@@ -24,9 +24,9 @@ final class ProjectCompatibilityDetector {
             "test", "prepare-package", "package", "pre-integration-test",
             "integration-test", "post-integration-test", "verify", "install", "deploy");
     private static final Set<String> SUREFIRE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "test", "dependenciesToScan");
+            "dependenciesToScan");
     private static final Set<String> FAILSAFE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "it.test", "suiteXmlFiles", "dependenciesToScan");
+            "suiteXmlFiles", "dependenciesToScan");
     private static final Set<String> CUCUMBER_SELECTION_PROPERTIES = Set.of(
             "cucumber.filter.tags", "cucumber.filter.name", "cucumber.features");
     private static final List<String> FRAMEWORK_PROPERTY_PREFIXES = List.of(
@@ -90,8 +90,21 @@ final class ProjectCompatibilityDetector {
                             "Failsafe test-selection property '" + unsafe
                                     + "' is present and is not yet reproduced by ScenarioMesh discovery");
                 }
-                SelectionOverride selectionOverride = selectionOverride(
-                        properties, "failsafe.includes", "failsafe.excludes", "Failsafe");
+
+                CommandLineClassSelection.Analysis commandSelection = CommandLineClassSelection.analyze(
+                        "Failsafe", "it.test", properties.userProperty("it.test"));
+                if (!commandSelection.supported()) {
+                    return CompatibilityDecision.passThrough(commandSelection.reason());
+                }
+
+                SelectionOverride selectionOverride;
+                if (commandSelection.present()) {
+                    // Failsafe's it.test parameter overrides configured includes and excludes.
+                    selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
+                } else {
+                    selectionOverride = selectionOverride(
+                            properties, "failsafe.includes", "failsafe.excludes", "Failsafe");
+                }
                 if (!selectionOverride.supported()) {
                     return CompatibilityDecision.passThrough(selectionOverride.reason());
                 }
@@ -130,8 +143,20 @@ final class ProjectCompatibilityDetector {
         if (unsafe != null) reasons.add("Maven test-selection property '" + unsafe + "' is present and is not yet reproduced by ScenarioMesh discovery");
         if (!reasons.isEmpty()) return CompatibilityDecision.passThrough(String.join("; ", reasons));
 
-        SelectionOverride selectionOverride = selectionOverride(
-                properties, "surefire.includes", "surefire.excludes", "Surefire");
+        CommandLineClassSelection.Analysis commandSelection = CommandLineClassSelection.analyze(
+                "Surefire", "test", properties.userProperty("test"));
+        if (!commandSelection.supported()) {
+            return CompatibilityDecision.passThrough(commandSelection.reason());
+        }
+
+        SelectionOverride selectionOverride;
+        if (commandSelection.present()) {
+            // Surefire's test parameter overrides configured includes and excludes.
+            selectionOverride = SelectionOverride.supported(commandSelection.includeRegexes(), List.of());
+        } else {
+            selectionOverride = selectionOverride(
+                    properties, "surefire.includes", "surefire.excludes", "Surefire");
+        }
         if (!selectionOverride.supported()) return CompatibilityDecision.passThrough(selectionOverride.reason());
 
         List<String> includes = selectionOverride.includes() != null

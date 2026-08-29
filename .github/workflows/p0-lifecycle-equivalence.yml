@@ -46,3 +46,15 @@ jobs:
           test "$(grep -Fc 'BEFORE_ALL' target/cucumber-lifecycle.log)" -eq 1
           test "$(grep -Fc 'AFTER_ALL' target/cucumber-lifecycle.log)" -eq 1
           test -f target/scenariomesh/summary.json
+      - name: Native and ScenarioMesh class selector contract is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            -Dtest=AlphaContractTest,BetaContractTest -Dcontract.value=cli
+      - name: Native and ScenarioMesh wildcard selector contract is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            -Dtest=Alpha* -Dcontract.value=cli
+      - name: Native and ScenarioMesh selector-file contract is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            -Pselection-files -Dcontract.value=cli
