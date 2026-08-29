@@ -5,9 +5,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -44,5 +46,21 @@ class DistributedTlsConfigTest {
         assertTrue(config.distributed().tls().requireClientAuth());
         assertEquals(key.toAbsolutePath().normalize(), config.distributed().tls().keyStore());
         assertEquals(trust.toAbsolutePath().normalize(), config.distributed().tls().trustStore());
+    }
+
+    @Test
+    void configDiagnosticsNeverExposeAuthenticationSecrets() {
+        TlsConfig tls = new TlsConfig(true, true,
+                Path.of("worker.p12"), "key-password",
+                Path.of("trust.p12"), "trust-password");
+        DistributedConfig distributed = new DistributedConfig(
+                DistributedConfig.WorkerMode.REMOTE,
+                "127.0.0.1", 4444, "remote-token", Duration.ofSeconds(10), tls);
+
+        String text = distributed.toString();
+        assertFalse(text.contains("remote-token"));
+        assertFalse(text.contains("key-password"));
+        assertFalse(text.contains("trust-password"));
+        assertTrue(text.contains("<redacted>"));
     }
 }
