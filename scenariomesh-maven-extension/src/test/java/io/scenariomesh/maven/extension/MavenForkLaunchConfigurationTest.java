@@ -63,6 +63,19 @@ class MavenForkLaunchConfigurationTest {
     }
 
     @Test
+    void invalidCommandLineAssertionValueFailsClosedEvenWithoutExplicitPluginConfiguration() {
+        MavenForkLaunchConfiguration.Analysis analysis = compatibility.analyze(
+                null,
+                ProjectCompatibilityDetector.ExecutorKind.SUREFIRE,
+                List.of("default-test"),
+                key -> "project.basedir".equals(key) ? projectDir.toString() : null,
+                key -> "enableAssertions".equals(key) ? "sometimes" : null);
+
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("non-boolean"), analysis.reason());
+    }
+
+    @Test
     void defaultsMatchSurefireForkDefaults() {
         Plugin plugin = plugin("maven-surefire-plugin", "default-test");
         MavenForkLaunchConfiguration.Analysis analysis = compatibility.analyze(
@@ -120,6 +133,54 @@ class MavenForkLaunchConfigurationTest {
 
         assertTrue(analysis.supported(), analysis.reason());
         assertEquals("sensitive-value", analysis.required("default-test").environmentVariables().get("API_TOKEN"));
+        assertTrue(analysis.reason() == null || !analysis.reason().contains("sensitive-value"));
+    }
+
+    @Test
+    void preservesEmptyAndWhitespaceEnvironmentValuesExactly() {
+        Plugin plugin = plugin("maven-surefire-plugin", "default-test");
+        Xpp3Dom root = new Xpp3Dom("configuration");
+        Xpp3Dom environment = new Xpp3Dom("environmentVariables");
+        add(environment, "EMPTY_VALUE", "");
+        add(environment, "PADDED_VALUE", "  padded value  ");
+        root.addChild(environment);
+        plugin.setConfiguration(root);
+
+        MavenForkLaunchConfiguration.Analysis analysis = compatibility.analyze(
+                plugin,
+                ProjectCompatibilityDetector.ExecutorKind.SUREFIRE,
+                List.of("default-test"),
+                key -> "project.basedir".equals(key) ? projectDir.toString() : null,
+                ignored -> null);
+
+        assertTrue(analysis.supported(), analysis.reason());
+        assertEquals("", analysis.required("default-test").environmentVariables().get("EMPTY_VALUE"));
+        assertEquals("  padded value  ", analysis.required("default-test").environmentVariables().get("PADDED_VALUE"));
+    }
+
+    @Test
+    void keepsConfiguredOverlayAndInheritedExclusionAsSeparateLaunchInstructions() {
+        Plugin plugin = plugin("maven-surefire-plugin", "default-test");
+        Xpp3Dom root = new Xpp3Dom("configuration");
+        Xpp3Dom environment = new Xpp3Dom("environmentVariables");
+        add(environment, "OVERLAY", "configured");
+        root.addChild(environment);
+        Xpp3Dom excluded = new Xpp3Dom("excludedEnvironmentVariables");
+        add(excluded, "excludedEnvironmentVariable", "OVERLAY");
+        root.addChild(excluded);
+        plugin.setConfiguration(root);
+
+        MavenForkLaunchConfiguration.Analysis analysis = compatibility.analyze(
+                plugin,
+                ProjectCompatibilityDetector.ExecutorKind.SUREFIRE,
+                List.of("default-test"),
+                key -> "project.basedir".equals(key) ? projectDir.toString() : null,
+                ignored -> null);
+
+        assertTrue(analysis.supported(), analysis.reason());
+        MavenForkLaunchConfiguration.LaunchSettings settings = analysis.required("default-test");
+        assertEquals("configured", settings.environmentVariables().get("OVERLAY"));
+        assertTrue(settings.excludedEnvironmentVariables().contains("OVERLAY"));
     }
 
     private Plugin plugin(String artifactId, String executionId) {
