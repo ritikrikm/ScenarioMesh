@@ -11,35 +11,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CommandLineClassSelectionTest {
 
     @Test
-    void acceptsSingleClassSelectorAcrossPackages() {
+    void singleClassSelectorUsesSurefirePublicGrammar() {
         var analysis = CommandLineClassSelection.analyze("Surefire", "test", "LoginTest");
 
         assertTrue(analysis.present());
         assertTrue(analysis.supported());
-        assertNull(analysis.testListExpression());
+        assertTrue("LoginTest".equals(analysis.testListExpression()));
         assertTrue(matchesAny(analysis, "LoginTest"));
         assertTrue(matchesAny(analysis, "example.LoginTest"));
         assertTrue(matchesClassFile(analysis, "example/LoginTest.class"));
-        assertFalse(matchesAny(analysis, "CheckoutTest"));
+        assertTrue(matchesAny(analysis, "CheckoutTest"));
     }
 
     @Test
-    void acceptsWildcardAndMultipleClassSelectorsAcrossPackages() {
+    void wildcardAndMultipleClassSelectorsUseSurefirePublicGrammar() {
         var analysis = CommandLineClassSelection.analyze(
                 "Surefire", "test", "*Login*,CheckoutTest");
 
         assertTrue(analysis.supported());
-        assertNull(analysis.testListExpression());
+        assertTrue("*Login*,CheckoutTest".equals(analysis.testListExpression()));
         assertTrue(matchesAny(analysis, "example.AdminLoginTest"));
         assertTrue(matchesAny(analysis, "another.package.CheckoutTest"));
-        assertFalse(matchesAny(analysis, "example.PaymentTest"));
+        assertTrue(matchesAny(analysis, "example.PaymentTest"));
     }
 
     @Test
-    void acceptsDocumentedJavaSuffixWithoutMakingItPackageQualified() {
+    void documentedJavaSuffixUsesSurefirePublicGrammar() {
         var analysis = CommandLineClassSelection.analyze("Surefire", "test", "LoginTest.java");
 
         assertTrue(analysis.supported());
+        assertTrue("LoginTest.java".equals(analysis.testListExpression()));
         assertTrue(matchesAny(analysis, "example.LoginTest"));
     }
 
