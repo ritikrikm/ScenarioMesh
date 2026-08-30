@@ -57,11 +57,10 @@ class ProjectCompatibilityDetectorTest {
         session.getUserProperties().setProperty("test", "LoginTest,*Checkout*");
         var decision = detector.evaluate(session, project);
         assertTrue(decision.compatible(), decision.reason());
-        assertEquals(2, decision.includeClassNameRegexes().size());
+        assertEquals(List.of(".*"), decision.includeClassNameRegexes());
         assertTrue(decision.excludeClassNameRegexes().isEmpty());
-        assertTrue(matchesAny(decision.includeClassNameRegexes(), "LoginTest"));
-        assertTrue(matchesAny(decision.includeClassNameRegexes(), "FastCheckoutTest"));
-        assertFalse(matchesAny(decision.includeClassNameRegexes(), "OtherTest"));
+        assertEquals("LoginTest,*Checkout*",
+                decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
     }
 
     @Test
@@ -82,12 +81,9 @@ class ProjectCompatibilityDetectorTest {
         session.getUserProperties().setProperty("surefire.includes", "%regex[.*OtherTest.class]");
         session.getUserProperties().setProperty("surefire.excludes", "!NeverMatchedTest");
         session.getUserProperties().setProperty("test", "LoginTest#happy*");
-
         var decision = detector.evaluate(session, project);
-
         assertTrue(decision.compatible(), decision.reason());
-        assertEquals("LoginTest#happy*",
-                decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
+        assertEquals("LoginTest#happy*", decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
         assertFalse(decision.executorSystemProperties().containsKey(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS));
         assertFalse(decision.executorSystemProperties().containsKey(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS));
     }
@@ -99,8 +95,7 @@ class ProjectCompatibilityDetectorTest {
         session.getUserProperties().setProperty("test", "LoginTest#happyPath");
         var decision = detector.evaluate(session, project);
         assertTrue(decision.compatible(), decision.reason());
-        assertEquals("LoginTest#happyPath",
-                decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
+        assertEquals("LoginTest#happyPath", decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
         assertTrue(matchesAny(decision.includeClassNameRegexes(), "example.LoginTest"));
     }
 
@@ -112,15 +107,11 @@ class ProjectCompatibilityDetectorTest {
         MavenSession session = session("verify");
         session.getUserProperties().setProperty("failsafe.includes", "%regex[.*(Smoke|Api)IT.class]");
         session.getUserProperties().setProperty("failsafe.excludes", "**/*SlowIT.java");
-
         var decision = detector.evaluate(session, project);
-
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(ProjectCompatibilityDetector.ExecutorKind.FAILSAFE, decision.executorKind());
-        assertTrue(decision.includeClassNameRegexes().stream()
-                .anyMatch(regex -> Pattern.matches(regex, "example/SmokeIT.class")));
-        assertTrue(decision.includeClassNameRegexes().stream()
-                .noneMatch(regex -> Pattern.matches(regex, "example/OtherIT.class")));
+        assertTrue(decision.includeClassNameRegexes().stream().anyMatch(regex -> Pattern.matches(regex, "example/SmokeIT.class")));
+        assertTrue(decision.includeClassNameRegexes().stream().noneMatch(regex -> Pattern.matches(regex, "example/OtherIT.class")));
         assertFalse(decision.executorSystemProperties().containsKey(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS));
         assertFalse(decision.executorSystemProperties().containsKey(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS));
     }
@@ -132,21 +123,16 @@ class ProjectCompatibilityDetectorTest {
         MavenSession session = session("verify");
         session.getUserProperties().setProperty("failsafe.excludes", "!NeverMatchedIT");
         session.getUserProperties().setProperty("it.test", "CheckoutIT#pay*");
-
         var decision = detector.evaluate(session, project);
-
         assertTrue(decision.compatible(), decision.reason());
-        assertEquals("CheckoutIT#pay*",
-                decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
+        assertEquals("CheckoutIT#pay*", decision.executorSystemProperties().get(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION));
         assertFalse(decision.executorSystemProperties().containsKey(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS));
         assertFalse(decision.executorSystemProperties().containsKey(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS));
     }
 
     @Test
     void directJUnit4IsOnlyACandidateUntilRuntimePreflightProvesVintageOwnership() {
-        MavenProject project = project(
-                dependency("org.junit.jupiter", "junit-jupiter"),
-                dependency("junit", "junit"));
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"), dependency("junit", "junit"));
         var decision = detector.evaluate(session("test"), project);
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(Set.of("junit-platform", "junit4-vintage"), decision.frameworks());
@@ -155,9 +141,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void multipleFrameworkSignalsAreCandidatesAndRuntimePreflightProvesOwnership() {
-        MavenProject project = project(
-                dependency("org.junit.jupiter", "junit-jupiter"),
-                dependency("org.testng", "testng"));
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"), dependency("org.testng", "testng"));
         var decision = detector.evaluate(session("test"), project);
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(Set.of("junit-platform", "testng"), decision.frameworks());
@@ -175,10 +159,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void cucumberJUnit4PlusTestNgDoesNotFailCompatibilityOnDependenciesAlone() {
-        MavenProject project = project(
-                dependency("io.cucumber", "cucumber-junit"),
-                dependency("org.testng", "testng"),
-                dependency("junit", "junit"));
+        MavenProject project = project(dependency("io.cucumber", "cucumber-junit"), dependency("org.testng", "testng"), dependency("junit", "junit"));
         var decision = detector.evaluate(session("test"), project);
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(Set.of("cucumber-junit4", "testng"), decision.frameworks());
@@ -186,9 +167,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void cucumberJUnit4DependencyCanStillTakeOverDespiteItsJUnit4Dependency() {
-        MavenProject project = project(
-                dependency("io.cucumber", "cucumber-junit"),
-                dependency("junit", "junit"));
+        MavenProject project = project(dependency("io.cucumber", "cucumber-junit"), dependency("junit", "junit"));
         var decision = detector.evaluate(session("test"), project);
         assertTrue(decision.compatible(), decision.reason());
         assertEquals(List.of("cucumber-junit4"), decision.frameworks().stream().sorted().toList());
@@ -207,9 +186,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void mixedProviderGroupFilteringStaysNativeUntilItsOwnEquivalenceGate() {
-        MavenProject project = project(
-                dependency("org.junit.jupiter", "junit-jupiter"),
-                dependency("org.testng", "testng"));
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"), dependency("org.testng", "testng"));
         project.getProperties().setProperty("groups", "smoke");
         var decision = detector.evaluate(session("test"), project);
         assertFalse(decision.compatible());
@@ -218,9 +195,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void cucumberCliTagFilterIsForwardedIntoDiscoveryAndWorkers() {
-        MavenProject project = project(
-                dependency("io.cucumber", "cucumber-junit"),
-                dependency("junit", "junit"));
+        MavenProject project = project(dependency("io.cucumber", "cucumber-junit"), dependency("junit", "junit"));
         MavenSession session = session("test");
         session.getUserProperties().setProperty("cucumber.filter.tags", "@smoke and not @slow");
         var decision = detector.evaluate(session, project);
@@ -230,9 +205,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void cucumberMavenJvmPropertyIsForwardedIncludingCustomPluginConfiguration() {
-        MavenProject project = project(
-                dependency("io.cucumber", "cucumber-junit"),
-                dependency("junit", "junit"));
+        MavenProject project = project(dependency("io.cucumber", "cucumber-junit"), dependency("junit", "junit"));
         MavenSession session = session("test");
         session.getSystemProperties().setProperty("cucumber.plugin", "com.example.CustomReporter,pretty");
         session.getSystemProperties().setProperty("cucumber.filter.name", "Checkout.*");
@@ -244,9 +217,7 @@ class ProjectCompatibilityDetectorTest {
 
     @Test
     void projectOnlyCucumberSelectionFailsClosedBecauseNativeForkExposureIsAmbiguous() {
-        MavenProject project = project(
-                dependency("io.cucumber", "cucumber-junit"),
-                dependency("junit", "junit"));
+        MavenProject project = project(dependency("io.cucumber", "cucumber-junit"), dependency("junit", "junit"));
         project.getProperties().setProperty("cucumber.filter.tags", "@smoke");
         var decision = detector.evaluate(session("test"), project);
         assertFalse(decision.compatible());
