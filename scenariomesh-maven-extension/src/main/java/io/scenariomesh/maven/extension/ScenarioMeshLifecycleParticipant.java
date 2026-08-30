@@ -14,6 +14,7 @@ import org.codehaus.plexus.component.annotations.Component;
 import org.codehaus.plexus.component.annotations.Requirement;
 import org.codehaus.plexus.logging.Logger;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
+import org.eclipse.aether.RepositorySystem;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -41,6 +42,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private final DownstreamLifecycleCompatibility downstreamLifecycleCompatibility = new DownstreamLifecycleCompatibility();
     private final ConfigResolver configResolver = new ConfigResolver();
     @Requirement private Logger logger;
+    @Requirement private RepositorySystem repositorySystem;
 
     @Override
     public void afterProjectsRead(MavenSession session) throws MavenExecutionException {
@@ -105,12 +107,15 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
+            MavenAdditionalClasspathDependencyResolver additionalDependencyResolver =
+                    new MavenAdditionalClasspathDependencyResolver(repositorySystem);
             MavenExecutorClasspathConfiguration.Analysis classpathAnalysis = executorClasspathConfiguration.analyze(
                     nativeExecutor,
                     decision.executorKind(),
                     executionIds,
                     effectiveProperties::resolve,
-                    effectiveProperties::userProperty);
+                    effectiveProperties::userProperty,
+                    dependencies -> additionalDependencyResolver.resolve(session, project, dependencies));
             if (!classpathAnalysis.supported()) {
                 diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision,
                         "Maven executor classpath cannot be reproduced safely: " + classpathAnalysis.reason());
