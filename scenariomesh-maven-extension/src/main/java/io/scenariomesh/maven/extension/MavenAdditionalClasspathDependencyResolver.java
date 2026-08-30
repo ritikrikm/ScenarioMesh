@@ -5,11 +5,11 @@ import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.project.MavenProject;
 import org.eclipse.aether.RepositorySystem;
+import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.graph.DependencyFilter;
 import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResult;
-import org.eclipse.aether.collection.CollectRequest;
 import org.eclipse.aether.util.artifact.JavaScopes;
 import org.eclipse.aether.util.filter.DependencyFilterUtils;
 
@@ -35,11 +35,12 @@ final class MavenAdditionalClasspathDependencyResolver {
         if (dependencies == null || dependencies.isEmpty()) return List.of();
 
         Set<String> reactorGavs = reactorGavs(session);
+        rejectReactorRoots(reactorGavs, dependencies);
         Map<String, org.apache.maven.artifact.Artifact> firstByConflictId = new LinkedHashMap<>();
         for (Dependency dependency : dependencies) {
             Set<org.apache.maven.artifact.Artifact> resolved = resolveOne(session, project, dependency);
             for (org.apache.maven.artifact.Artifact artifact : resolved) {
-                String gav = artifact.getGroupId() + ":" + artifact.getArtifactId() + ":" + artifact.getVersion();
+                String gav = gav(artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion());
                 if (reactorGavs.contains(gav)) {
                     throw new IllegalStateException("additionalClasspathDependency resolved reactor artifact " + gav
                             + "; native Surefire supports only external dependencies for this parameter");
@@ -55,6 +56,17 @@ final class MavenAdditionalClasspathDependencyResolver {
             paths.add(file.getAbsoluteFile().toPath().normalize().toString());
         }
         return List.copyOf(paths);
+    }
+
+    static void rejectReactorRoots(Set<String> reactorGavs, List<Dependency> dependencies) {
+        if (reactorGavs == null || reactorGavs.isEmpty() || dependencies == null) return;
+        for (Dependency dependency : dependencies) {
+            String dependencyGav = gav(dependency.getGroupId(), dependency.getArtifactId(), dependency.getVersion());
+            if (reactorGavs.contains(dependencyGav)) {
+                throw new IllegalStateException("additionalClasspathDependency references reactor artifact " + dependencyGav
+                        + "; native Surefire supports only external dependencies for this parameter");
+            }
+        }
     }
 
     private Set<org.apache.maven.artifact.Artifact> resolveOne(
@@ -81,8 +93,12 @@ final class MavenAdditionalClasspathDependencyResolver {
         LinkedHashSet<String> values = new LinkedHashSet<>();
         if (session.getProjects() == null) return values;
         for (MavenProject project : session.getProjects()) {
-            values.add(project.getGroupId() + ":" + project.getArtifactId() + ":" + project.getVersion());
+            values.add(gav(project.getGroupId(), project.getArtifactId(), project.getVersion()));
         }
         return values;
+    }
+
+    private static String gav(String groupId, String artifactId, String version) {
+        return groupId + ":" + artifactId + ":" + version;
     }
 }
