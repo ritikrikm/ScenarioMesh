@@ -1,9 +1,11 @@
 package io.scenariomesh.maven.extension;
 
 import org.apache.maven.model.Plugin;
+import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,6 +48,31 @@ class MavenExecutorClasspathConfigurationTest {
     }
 
     @Test
+    void failsafeResolvesEachStandardExecutionWithItsEffectiveDependencyConfiguration() {
+        Plugin plugin = new Plugin();
+        plugin.setConfiguration(configuration(additionalDependency("org.example", "shared", "1.0", null, null)));
+        plugin.addExecution(execution("first", additionalDependency("org.example", "first", "2.0", null, null)));
+        plugin.addExecution(execution("second", additionalDependency("org.example", "second", "3.0", null, null)));
+        List<List<String>> resolvedRoots = new ArrayList<>();
+
+        var analysis = configuration.analyze(
+                plugin,
+                ProjectCompatibilityDetector.ExecutorKind.FAILSAFE,
+                List.of("first", "second"),
+                ignored -> null,
+                ignored -> null,
+                dependencies -> {
+                    resolvedRoots.add(dependencies.stream().map(org.apache.maven.model.Dependency::getArtifactId).toList());
+                    return dependencies.stream().map(d -> "/repo/" + d.getArtifactId() + ".jar").toList();
+                });
+
+        assertTrue(analysis.supported(), analysis.reason());
+        assertEquals(List.of("/repo/shared.jar", "/repo/first.jar"), analysis.required("first").additionalClasspathElements());
+        assertEquals(List.of("/repo/shared.jar", "/repo/second.jar"), analysis.required("second").additionalClasspathElements());
+        assertEquals(List.of(List.of("shared", "first"), List.of("shared", "second")), resolvedRoots);
+    }
+
+    @Test
     void requiresExplicitVersionInsteadOfApplyingProjectDependencyManagement() {
         Plugin plugin = plugin(additionalDependency("org.example", "root", null, null, null));
 
@@ -79,13 +106,24 @@ class MavenExecutorClasspathConfigurationTest {
     }
 
     private Plugin plugin(Xpp3Dom dependency) {
+        Plugin plugin = new Plugin();
+        plugin.setConfiguration(configuration(dependency));
+        return plugin;
+    }
+
+    private PluginExecution execution(String id, Xpp3Dom dependency) {
+        PluginExecution execution = new PluginExecution();
+        execution.setId(id);
+        execution.setConfiguration(configuration(dependency));
+        return execution;
+    }
+
+    private Xpp3Dom configuration(Xpp3Dom dependency) {
         Xpp3Dom config = new Xpp3Dom("configuration");
         Xpp3Dom dependencies = new Xpp3Dom("additionalClasspathDependencies");
         dependencies.addChild(dependency);
         config.addChild(dependencies);
-        Plugin plugin = new Plugin();
-        plugin.setConfiguration(config);
-        return plugin;
+        return config;
     }
 
     private Xpp3Dom additionalDependency(String groupId, String artifactId, String version,
