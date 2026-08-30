@@ -1,0 +1,32 @@
+name: additional-classpath-dependencies
+on: [push, pull_request]
+
+jobs:
+  additional-classpath-dependencies:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Build and install ScenarioMesh
+        run: mvn -B -DskipTests install
+      - name: Native Surefire resolves isolated additional dependency tree
+        working-directory: examples/additional-classpath-dependencies-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test
+          test -f target/surefire-reports/TEST-example.AdditionalClasspathDependenciesTest.xml
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+      - name: ScenarioMesh reproduces additional dependency classpath
+        working-directory: examples/additional-classpath-dependencies-example
+        run: |
+          mvn -B clean test
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq 'additionalDependencyAndItsTransitiveAreVisibleWithoutProjectConflictMediation()' target/scenariomesh/summary.json
