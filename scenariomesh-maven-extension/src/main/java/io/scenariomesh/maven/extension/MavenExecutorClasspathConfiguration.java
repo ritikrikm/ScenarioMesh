@@ -1,5 +1,7 @@
 package io.scenariomesh.maven.extension;
 
+import org.apache.maven.model.Dependency;
+import org.apache.maven.model.Exclusion;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -23,7 +25,8 @@ final class MavenExecutorClasspathConfiguration {
                      ProjectCompatibilityDetector.ExecutorKind executorKind,
                      List<String> executionIds,
                      Function<String, String> propertyResolver,
-                     Function<String, String> userPropertyResolver) {
+                     Function<String, String> userPropertyResolver,
+                     AdditionalDependencyResolver additionalDependencyResolver) {
         List<String> reasons = new ArrayList<>();
         Map<String, Settings> byExecution = new LinkedHashMap<>();
         String executor = executorKind == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE ? "failsafe" : "surefire";
@@ -42,7 +45,17 @@ final class MavenExecutorClasspathConfiguration {
                 }
             }
             applyUserOverrides(settings, reasons, userPropertyResolver);
-            byExecution.put(executionId, settings.freeze());
+            Settings frozen = settings.freeze();
+            if (reasons.isEmpty() && !frozen.additionalClasspathDependencies().isEmpty()) {
+                try {
+                    frozen = frozen.withResolvedAdditionalDependencies(
+                            additionalDependencyResolver.resolve(frozen.additionalClasspathDependencies()));
+                } catch (Exception exception) {
+                    reasons.add("could not resolve <additionalClasspathDependencies> with Surefire-equivalent Maven Resolver semantics: "
+                            + safeMessage(exception));
+                }
+            }
+            byExecution.put(executionId, frozen);
         }
         return reasons.isEmpty() ? Analysis.supported(byExecution) : Analysis.unsupported(String.join("; ", reasons));
     }
@@ -56,8 +69,7 @@ final class MavenExecutorClasspathConfiguration {
                 case "additionalClasspathElements" -> readAdditionalElements(child, location, settings, reasons, propertyResolver);
                 case "classpathDependencyExcludes" -> readDependencyExcludes(child, location, settings, reasons, propertyResolver);
                 case "classpathDependencyScopeExclude" -> readScopeExclude(child, location, settings, reasons, propertyResolver);
-                case "additionalClasspathDependencies" -> reasons.add(location
-                        + " uses <additionalClasspathDependencies>; exact external dependency-tree resolution is not yet enabled in the ScenarioMesh classpath owner");
+                case "additionalClasspathDependencies" -> readAdditionalDependencies(child, location, settings, reasons, propertyResolver);
                 default -> { }
             }
         }
@@ -85,6 +97,79 @@ final class MavenExecutorClasspathConfiguration {
                 reasons.add(location + " contains an invalid <additionalClasspathElement> path");
             }
         }
+    }
+
+    private void readAdditionalDependencies(Xpp3Dom parent, String location, MutableSettings settings,
+                                            List<String> reasons, Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"additionalClasspathDependency".equals(item.getName())) {
+                reasons.add(location + " contains unsupported element <" + item.getName()
+                        + "> inside <additionalClasspathDependencies>");
+                continue;
+            }
+            Dependency dependency = new Dependency();
+            boolean malformed = false;
+            for (Xpp3Dom field : item.getChildren()) {
+                switch (field.getName()) {
+                    case "groupId" -> dependency.setGroupId(simpleValue(field, location, "groupId", reasons, propertyResolver));
+                    case "artifactId" -> dependency.setArtifactId(simpleValue(field, location, "artifactId", reasons, propertyResolver));
+                    case "version" -> dependency.setVersion(simpleValue(field, location, "version", reasons, propertyResolver));
+                    case "type" -> dependency.setType(simpleValue(field, location, "type", reasons, propertyResolver));
+                    case "classifier" -> dependency.setClassifier(simpleValue(field, location, "classifier", reasons, propertyResolver));
+                    case "scope" -> dependency.setScope(simpleValue(field, location, "scope", reasons, propertyResolver));
+                    case "optional" -> dependency.setOptional(simpleValue(field, location, "optional", reasons, propertyResolver));
+                    case "exclusions" -> readExclusions(field, dependency, location, reasons, propertyResolver);
+                    default -> {
+                        reasons.add(location + " uses unsupported <additionalClasspathDependency> field <" + field.getName() + ">");
+                        malformed = true;
+                    }
+                }
+            }
+            if (blank(dependency.getGroupId()) || blank(dependency.getArtifactId()) || blank(dependency.getVersion())) {
+                reasons.add(location + " <additionalClasspathDependency> requires groupId, artifactId and version; project dependency-management is intentionally not applied");
+                malformed = true;
+            }
+            String scope = dependency.getScope();
+            if (!blank(scope) && !Set.of("compile", "runtime").contains(scope)) {
+                reasons.add(location + " <additionalClasspathDependency> scope '" + scope
+                        + "' is outside Surefire's effective compile/runtime additional classpath");
+                malformed = true;
+            }
+            if (!malformed) settings.additionalClasspathDependencies.add(dependency);
+        }
+    }
+
+    private void readExclusions(Xpp3Dom parent, Dependency dependency, String location, List<String> reasons,
+                                Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"exclusion".equals(item.getName())) {
+                reasons.add(location + " contains unsupported <" + item.getName() + "> inside dependency exclusions");
+                continue;
+            }
+            Exclusion exclusion = new Exclusion();
+            for (Xpp3Dom field : item.getChildren()) {
+                if ("groupId".equals(field.getName())) {
+                    exclusion.setGroupId(simpleValue(field, location, "exclusion.groupId", reasons, propertyResolver));
+                } else if ("artifactId".equals(field.getName())) {
+                    exclusion.setArtifactId(simpleValue(field, location, "exclusion.artifactId", reasons, propertyResolver));
+                } else {
+                    reasons.add(location + " uses unsupported exclusion field <" + field.getName() + ">");
+                }
+            }
+            if (blank(exclusion.getGroupId()) || blank(exclusion.getArtifactId())) {
+                reasons.add(location + " dependency exclusion requires groupId and artifactId");
+            } else dependency.addExclusion(exclusion);
+        }
+    }
+
+    private String simpleValue(Xpp3Dom node, String location, String field, List<String> reasons,
+                               Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured value for " + field);
+            return null;
+        }
+        String value = resolve(node.getValue(), location + " " + field, reasons, propertyResolver);
+        return value == null ? null : value.trim();
     }
 
     private void readDependencyExcludes(Xpp3Dom parent, String location, MutableSettings settings,
@@ -123,7 +208,7 @@ final class MavenExecutorClasspathConfiguration {
         }
         String additionalDependencies = userPropertyResolver.apply("maven.test.additionalClasspathDependencies");
         if (additionalDependencies != null) {
-            reasons.add("Maven user property 'maven.test.additionalClasspathDependencies' is present; exact Maven Dependency-list conversion is not yet proven by ScenarioMesh");
+            reasons.add("Maven user property 'maven.test.additionalClasspathDependencies' is present; exact Maven Dependency-list CLI conversion is not yet proven by ScenarioMesh");
         }
         String excludes = userPropertyResolver.apply("maven.test.dependency.excludes");
         if (excludes != null) {
@@ -162,16 +247,36 @@ final class MavenExecutorClasspathConfiguration {
                 || (node.getAttributeNames() != null && node.getAttributeNames().length > 0);
     }
 
+    private boolean blank(String value) { return value == null || value.isBlank(); }
+
+    private String safeMessage(Throwable throwable) {
+        String value = throwable.getMessage();
+        return value == null || value.isBlank() ? throwable.getClass().getName() : value;
+    }
+
+    @FunctionalInterface
+    interface AdditionalDependencyResolver {
+        List<String> resolve(List<Dependency> dependencies) throws Exception;
+    }
+
     record Settings(List<String> additionalClasspathElements,
                     List<String> classpathDependencyExcludes,
-                    String classpathDependencyScopeExclude) {
+                    String classpathDependencyScopeExclude,
+                    List<Dependency> additionalClasspathDependencies) {
         Settings {
             additionalClasspathElements = List.copyOf(additionalClasspathElements == null ? List.of() : additionalClasspathElements);
             classpathDependencyExcludes = List.copyOf(classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes);
+            additionalClasspathDependencies = List.copyOf(additionalClasspathDependencies == null ? List.of() : additionalClasspathDependencies);
         }
-        static Settings defaults() { return new Settings(List.of(), List.of(), null); }
+        static Settings defaults() { return new Settings(List.of(), List.of(), null, List.of()); }
         boolean custom() { return !additionalClasspathElements.isEmpty() || !classpathDependencyExcludes.isEmpty()
-                || classpathDependencyScopeExclude != null; }
+                || classpathDependencyScopeExclude != null || !additionalClasspathDependencies.isEmpty(); }
+        Settings withResolvedAdditionalDependencies(List<String> resolved) {
+            LinkedHashSet<String> combined = new LinkedHashSet<>(additionalClasspathElements);
+            combined.addAll(resolved == null ? List.of() : resolved);
+            return new Settings(List.copyOf(combined), classpathDependencyExcludes,
+                    classpathDependencyScopeExclude, additionalClasspathDependencies);
+        }
     }
 
     record Analysis(boolean supported, String reason, Map<String, Settings> byExecutionId) {
@@ -188,8 +293,10 @@ final class MavenExecutorClasspathConfiguration {
     private static final class MutableSettings {
         private final Set<String> additionalClasspathElements = new LinkedHashSet<>();
         private final Set<String> classpathDependencyExcludes = new LinkedHashSet<>();
+        private final List<Dependency> additionalClasspathDependencies = new ArrayList<>();
         private String classpathDependencyScopeExclude;
         Settings freeze() { return new Settings(List.copyOf(additionalClasspathElements),
-                List.copyOf(classpathDependencyExcludes), classpathDependencyScopeExclude); }
+                List.copyOf(classpathDependencyExcludes), classpathDependencyScopeExclude,
+                List.copyOf(additionalClasspathDependencies)); }
     }
 }
