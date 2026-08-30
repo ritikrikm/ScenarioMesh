@@ -8,6 +8,7 @@ import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.SelectedTestClasses;
 import io.scenariomesh.core.TaskMetadata;
 import io.scenariomesh.maven.selection.SurefireGroupSelection;
 import org.testng.IConfigurationListener;
@@ -79,26 +80,13 @@ public final class TestNgAdapter implements ScenarioAdapter {
         List<String> inspectionFailures = new ArrayList<>();
         Set<String> seen = new HashSet<>();
 
-        for (Path root : context.testRoots()) {
-            if (!Files.isDirectory(root)) continue;
-            try (Stream<Path> stream = Files.walk(root)) {
-                for (Path file : stream
-                        .filter(path -> path.toString().endsWith(".class"))
-                        .filter(path -> !path.getFileName().toString().contains("$"))
-                        .sorted()
-                        .toList()) {
-                    String className = root.relativize(file).toString()
-                            .replace('/', '.')
-                            .replace('\\', '.')
-                            .replaceAll("\\.class$", "");
-                    if (!context.discoverySelection().matchesClassName(className)) continue;
-                    try {
-                        Class<?> candidate = Class.forName(className, false, context.classLoader());
-                        discoverMethods(candidate, tasks, seen, groupSelection);
-                    } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
-                        inspectionFailures.add(className + " -> " + message(exception));
-                    }
-                }
+        for (String className : SelectedTestClasses.scan(context.testRoots(), context.discoverySelection())) {
+            if (className.contains("$")) continue;
+            try {
+                Class<?> candidate = Class.forName(className, false, context.classLoader());
+                discoverMethods(candidate, tasks, seen, groupSelection);
+            } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
+                inspectionFailures.add(className + " -> " + message(exception));
             }
         }
 

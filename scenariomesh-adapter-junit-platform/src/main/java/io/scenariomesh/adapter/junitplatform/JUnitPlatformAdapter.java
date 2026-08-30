@@ -9,6 +9,7 @@ import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.SelectedTestClasses;
 import io.scenariomesh.core.TaskMetadata;
 import org.junit.platform.engine.DiscoverySelector;
 import org.junit.platform.engine.TestEngine;
@@ -38,7 +39,7 @@ import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
 
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqueId;
 
 public final class JUnitPlatformAdapter implements ScenarioAdapter {
@@ -77,7 +78,8 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         if (context.testRoots().isEmpty()) return List.of();
         LauncherDiscoveryRequestBuilder builder = JUnitEngineSelection.apply(
                 LauncherDiscoveryRequestBuilder.request()
-                        .selectors(selectClasspathRoots(new HashSet<>(context.testRoots()))),
+                        .selectors(SelectedTestClasses.scan(context.testRoots(), context.discoverySelection()).stream()
+                                .map(className -> selectClass(className)).toList()),
                 context.properties());
         if (!context.discoverySelection().includeClassNameRegexes().isEmpty()
                 || !context.discoverySelection().excludeClassNameRegexes().isEmpty()

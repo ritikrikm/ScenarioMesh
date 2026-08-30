@@ -128,7 +128,8 @@ final class ProjectCompatibilityDetector {
                                             ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
                                     plan.jvmArgs(),
                                     planProperties,
-                                    plan.testFailureIgnore()));
+                                    plan.testFailureIgnore(),
+                                    plan.dependenciesToScan()));
                 }
                 if (!plans.isEmpty()) {
                     return CompatibilityDecision.takeOver(
@@ -192,7 +193,8 @@ final class ProjectCompatibilityDetector {
         applySelectionProperties(surefireSystemProperties, commandSelection, selectionOverride);
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
+                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false,
+                        surefireAnalysis == null ? List.of() : surefireAnalysis.dependenciesToScan())));
     }
 
     private void applySelectionProperties(Map<String, String> target,
@@ -360,12 +362,14 @@ final class ProjectCompatibilityDetector {
             List<String> excludeClassNameRegexes,
             List<String> executorJvmArgs,
             Map<String, String> executorSystemProperties,
-            boolean testFailureIgnore) {
+            boolean testFailureIgnore,
+            List<String> dependenciesToScan) {
         ExecutorPlan {
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
             executorJvmArgs = List.copyOf(executorJvmArgs == null ? List.of() : executorJvmArgs);
             executorSystemProperties = Map.copyOf(executorSystemProperties == null ? Map.of() : executorSystemProperties);
+            dependenciesToScan = List.copyOf(dependenciesToScan == null ? List.of() : dependenciesToScan);
         }
     }
 

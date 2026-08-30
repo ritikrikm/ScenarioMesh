@@ -1,6 +1,7 @@
 package io.scenariomesh.adapter.junitplatform;
 
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.SelectedTestClasses;
 import org.junit.platform.engine.TestEngine;
 import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.Launcher;
@@ -18,7 +19,7 @@ import java.util.List;
 import java.util.ServiceLoader;
 import java.util.Set;
 
-import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathRoots;
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
 
 /** JUnit Platform-specific backend probe loaded inside the target execution classloader. */
 public final class JUnitPlatformBackendProbe {
@@ -54,7 +55,8 @@ public final class JUnitPlatformBackendProbe {
 
             DiscoverySelection selection = new DiscoverySelection(includeClassNameRegexes, excludeClassNameRegexes);
             LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request()
-                    .selectors(selectClasspathRoots(new HashSet<>(testRoots)));
+                    .selectors(SelectedTestClasses.scan(testRoots, selection).stream()
+                            .map(className -> selectClass(className)).toList());
             if (!selection.includeClassNameRegexes().isEmpty() || !selection.excludeClassNameRegexes().isEmpty()) {
                 request.filters(new MavenClassSelectionPostFilter(selection));
             }

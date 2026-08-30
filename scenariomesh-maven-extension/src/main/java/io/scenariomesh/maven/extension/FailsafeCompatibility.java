@@ -106,7 +106,8 @@ final class FailsafeCompatibility {
             }
             plans.add(new ExecutionPlan(executionId(execution), false, includes, excludes,
                     exactIncludes, exactExcludes,
-                    List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties), settings.testFailureIgnore));
+                    List.copyOf(settings.jvmArgs), Map.copyOf(settings.systemProperties), settings.testFailureIgnore,
+                    List.copyOf(settings.dependenciesToScan)));
         }
 
         if (!allReasons.isEmpty()) return Analysis.unsupported(String.join("; ", allReasons));
@@ -149,6 +150,7 @@ final class FailsafeCompatibility {
             case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
             case "includesFile" -> readSelectionFile(child, settings.includes, location, reasons, propertyResolver);
             case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
+            case "dependenciesToScan" -> readDependenciesToScan(child, location, settings, reasons, propertyResolver);
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
             case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
@@ -197,6 +199,19 @@ final class FailsafeCompatibility {
             String value = resolve(item.getValue(), location + " <suiteXmlFile>", reasons, propertyResolver);
             if (value == null || value.isBlank()) reasons.add(location + " contains an empty TestNG suite XML path");
             else settings.suiteXmlFiles.add(value);
+        }
+    }
+
+    private void readDependenciesToScan(Xpp3Dom parent, String location, EffectiveSettings settings,
+                                        List<String> reasons, Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"dependency".equals(item.getName()) || item.getChildCount() > 0) {
+                reasons.add(location + " contains unsupported structure inside <dependenciesToScan>");
+                continue;
+            }
+            String value = resolve(item.getValue(), location + " <dependency>", reasons, propertyResolver);
+            if (value == null || value.isBlank()) reasons.add(location + " contains a blank dependency scan pattern");
+            else settings.dependenciesToScan.add(value.trim());
         }
     }
 
@@ -330,7 +345,8 @@ final class FailsafeCompatibility {
     record ExecutionPlan(String executionId, boolean explicitlySkipped, List<String> includeClassNameRegexes,
                          List<String> excludeClassNameRegexes, List<String> includedTestPatterns,
                          List<String> excludedTestPatterns, List<String> jvmArgs,
-                         Map<String, String> systemProperties, boolean testFailureIgnore) {
+                         Map<String, String> systemProperties, boolean testFailureIgnore,
+                         List<String> dependenciesToScan) {
         ExecutionPlan {
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
             excludeClassNameRegexes = List.copyOf(excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
@@ -338,10 +354,11 @@ final class FailsafeCompatibility {
             excludedTestPatterns = List.copyOf(excludedTestPatterns == null ? List.of() : excludedTestPatterns);
             jvmArgs = List.copyOf(jvmArgs == null ? List.of() : jvmArgs);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
+            dependenciesToScan = List.copyOf(dependenciesToScan == null ? List.of() : dependenciesToScan);
         }
         static ExecutionPlan skipped(String executionId) {
             return new ExecutionPlan(executionId, true, List.of(), List.of(), List.of(), List.of(),
-                    List.of(), Map.of(), false);
+                    List.of(), Map.of(), false, List.of());
         }
     }
 
@@ -358,6 +375,7 @@ final class FailsafeCompatibility {
         private final Set<String> suiteXmlFiles = new LinkedHashSet<>();
         private final List<String> jvmArgs = new ArrayList<>();
         private final Map<String, String> systemProperties = new LinkedHashMap<>();
+        private final Set<String> dependenciesToScan = new LinkedHashSet<>();
         private boolean explicitlySkipped;
         private boolean testFailureIgnore;
         private int rerunFailingTestsCount;

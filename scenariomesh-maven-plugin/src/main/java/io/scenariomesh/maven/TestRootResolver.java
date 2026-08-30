@@ -15,6 +15,10 @@ import java.util.Set;
  */
 final class TestRootResolver {
     List<Path> resolve(MavenProject project) throws Exception {
+        return resolve(project, List.of());
+    }
+
+    List<Path> resolve(MavenProject project, List<String> dependencyTestRoots) throws Exception {
         Set<Path> roots = new LinkedHashSet<>();
         Path buildDirectory = normalize(project.getBuild().getDirectory());
         Path mainOutput = normalize(project.getBuild().getOutputDirectory());
@@ -33,6 +37,12 @@ final class TestRootResolver {
                 continue;
             }
             roots.add(candidate);
+        }
+        for (String element : dependencyTestRoots == null ? List.<String>of() : dependencyTestRoots) {
+            Path candidate = normalize(element);
+            if (Files.isDirectory(candidate) || (Files.isRegularFile(candidate) && candidate.toString().endsWith(".jar"))) {
+                roots.add(candidate);
+            }
         }
         return List.copyOf(roots);
     }
