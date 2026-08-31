@@ -90,74 +90,65 @@ final class RemoteWorkerPool implements TaskExecutionPool {
         logger.progress("Using " + sessions.size() + " authenticated remote worker process(es) proven during Maven preflight; no reconnect is required.");
     }
 
-    /** Backwards-compatible one-round entry point used by existing tests/direct callers. */
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
-        try {
-            return executeRound(tasks);
-        } finally {
-            finish();
-        }
+        try { return executeRound(tasks).results(); }
+        finally { finish(); }
     }
 
     @Override
-    public List<ExecutionResult> executeRound(List<ScenarioTask> tasks) throws InterruptedException {
+    public RoundExecution executeRound(List<ScenarioTask> tasks) throws InterruptedException {
         if (finished) throw new IllegalStateException("remote worker pool has already been finished");
-        if (tasks.isEmpty()) return List.of();
+        if (tasks.isEmpty()) return new RoundExecution(List.of(), List.of());
         if (sessions.isEmpty()) throw new IllegalStateException("no live remote worker is available for execution round");
         verifyTaskCoverage(tasks);
         WorkPlan workPlan = WorkPlan.from(tasks);
         SchedulingStrategy scheduler = new FifoSchedulingStrategy();
         scheduler.load(workPlan.representatives());
         ConcurrentLinkedQueue<ExecutionResult> results = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<ScenarioTask> concreteTasks = new ConcurrentLinkedQueue<>();
         RunProgress progress = new RunProgress(tasks.size());
         ExecutorService executor = Executors.newFixedThreadPool(sessions.size());
         logger.progress("Distributed scheduler loaded " + workPlan.units().size() + " work unit(s) for " + tasks.size()
                 + " logical task(s); " + sessions.size() + " remote worker(s) ready.");
-        for (RemoteWorkerSession session : List.copyOf(sessions)) executor.submit(() -> loop(session, scheduler, workPlan, results, progress));
+        for (RemoteWorkerSession session : List.copyOf(sessions)) {
+            executor.submit(() -> loop(session, scheduler, workPlan, concreteTasks, results, progress));
+        }
         executor.shutdown();
         executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
-        return List.copyOf(results);
+        return new RoundExecution(List.copyOf(concreteTasks), List.copyOf(results));
     }
 
     private void verifyTaskCoverage(List<ScenarioTask> tasks) {
         for (ScenarioTask task : tasks) {
             boolean covered = sessions.stream().anyMatch(session -> canRun(session.registration(), task));
-            if (!covered) {
-                throw new IllegalStateException("No registered remote worker can execute task " + task.id().value()
-                        + " using adapter=" + task.adapterId() + ", engine=" + requiredEngineId(task));
-            }
+            if (!covered) throw new IllegalStateException("No registered remote worker can execute task " + task.id().value()
+                    + " using adapter=" + task.adapterId() + ", engine=" + requiredEngineId(task));
         }
     }
 
-    static boolean canRun(WorkerRegistrationValidator validator,
-                          RemoteWorkerRegistration registration,
-                          ScenarioTask task) {
+    static boolean canRun(WorkerRegistrationValidator validator, RemoteWorkerRegistration registration, ScenarioTask task) {
         return validator.canRun(registration, task.adapterId(), requiredEngineId(task));
     }
-
     private boolean canRun(RemoteWorkerRegistration registration, ScenarioTask task) {
         return canRun(registrationValidator, registration, task);
     }
-
     static String requiredEngineId(ScenarioTask task) {
         String engineId = task.metadata().get(REQUIRED_ENGINE_ID);
         return engineId == null || engineId.isBlank() ? null : engineId;
     }
 
     private void loop(RemoteWorkerSession initialSession, SchedulingStrategy scheduler, WorkPlan workPlan,
+                      ConcurrentLinkedQueue<ScenarioTask> concreteTasks,
                       ConcurrentLinkedQueue<ExecutionResult> results, RunProgress progress) {
         RemoteWorkerSession session = initialSession;
         String executionLaneId = "remote-lane:" + initialSession.registration().workerId();
         int tasksOnWorker = 0;
         for (;;) {
             try { refreshIdleLiveness(session); }
-            catch (Exception stale) {
-                retire(session, "idle liveness failure: " + safeMessage(stale));
-                return;
-            }
+            catch (Exception stale) { retire(session, "idle liveness failure: " + safeMessage(stale)); return; }
             RemoteWorkerSession currentSession = session;
-            ScenarioTask representative = scheduler.nextEligible(
-                    executionLaneId, candidate -> canRun(currentSession.registration(), candidate));
+            ScenarioTask representative = scheduler.nextEligible(executionLaneId,
+                    candidate -> canRun(currentSession.registration(), candidate));
             if (representative == null) return;
             WorkUnit unit = workPlan.required(representative.id());
             String workerId = session.registration().workerId();
@@ -169,6 +160,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
 
             Instant started = Instant.now();
             List<ExecutionResult> unitResults;
+            List<ScenarioTask> unitConcreteTasks;
             WorkerTelemetry telemetry = null;
             try {
                 registrationValidator.requireCanRun(session.registration(), representative.adapterId(), requiredEngineId(representative));
@@ -179,21 +171,31 @@ final class RemoteWorkerPool implements TaskExecutionPool {
                 Envelope response = responseReader.readTerminal(workerId, request.config().workerTaskTimeout(), session::read,
                         heartbeatAt -> directory.heartbeat(workerId, heartbeatAt));
                 if (response == null) {
-                    unitResults = failures(unit.tasks(), workerId, attempt, started, "Remote worker disconnected before returning a work-unit result");
+                    unitConcreteTasks = unit.tasks();
+                    unitResults = failures(unit.tasks(), workerId, attempt, started,
+                            "Remote worker disconnected before returning a work-unit result");
                 } else {
                     workAuthority.acceptResult(workerId, response, Instant.now());
-                    unitResults = resultValidator.validateBatchOrFailures(unit.tasks(), workerId, attempt, started, response);
+                    ExecutionResultValidator.ValidatedWorkUnit validated = resultValidator.validateWorkUnit(
+                            unit.tasks(), workerId, attempt, started, response);
+                    unitConcreteTasks = validated.tasks();
+                    unitResults = validated.results();
                     if (unitResults.stream().noneMatch(this::isProtocolValidationFailure)) telemetry = response.telemetry();
                 }
             } catch (CapabilityMismatchException exception) {
-                unitResults = protocolFailures(unit.tasks(), workerId, attempt, started, "Remote worker capability mismatch: " + safeMessage(exception));
+                unitConcreteTasks = unit.tasks();
+                unitResults = protocolFailures(unit.tasks(), workerId, attempt, started,
+                        "Remote worker capability mismatch: " + safeMessage(exception));
             } catch (LeaseRegistry.StaleLeaseException exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = protocolFailures(unit.tasks(), workerId, attempt, started,
                         "Rejected stale or non-authoritative remote worker result: " + safeMessage(exception));
             } catch (SocketTimeoutException exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = failures(unit.tasks(), workerId, attempt, started,
                         "Remote worker exceeded work-unit timeout " + request.config().workerTaskTimeout());
             } catch (Exception exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = failures(unit.tasks(), workerId, attempt, started, safeMessage(exception));
             } finally {
                 try { directory.releaseSlot(workerId); } catch (Exception ignored) { }
@@ -205,12 +207,11 @@ final class RemoteWorkerPool implements TaskExecutionPool {
                 logger.progress(workerId + " RETRY " + unit.label() + " | nextAttempt=" + (attempt + 1));
                 RemoteWorkerSession replacement = replace(session, "retryable worker/transport failure");
                 if (replacement == null) return;
-                session = replacement;
-                tasksOnWorker = 0;
-                continue;
+                session = replacement; tasksOnWorker = 0; continue;
             }
 
             attempts.remove(representative.id());
+            concreteTasks.addAll(unitConcreteTasks);
             for (ExecutionResult result : unitResults) {
                 results.add(result);
                 int completed = progress.completed.incrementAndGet();
@@ -219,13 +220,12 @@ final class RemoteWorkerPool implements TaskExecutionPool {
             }
 
             if (unitResults.stream().anyMatch(this::requiresWorkerRetirement)) {
-                String reason = unitResults.stream().anyMatch(this::isProtocolValidationFailure) ? "protocol result validation failure" : "worker failure";
+                String reason = unitResults.stream().anyMatch(this::isProtocolValidationFailure)
+                        ? "protocol result validation failure" : "worker failure";
                 if (scheduler.queued() == 0) { retire(session, reason); return; }
                 RemoteWorkerSession replacement = replace(session, reason);
                 if (replacement == null) return;
-                session = replacement;
-                tasksOnWorker = 0;
-                continue;
+                session = replacement; tasksOnWorker = 0; continue;
             }
 
             tasksOnWorker += unit.tasks().size();
@@ -233,8 +233,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
             if (recycleReason != null) {
                 RemoteWorkerSession replacement = replace(session, recycleReason);
                 if (replacement == null) return;
-                session = replacement;
-                tasksOnWorker = 0;
+                session = replacement; tasksOnWorker = 0;
             }
         }
     }
@@ -245,10 +244,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
             Envelope envelope = session.readAvailable();
             if (envelope == null) break;
             if (!workerId.equals(envelope.workerId())) throw new IllegalStateException("idle worker identity mismatch");
-            if (envelope.type() == Protocol.Type.PRESENCE) {
-                directory.heartbeat(workerId, Instant.now());
-                continue;
-            }
+            if (envelope.type() == Protocol.Type.PRESENCE) { directory.heartbeat(workerId, Instant.now()); continue; }
             throw new IllegalStateException("unexpected idle worker message " + envelope.type());
         }
         if (directory.staleWorkers(Instant.now()).contains(workerId)) throw new IllegalStateException("worker presence heartbeat is stale");
@@ -260,8 +256,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
             while (sessions.size() < request.config().workerCount()) {
                 RemoteWorkerSession session = server.accept(distributed.registrationTimeout());
                 if (sessions.stream().anyMatch(existing -> existing.registration().workerId().equals(session.registration().workerId()))) {
-                    server.disconnected(session);
-                    continue;
+                    server.disconnected(session); continue;
                 }
                 sessions.add(session);
                 String agent = session.registration().metadata().getOrDefault("agentId", "unknown");
@@ -336,10 +331,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
             Envelope response = session.read(Duration.ofNanos(remaining));
             if (response == null) throw new IllegalStateException("worker disconnected before " + command + " ACK");
             if (!workerId.equals(response.workerId())) throw new IllegalStateException("control response identity mismatch");
-            if (response.type() == Protocol.Type.PRESENCE) {
-                directory.heartbeat(workerId, Instant.now());
-                continue;
-            }
+            if (response.type() == Protocol.Type.PRESENCE) { directory.heartbeat(workerId, Instant.now()); continue; }
             if (response.type() != Protocol.Type.ACK) throw new IllegalStateException("expected " + command + " ACK but received " + response.type());
             return;
         }
@@ -409,8 +401,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
                 String scope = task.metadata().get(EXECUTION_SCOPE_ID);
                 boolean scoped = scope != null && !scope.isBlank();
                 String engine = requiredEngineId(task);
-                String key = scoped
-                        ? "scope:" + task.adapterId() + ":" + (engine == null ? "" : engine) + ":" + scope
+                String key = scoped ? "scope:" + task.adapterId() + ":" + (engine == null ? "" : engine) + ":" + scope
                         : "leaf:" + task.id().value();
                 grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(task);
                 scopedByKey.putIfAbsent(key, scoped);
@@ -423,8 +414,7 @@ final class RemoteWorkerPool implements TaskExecutionPool {
                 boolean scoped = scopedByKey.get(entry.getKey());
                 String label = scoped ? representative.framework() + " scope " + members.size() + " leaf/leaves" : representative.displayName();
                 WorkUnit unit = new WorkUnit(representative, members, scoped, label);
-                units.add(unit);
-                byRepresentative.put(representative.id(), unit);
+                units.add(unit); byRepresentative.put(representative.id(), unit);
             }
             return new WorkPlan(units, byRepresentative);
         }
