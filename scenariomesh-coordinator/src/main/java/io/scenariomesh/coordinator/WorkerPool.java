@@ -48,7 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-final class WorkerPool implements AutoCloseable {
+final class WorkerPool implements TaskExecutionPool {
     private static final String EXECUTION_SCOPE_ID = "executionScopeId";
 
     private final ObjectMapper mapper = JsonCodec.create();
@@ -67,6 +67,7 @@ final class WorkerPool implements AutoCloseable {
     private final RunLogger logger;
     private final DistributedWorkAuthority workAuthority;
     private final LeasedResponseReader responseReader;
+    private volatile boolean finished;
 
     WorkerPool(RunRequest request, Path dir, RunLogger logger) throws Exception {
         this.request = request;
@@ -87,7 +88,20 @@ final class WorkerPool implements AutoCloseable {
         }
     }
 
+    /** Backwards-compatible one-round entry point used by existing tests/direct callers. */
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
+        try {
+            return executeRound(tasks);
+        } finally {
+            finish();
+        }
+    }
+
+    @Override
+    public List<ExecutionResult> executeRound(List<ScenarioTask> tasks) throws InterruptedException {
+        if (finished) throw new IllegalStateException("worker pool has already been finished");
+        if (tasks.isEmpty()) return List.of();
+        if (connections.isEmpty()) throw new IllegalStateException("no live local worker is available for execution round");
         WorkPlan workPlan = WorkPlan.from(tasks);
         SchedulingStrategy scheduler = new FifoSchedulingStrategy();
         scheduler.load(workPlan.representatives());
@@ -115,10 +129,7 @@ final class WorkerPool implements AutoCloseable {
         int tasksOnCurrentWorker = 0;
         for (;;) {
             ScenarioTask representative = scheduler.nextEligible(executionLaneId, candidate -> true);
-            if (representative == null) {
-                stop(connection);
-                return;
-            }
+            if (representative == null) return;
             WorkUnit unit = workPlan.required(representative.id());
             int attempt = attempts.merge(representative.id(), 1, Integer::sum);
             int busy = progress.busy.addAndGet(unit.tasks().size());
@@ -203,12 +214,6 @@ final class WorkerPool implements AutoCloseable {
             tasksOnCurrentWorker += unit.tasks().size();
             String recycleReason = recycleReason(tasksOnCurrentWorker, telemetry);
             if (recycleReason != null) {
-                if (scheduler.queued() == 0) {
-                    logger.progress(connection.workerId + " reached recycle condition (" + recycleReason
-                            + ") with no queued work remaining.");
-                    stop(connection);
-                    return;
-                }
                 WorkerConnection replacement = replace(connection, recycleReason);
                 if (replacement == null) return;
                 connection = replacement;
@@ -337,9 +342,6 @@ final class WorkerPool implements AutoCloseable {
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile())
                 .redirectErrorStream(true);
-        // Surefire removes inherited exclusions before applying configured environment variables.
-        // Keep ScenarioMesh bootstrap authentication out of the child environment entirely so
-        // target tests see the same environment that native Maven would expose.
         request.excludedEnvironmentVariables().forEach(builder.environment()::remove);
         builder.environment().putAll(request.executorEnvironmentVariables());
         Process process = builder.start();
@@ -440,6 +442,13 @@ final class WorkerPool implements AutoCloseable {
         }
     }
 
+    @Override
+    public void finish() {
+        if (finished) return;
+        finished = true;
+        for (WorkerConnection connection : List.copyOf(connections)) stop(connection);
+    }
+
     private void destroyProcessTree(Process process, boolean force) {
         ProcessHandle root = process.toHandle();
         List<ProcessHandle> descendants = root.descendants().toList();
@@ -477,6 +486,7 @@ final class WorkerPool implements AutoCloseable {
 
     @Override
     public void close() {
+        finish();
         for (WorkerConnection connection : connections) {
             try {
                 connection.close();
@@ -530,9 +540,7 @@ final class WorkerPool implements AutoCloseable {
     }
 
     private record WorkUnit(ScenarioTask representative, List<ScenarioTask> tasks, boolean scoped, String label) {
-        private WorkUnit {
-            tasks = List.copyOf(tasks);
-        }
+        private WorkUnit { tasks = List.copyOf(tasks); }
     }
 
     private record WorkPlan(List<WorkUnit> units, Map<ScenarioId, WorkUnit> byRepresentative) {
@@ -567,9 +575,7 @@ final class WorkerPool implements AutoCloseable {
             return new WorkPlan(units, byRepresentative);
         }
 
-        List<ScenarioTask> representatives() {
-            return units.stream().map(WorkUnit::representative).toList();
-        }
+        List<ScenarioTask> representatives() { return units.stream().map(WorkUnit::representative).toList(); }
 
         WorkUnit required(ScenarioId representativeId) {
             WorkUnit unit = byRepresentative.get(representativeId);
@@ -602,10 +608,7 @@ final class WorkerPool implements AutoCloseable {
                 socket.setSoTimeout(Math.toIntExact(timeout.toMillis()));
                 return read();
             } finally {
-                try {
-                    socket.setSoTimeout(originalTimeout);
-                } catch (Exception ignored) {
-                }
+                try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
             }
         }
 
