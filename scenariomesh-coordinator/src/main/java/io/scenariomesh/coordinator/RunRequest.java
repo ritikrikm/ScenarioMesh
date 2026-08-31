@@ -3,6 +3,7 @@ package io.scenariomesh.coordinator;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.core.RetrySemantics.RetryPolicy;
 import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 
 import java.nio.file.Path;
@@ -26,7 +27,8 @@ public record RunRequest(Path projectDirectory,
                          boolean enableAssertions,
                          Map<String,String> executorEnvironmentVariables,
                          Set<String> excludedEnvironmentVariables,
-                         Path executorWorkingDirectory) {
+                         Path executorWorkingDirectory,
+                         RetryPolicy retryPolicy) {
     static final String INTERNAL_JAVA_EXECUTABLE_PROPERTY = "scenariomesh.internal.javaExecutable";
 
     public RunRequest {
@@ -45,6 +47,27 @@ public record RunRequest(Path projectDirectory,
                 excludedEnvironmentVariables==null?Set.of():new LinkedHashSet<>(excludedEnvironmentVariables));
         executorWorkingDirectory=(executorWorkingDirectory==null?projectDirectory:executorWorkingDirectory)
                 .toAbsolutePath().normalize();
+        retryPolicy=retryPolicy==null?RetryPolicy.none():retryPolicy;
+    }
+
+    public RunRequest(Path projectDirectory,
+                      List<Path> runtimeClasspath,
+                      List<Path> controlClasspath,
+                      List<Path> testRoots,
+                      Map<String,String> userProperties,
+                      ScenarioMeshConfig config,
+                      DiscoverySelection discoverySelection,
+                      List<String> executorJvmArgs,
+                      Map<String,String> executorSystemProperties,
+                      Path javaExecutable,
+                      boolean enableAssertions,
+                      Map<String,String> executorEnvironmentVariables,
+                      Set<String> excludedEnvironmentVariables,
+                      Path executorWorkingDirectory) {
+        this(projectDirectory, runtimeClasspath, controlClasspath, testRoots, userProperties, config,
+                discoverySelection, executorJvmArgs, executorSystemProperties, javaExecutable,
+                enableAssertions, executorEnvironmentVariables, excludedEnvironmentVariables,
+                executorWorkingDirectory, RetryPolicy.none());
     }
 
     public RunRequest(Path projectDirectory,
@@ -59,7 +82,7 @@ public record RunRequest(Path projectDirectory,
                       Path javaExecutable) {
         this(projectDirectory, runtimeClasspath, controlClasspath, testRoots, userProperties, config,
                 discoverySelection, executorJvmArgs, executorSystemProperties, javaExecutable,
-                true, Map.of(), Set.of(), projectDirectory);
+                true, Map.of(), Set.of(), projectDirectory, RetryPolicy.none());
     }
 
     public RunRequest(Path projectDirectory,
@@ -73,7 +96,7 @@ public record RunRequest(Path projectDirectory,
                       Path javaExecutable) {
         this(projectDirectory, runtimeClasspath, runtimeClasspath, testRoots, userProperties, config,
                 discoverySelection, executorJvmArgs, executorSystemProperties, javaExecutable,
-                true, Map.of(), Set.of(), projectDirectory);
+                true, Map.of(), Set.of(), projectDirectory, RetryPolicy.none());
     }
 
     public RunRequest(Path projectDirectory,
@@ -86,7 +109,7 @@ public record RunRequest(Path projectDirectory,
                       Map<String,String> executorSystemProperties) {
         this(projectDirectory, runtimeClasspath, runtimeClasspath, testRoots, userProperties, config,
                 discoverySelection, executorJvmArgs, executorSystemProperties, null,
-                true, Map.of(), Set.of(), projectDirectory);
+                true, Map.of(), Set.of(), projectDirectory, RetryPolicy.none());
     }
 
     @Override public Path projectDirectory() { return executorWorkingDirectory; }
