@@ -85,3 +85,28 @@ jobs:
           grep -Fq '"total" : 1' consumer/target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' consumer/target/scenariomesh/summary.json
           grep -Fq 'runsFromDependencyJar()' consumer/target/scenariomesh/summary.json
+      - name: JUnit Platform tag selection matches native Surefire
+        working-directory: examples/junit5-tag-selection-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test
+          grep -Fq 'Tests run: 2, Failures: 0, Errors: 0, Skipped: 0' target/surefire-reports/example.TaggedTest.txt
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+          mvn -B clean test
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 2' target/scenariomesh/summary.json
+          grep -Fq 'smokeRuns()' target/scenariomesh/summary.json
+          grep -Fq 'apiRuns()' target/scenariomesh/summary.json
+          ! grep -Fq 'excludedTagWins()' target/scenariomesh/summary.json
+          ! grep -Fq 'unmatchedTagDoesNotRun()' target/scenariomesh/summary.json
+      - name: JUnit 4 Vintage selection matches native Surefire
+        working-directory: examples/junit4-vintage-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test
+          test -f target/surefire-reports/TEST-example.LegacyJUnit4VintageTest.xml
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+          mvn -B clean test
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq 'runsThroughTargetVintageEngine' target/scenariomesh/summary.json

@@ -190,7 +190,7 @@ class ProjectCompatibilityDetectorTest {
         project.getProperties().setProperty("groups", "smoke");
         var decision = detector.evaluate(session("test"), project);
         assertFalse(decision.compatible());
-        assertTrue(decision.reason().contains("pure TestNG provider set"), decision.reason());
+        assertTrue(decision.reason().contains("pure TestNG and pure JUnit Platform provider sets"), decision.reason());
     }
 
     @Test

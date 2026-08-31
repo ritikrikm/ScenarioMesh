@@ -86,10 +86,11 @@ final class ProjectCompatibilityDetector {
                 return CompatibilityDecision.passThrough(
                         "Failsafe suiteXmlFiles combined with groups/excludedGroups remains native until TestNG suite materialization and zero-selection semantics are proven equivalent");
             }
-            if (groupSelectionRequested(properties, analysis.executionPlans()) && !frameworks.testNgOnly()) {
+            if (groupSelectionRequested(properties, analysis.executionPlans())
+                    && !frameworks.testNgOnly() && !frameworks.junitPlatformOnly()) {
                 return CompatibilityDecision.passThrough(
-                        "Failsafe groups/excludedGroups are currently owned only for a pure TestNG provider set; "
-                                + "mixed, JUnit Platform, and JUnit4 group semantics remain native");
+                        "Failsafe groups/excludedGroups are currently owned only for pure TestNG and pure JUnit Platform provider sets; "
+                                + "mixed, Cucumber, and JUnit4 category semantics remain native");
             }
             if (!analysis.explicitlySkipped()) {
                 String unsafe = firstPresentProperty(properties, FAILSAFE_UNSAFE_SELECTION_PROPERTIES);
@@ -147,12 +148,13 @@ final class ProjectCompatibilityDetector {
             reasons.addAll(surefireAnalysis.reasons());
             if (suiteXmlWithGroupSelection(properties, surefireAnalysis.systemProperties())) {
                 reasons.add("Surefire suiteXmlFiles combined with groups/excludedGroups remains native until TestNG suite materialization and zero-selection semantics are proven equivalent");
-            } else if (groupSelectionRequested(properties, surefireAnalysis.systemProperties()) && !frameworks.testNgOnly()) {
-                reasons.add("Surefire groups/excludedGroups are currently owned only for a pure TestNG provider set; "
-                        + "mixed, JUnit Platform, and JUnit4 group semantics remain native");
+            } else if (groupSelectionRequested(properties, surefireAnalysis.systemProperties())
+                    && !frameworks.testNgOnly() && !frameworks.junitPlatformOnly()) {
+                reasons.add("Surefire groups/excludedGroups are currently owned only for pure TestNG and pure JUnit Platform provider sets; "
+                        + "mixed, Cucumber, and JUnit4 category semantics remain native");
             }
-        } else if (executorGroupPropertyPresent(properties) && !frameworks.testNgOnly()) {
-            reasons.add("Surefire groups/excludedGroups are currently owned only for a pure TestNG provider set");
+        } else if (executorGroupPropertyPresent(properties) && !frameworks.testNgOnly() && !frameworks.junitPlatformOnly()) {
+            reasons.add("Surefire groups/excludedGroups are currently owned only for pure TestNG and pure JUnit Platform provider sets");
         }
         String unsafe = firstPresentProperty(properties, SUREFIRE_UNSAFE_SELECTION_PROPERTIES);
         if (unsafe != null) reasons.add("Maven test-selection property '" + unsafe + "' is present and is not yet reproduced by ScenarioMesh discovery");
@@ -431,6 +433,10 @@ final class ProjectCompatibilityDetector {
     private record FrameworkSignals(boolean junitPlatform, boolean cucumberJUnit4, boolean testNg, boolean directJUnit4) {
         boolean testNgOnly() {
             return testNg && !junitPlatform && !cucumberJUnit4 && !directJUnit4;
+        }
+
+        boolean junitPlatformOnly() {
+            return junitPlatform && !cucumberJUnit4 && !testNg && !directJUnit4;
         }
 
         Set<String> names() {

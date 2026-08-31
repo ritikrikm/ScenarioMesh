@@ -75,7 +75,6 @@ public final class TestNgAdapter implements ScenarioAdapter {
                     .map(this::suiteTask)
                     .toList();
         }
-        GroupSelection groupSelection = GroupSelection.from(context.properties());
         List<ScenarioTask> tasks = new ArrayList<>();
         List<String> inspectionFailures = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -84,7 +83,14 @@ public final class TestNgAdapter implements ScenarioAdapter {
             if (className.contains("$")) continue;
             try {
                 Class<?> candidate = Class.forName(className, false, context.classLoader());
-                discoverMethods(candidate, tasks, seen, groupSelection);
+                if (hasTestNgTests(candidate)) {
+                    discoverMethods(candidate, tasks, seen, GroupSelection.from(context.properties()));
+                }
+            } catch (IllegalArgumentException exception) {
+                if (exception.getMessage() != null && exception.getMessage().contains("Cannot parse Surefire group")) {
+                    throw exception;
+                }
+                inspectionFailures.add(className + " -> " + message(exception));
             } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
                 inspectionFailures.add(className + " -> " + message(exception));
             }
@@ -96,6 +102,14 @@ public final class TestNgAdapter implements ScenarioAdapter {
                             + String.join("; ", inspectionFailures));
         }
         return List.copyOf(tasks);
+    }
+
+    private boolean hasTestNgTests(Class<?> candidate) {
+        if (candidate.isAnnotationPresent(Test.class)) return true;
+        for (Method method : candidate.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Test.class)) return true;
+        }
+        return false;
     }
 
     private ScenarioTask suiteTask(String suiteXmlFile) {
