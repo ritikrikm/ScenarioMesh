@@ -11,9 +11,6 @@ import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.TaskMetadata;
 import org.testng.Assert;
 import org.testng.SkipException;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Factory;
-import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 import java.lang.reflect.Method;
@@ -22,7 +19,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestNgAdapterHardeningTest {
@@ -68,34 +64,34 @@ public class TestNgAdapterHardeningTest {
 
     @Test
     public void classLifecycleExecutesOnceInsideNativeScope() throws Exception {
-        NativeLifecycleFixture.beforeClass.set(0);
-        NativeLifecycleFixture.tests.set(0);
-        List<ScenarioTask> discovered = adapter.discover(discoveryContext(NativeLifecycleFixture.class));
+        TestNgNativeLifecycleFixture.beforeClass.set(0);
+        TestNgNativeLifecycleFixture.tests.set(0);
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgNativeLifecycleFixture.class));
         assertNativeMaterializer(discovered);
         WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
         Assert.assertEquals(execution.tasks().size(), 2);
-        Assert.assertEquals(NativeLifecycleFixture.beforeClass.get(), 1);
-        Assert.assertEquals(NativeLifecycleFixture.tests.get(), 2);
+        Assert.assertEquals(TestNgNativeLifecycleFixture.beforeClass.get(), 1);
+        Assert.assertEquals(TestNgNativeLifecycleFixture.tests.get(), 2);
     }
 
     @Test
     public void dependencyOrderingIsDelegatedToTestNg() throws Exception {
-        DependencyFixture.order.clear();
-        List<ScenarioTask> discovered = adapter.discover(discoveryContext(DependencyFixture.class));
+        TestNgDependencyFixture.order.clear();
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgDependencyFixture.class));
         assertNativeMaterializer(discovered);
         WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
         Assert.assertEquals(execution.results().size(), 2);
-        Assert.assertEquals(DependencyFixture.order, List.of("first", "second"));
+        Assert.assertEquals(TestNgDependencyFixture.order, List.of("first", "second"));
     }
 
     @Test
     public void factoryInstancesAreMaterializedWithoutCollapsingInstanceIdentity() throws Exception {
-        FactoryProduct.values.clear();
-        List<ScenarioTask> discovered = adapter.discover(discoveryContext(FactoryFixture.class));
+        TestNgFactoryFixture.Product.values.clear();
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgFactoryFixture.class));
         assertNativeMaterializer(discovered);
         WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
         Assert.assertEquals(execution.tasks().size(), 2);
-        Assert.assertEquals(Set.copyOf(FactoryProduct.values), Set.of("a", "b"));
+        Assert.assertEquals(Set.copyOf(TestNgFactoryFixture.Product.values), Set.of("a", "b"));
         Assert.assertEquals(execution.tasks().stream()
                 .map(t -> t.metadata().get("testngInstanceIdentity")).distinct().count(), 2L);
     }
@@ -106,7 +102,7 @@ public class TestNgAdapterHardeningTest {
         String previous = System.getProperty(key);
         System.setProperty(key, "expected");
         try {
-            List<ScenarioTask> discovered = adapter.discover(discoveryContext(ParameterFixture.class));
+            List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgParameterFixture.class));
             assertNativeMaterializer(discovered);
             WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
             Assert.assertEquals(execution.results().size(), 1);
@@ -118,7 +114,7 @@ public class TestNgAdapterHardeningTest {
 
     @Test
     public void classLevelTestUsesNativeTestNgDiscovery() throws Exception {
-        List<ScenarioTask> discovered = adapter.discover(discoveryContext(ClassLevelFixture.class));
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgClassLevelFixture.class));
         assertNativeMaterializer(discovered);
         WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
         Assert.assertEquals(execution.tasks().size(), 2);
@@ -236,41 +232,5 @@ public class TestNgAdapterHardeningTest {
     static final class DisabledFixture {
         private static final AtomicInteger executions = new AtomicInteger();
         @Test(enabled = false) public void disabled() { executions.incrementAndGet(); }
-    }
-
-    static final class NativeLifecycleFixture {
-        static final AtomicInteger beforeClass = new AtomicInteger();
-        static final AtomicInteger tests = new AtomicInteger();
-        @BeforeClass public void beforeClass() { beforeClass.incrementAndGet(); }
-        @Test public void first() { tests.incrementAndGet(); }
-        @Test public void second() { tests.incrementAndGet(); }
-    }
-
-    static final class DependencyFixture {
-        static final List<String> order = new CopyOnWriteArrayList<>();
-        @Test public void first() { order.add("first"); }
-        @Test(dependsOnMethods = "first") public void second() { order.add("second"); }
-    }
-
-    static final class FactoryFixture {
-        @Factory public Object[] instances() { return new Object[]{new FactoryProduct("a"), new FactoryProduct("b")}; }
-    }
-
-    static final class FactoryProduct {
-        static final List<String> values = new CopyOnWriteArrayList<>();
-        private final String value;
-        FactoryProduct(String value) { this.value = value; }
-        @Test public void test() { values.add(value); }
-    }
-
-    static final class ParameterFixture {
-        @Parameters("scenariomesh.test.parameter")
-        @Test public void receivesParameter(String value) { Assert.assertEquals(value, "expected"); }
-    }
-
-    @Test
-    static final class ClassLevelFixture {
-        public void first() { }
-        public void second() { }
     }
 }
