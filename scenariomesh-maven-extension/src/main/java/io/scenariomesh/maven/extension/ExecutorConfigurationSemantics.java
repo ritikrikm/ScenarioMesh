@@ -46,14 +46,14 @@ final class ExecutorConfigurationSemantics {
             "groups", "excludedGroups",
             "argLine",
             "testFailureIgnore", "failIfNoTests", "failIfNoSpecifiedTests",
-            "properties", "suiteXmlFiles");
+            "properties", "suiteXmlFiles", "rerunFailingTestsCount", "failOnFlakeCount");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
             "argLine", "testFailureIgnore", "rerunFailingTestsCount",
-            "suiteXmlFiles");
+            "failOnFlakeCount", "suiteXmlFiles");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.of();
 
