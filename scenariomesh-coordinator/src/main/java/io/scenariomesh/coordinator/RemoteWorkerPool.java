@@ -38,7 +38,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Remote-worker execution pool. CI owns machines/executors; ScenarioMesh owns authenticated test scheduling. */
-final class RemoteWorkerPool implements AutoCloseable {
+final class RemoteWorkerPool implements TaskExecutionPool {
     private static final String EXECUTION_SCOPE_ID = "executionScopeId";
     private static final String REQUIRED_ENGINE_ID = "requiredEngineId";
     private static final Duration REMOTE_LIVENESS_TIMEOUT = Duration.ofSeconds(20);
@@ -55,6 +55,7 @@ final class RemoteWorkerPool implements AutoCloseable {
     private final CopyOnWriteArrayList<RemoteWorkerSession> sessions = new CopyOnWriteArrayList<>();
     private final Map<ScenarioId, Integer> attempts = new ConcurrentHashMap<>();
     private final Object replacementLock = new Object();
+    private volatile boolean finished;
 
     RemoteWorkerPool(RunRequest request, RunLogger logger) throws Exception {
         this.request = request;
@@ -89,7 +90,20 @@ final class RemoteWorkerPool implements AutoCloseable {
         logger.progress("Using " + sessions.size() + " authenticated remote worker process(es) proven during Maven preflight; no reconnect is required.");
     }
 
+    /** Backwards-compatible one-round entry point used by existing tests/direct callers. */
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
+        try {
+            return executeRound(tasks);
+        } finally {
+            finish();
+        }
+    }
+
+    @Override
+    public List<ExecutionResult> executeRound(List<ScenarioTask> tasks) throws InterruptedException {
+        if (finished) throw new IllegalStateException("remote worker pool has already been finished");
+        if (tasks.isEmpty()) return List.of();
+        if (sessions.isEmpty()) throw new IllegalStateException("no live remote worker is available for execution round");
         verifyTaskCoverage(tasks);
         WorkPlan workPlan = WorkPlan.from(tasks);
         SchedulingStrategy scheduler = new FifoSchedulingStrategy();
@@ -144,7 +158,7 @@ final class RemoteWorkerPool implements AutoCloseable {
             RemoteWorkerSession currentSession = session;
             ScenarioTask representative = scheduler.nextEligible(
                     executionLaneId, candidate -> canRun(currentSession.registration(), candidate));
-            if (representative == null) { gracefulStop(session); return; }
+            if (representative == null) return;
             WorkUnit unit = workPlan.required(representative.id());
             String workerId = session.registration().workerId();
             int attempt = attempts.merge(representative.id(), 1, Integer::sum);
@@ -217,7 +231,6 @@ final class RemoteWorkerPool implements AutoCloseable {
             tasksOnWorker += unit.tasks().size();
             String recycleReason = recycleReason(tasksOnWorker, telemetry);
             if (recycleReason != null) {
-                if (scheduler.queued() == 0) { gracefulStop(session); return; }
                 RemoteWorkerSession replacement = replace(session, recycleReason);
                 if (replacement == null) return;
                 session = replacement;
@@ -238,9 +251,7 @@ final class RemoteWorkerPool implements AutoCloseable {
             }
             throw new IllegalStateException("unexpected idle worker message " + envelope.type());
         }
-        if (directory.staleWorkers(Instant.now()).contains(workerId)) {
-            throw new IllegalStateException("worker presence heartbeat is stale");
-        }
+        if (directory.staleWorkers(Instant.now()).contains(workerId)) throw new IllegalStateException("worker presence heartbeat is stale");
     }
 
     private void acceptInitialWorkers() throws Exception {
@@ -363,9 +374,16 @@ final class RemoteWorkerPool implements AutoCloseable {
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
+    @Override
+    public void finish() {
+        if (finished) return;
+        finished = true;
+        for (RemoteWorkerSession session : List.copyOf(sessions)) gracefulStop(session);
+    }
+
     @Override public void close() {
+        finish();
         for (RemoteWorkerSession session : List.copyOf(sessions)) {
-            try { gracefulStop(session); } catch (Exception ignored) { }
             try { server.disconnected(session); } catch (Exception ignored) { }
         }
         sessions.clear();
