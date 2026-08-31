@@ -13,23 +13,20 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProjectCompatibilityDetectorTestNgGroupTest {
     private final ProjectCompatibilityDetector detector = new ProjectCompatibilityDetector();
 
     @Test
-    void suiteXmlFilesCombinedWithCliGroupsRemainNative() {
+    void suiteXmlFilesKeepTestNgAsTheSelectionAuthority() {
         MavenProject project = testNgProjectWithSuiteXml();
         MavenSession session = session("test");
         session.getUserProperties().setProperty("groups", "smoke");
 
         var decision = detector.evaluate(session, project);
 
-        assertFalse(decision.compatible());
-        assertTrue(decision.reason().contains("suiteXmlFiles combined with groups/excludedGroups"),
-                decision.reason());
+        assertTrue(decision.compatible(), decision.reason());
     }
 
     private MavenProject testNgProjectWithSuiteXml() {

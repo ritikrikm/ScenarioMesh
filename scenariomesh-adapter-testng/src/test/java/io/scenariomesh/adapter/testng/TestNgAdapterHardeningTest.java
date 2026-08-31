@@ -158,7 +158,7 @@ public class TestNgAdapterHardeningTest {
     }
 
     @Test
-    public void testNgSuiteGroupOverrideCapabilityIsCoveredButMavenOwnershipIsGatedSeparately() throws Exception {
+    public void suiteXmlSelectionHonorsMavenGroupProperties() throws Exception {
         Path suite = Path.of(getClass().getResource("/suite-groups.xml").toURI());
         Map<String, String> properties = Map.of(
                 "scenariomesh.testng.suiteXmlFiles", suite.toString(),

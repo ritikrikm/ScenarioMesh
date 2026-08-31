@@ -409,6 +409,8 @@ public final class TestNgAdapter implements ScenarioAdapter {
     }
 
     private static void applyTestNgSuiteGroupSelection(TestNG testNg, Map<String, String> properties) {
+        // Current Surefire forwards these provider settings even with suite XML.
+        // TestNG remains responsible for applying the suite and group semantics.
         String groups = properties.get("groups");
         String excludedGroups = properties.get("excludedGroups");
         if (groups != null && !groups.isEmpty()) testNg.setGroups(groups);

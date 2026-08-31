@@ -1,0 +1,13 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="suite-selection-contract">
+  <test name="regression-only">
+    <groups>
+      <run>
+        <include name="regression"/>
+      </run>
+    </groups>
+    <classes>
+      <class name="example.SuiteSelectionTest"/>
+    </classes>
+  </test>
+</suite>
