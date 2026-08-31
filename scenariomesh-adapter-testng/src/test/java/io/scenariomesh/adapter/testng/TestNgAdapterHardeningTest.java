@@ -12,7 +12,6 @@ import io.scenariomesh.core.TaskMetadata;
 import org.testng.Assert;
 import org.testng.SkipException;
 import org.testng.annotations.BeforeClass;
-import org.testng.annotations.DataProvider;
 import org.testng.annotations.Factory;
 import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
@@ -103,12 +102,18 @@ public class TestNgAdapterHardeningTest {
 
     @Test
     public void systemPropertyBackedParametersAreInjectedByNativeTestNg() throws Exception {
-        List<ScenarioTask> discovered = adapter.discover(discoveryContext(ParameterFixture.class));
-        assertNativeMaterializer(discovered);
-        WorkUnitExecution execution = adapter.executeWorkUnit(discovered,
-                executionContext(Map.of("scenariomesh.test.parameter", "expected")));
-        Assert.assertEquals(execution.results().size(), 1);
-        Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
+        String key = "scenariomesh.test.parameter";
+        String previous = System.getProperty(key);
+        System.setProperty(key, "expected");
+        try {
+            List<ScenarioTask> discovered = adapter.discover(discoveryContext(ParameterFixture.class));
+            assertNativeMaterializer(discovered);
+            WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+            Assert.assertEquals(execution.results().size(), 1);
+            Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
+        } finally {
+            if (previous == null) System.clearProperty(key); else System.setProperty(key, previous);
+        }
     }
 
     @Test
@@ -224,16 +229,16 @@ public class TestNgAdapterHardeningTest {
         return new ExecutionContext(getClass().getClassLoader(), new WorkerId("test-worker"), 1, properties);
     }
 
-    public static final class RuntimeSkipFixture {
+    static final class RuntimeSkipFixture {
         @Test public void skips() { throw new SkipException("intentional skip"); }
     }
 
-    public static final class DisabledFixture {
+    static final class DisabledFixture {
         private static final AtomicInteger executions = new AtomicInteger();
         @Test(enabled = false) public void disabled() { executions.incrementAndGet(); }
     }
 
-    public static final class NativeLifecycleFixture {
+    static final class NativeLifecycleFixture {
         static final AtomicInteger beforeClass = new AtomicInteger();
         static final AtomicInteger tests = new AtomicInteger();
         @BeforeClass public void beforeClass() { beforeClass.incrementAndGet(); }
@@ -241,30 +246,30 @@ public class TestNgAdapterHardeningTest {
         @Test public void second() { tests.incrementAndGet(); }
     }
 
-    public static final class DependencyFixture {
+    static final class DependencyFixture {
         static final List<String> order = new CopyOnWriteArrayList<>();
         @Test public void first() { order.add("first"); }
         @Test(dependsOnMethods = "first") public void second() { order.add("second"); }
     }
 
-    public static final class FactoryFixture {
+    static final class FactoryFixture {
         @Factory public Object[] instances() { return new Object[]{new FactoryProduct("a"), new FactoryProduct("b")}; }
     }
 
-    public static final class FactoryProduct {
+    static final class FactoryProduct {
         static final List<String> values = new CopyOnWriteArrayList<>();
         private final String value;
         FactoryProduct(String value) { this.value = value; }
         @Test public void test() { values.add(value); }
     }
 
-    public static final class ParameterFixture {
+    static final class ParameterFixture {
         @Parameters("scenariomesh.test.parameter")
         @Test public void receivesParameter(String value) { Assert.assertEquals(value, "expected"); }
     }
 
     @Test
-    public static final class ClassLevelFixture {
+    static final class ClassLevelFixture {
         public void first() { }
         public void second() { }
     }
