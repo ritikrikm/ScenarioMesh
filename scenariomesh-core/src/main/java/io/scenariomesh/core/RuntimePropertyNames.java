@@ -31,6 +31,14 @@ public final class RuntimePropertyNames {
     public static final String MAVEN_PROMOTE_USER_PROPERTIES =
             INTERNAL_PREFIX + "maven.promoteUserPropertiesToSystemProperties";
 
+    /** Internal Maven class-run-order contract consumed only by the coordinator. */
+    public static final String MAVEN_RUN_ORDER =
+            INTERNAL_PREFIX + "maven.runOrder";
+    public static final String MAVEN_RUN_ORDER_RANDOM_SEED =
+            INTERNAL_PREFIX + "maven.runOrder.randomSeed";
+    public static final String MAVEN_RUN_ORDER_STATISTICS_FILE =
+            INTERNAL_PREFIX + "maven.runOrder.statisticsFile";
+
     /** Prevents Vintage from duplicating tests owned by the dedicated Cucumber JUnit 4 adapter. */
     public static final String JUNIT_VINTAGE_DISABLED =
             INTERNAL_PREFIX + "junit.disableVintage";
