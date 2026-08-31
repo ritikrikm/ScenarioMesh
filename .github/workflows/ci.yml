@@ -220,8 +220,8 @@ jobs:
           summary=examples/testng-group-pass-through-example/target/scenariomesh/summary.json
           test -f "$summary"
           grep -Fq '"total" : 1' "$summary"
-          grep -Fq 'smokeRuns()' "$summary"
-          if grep -Fq 'slowMustStayFilteredOut()' "$summary"; then
+          grep -Fq 'example.GroupedTest.smokeRuns' "$summary"
+          if grep -Fq 'example.GroupedTest.slowMustStayFilteredOut' "$summary"; then
             echo 'ScenarioMesh executed a TestNG method excluded by -Dgroups=smoke'
             exit 1
           fi
