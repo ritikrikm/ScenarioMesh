@@ -228,11 +228,12 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void rejectsUseModulePathTrueUntilModulePathExecutionIsSupported() {
+    void acceptsUseModulePathTrueForRuntimeModulePathPlanning() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("useModulePath", "true"));
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("useModulePath")));
+        assertFalse(analysis.explicitlySkipsTests());
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
     }
 
     @Test
