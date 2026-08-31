@@ -91,37 +91,39 @@ final class WorkerPool implements TaskExecutionPool {
     /** Backwards-compatible one-round entry point used by existing tests/direct callers. */
     List<ExecutionResult> execute(List<ScenarioTask> tasks) throws InterruptedException {
         try {
-            return executeRound(tasks);
+            return executeRound(tasks).results();
         } finally {
             finish();
         }
     }
 
     @Override
-    public List<ExecutionResult> executeRound(List<ScenarioTask> tasks) throws InterruptedException {
+    public RoundExecution executeRound(List<ScenarioTask> tasks) throws InterruptedException {
         if (finished) throw new IllegalStateException("worker pool has already been finished");
-        if (tasks.isEmpty()) return List.of();
+        if (tasks.isEmpty()) return new RoundExecution(List.of(), List.of());
         if (connections.isEmpty()) throw new IllegalStateException("no live local worker is available for execution round");
         WorkPlan workPlan = WorkPlan.from(tasks);
         SchedulingStrategy scheduler = new FifoSchedulingStrategy();
         scheduler.load(workPlan.representatives());
         ConcurrentLinkedQueue<ExecutionResult> results = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<ScenarioTask> concreteTasks = new ConcurrentLinkedQueue<>();
         RunProgress progress = new RunProgress(tasks.size());
         ExecutorService executor = Executors.newFixedThreadPool(connections.size());
         logger.progress("Scheduler FIFO loaded " + workPlan.units().size() + " work unit(s) for "
                 + tasks.size() + " logical task(s); " + connections.size() + " worker(s) ready.");
         for (WorkerConnection connection : List.copyOf(connections)) {
-            executor.submit(() -> loop(connection, scheduler, workPlan, results, progress));
+            executor.submit(() -> loop(connection, scheduler, workPlan, concreteTasks, results, progress));
         }
         executor.shutdown();
         executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
-        return List.copyOf(results);
+        return new RoundExecution(List.copyOf(concreteTasks), List.copyOf(results));
     }
 
     private void loop(
             WorkerConnection initialConnection,
             SchedulingStrategy scheduler,
             WorkPlan workPlan,
+            ConcurrentLinkedQueue<ScenarioTask> concreteTasks,
             ConcurrentLinkedQueue<ExecutionResult> results,
             RunProgress progress) {
         WorkerConnection connection = initialConnection;
@@ -141,6 +143,7 @@ final class WorkerPool implements TaskExecutionPool {
 
             Instant started = Instant.now();
             List<ExecutionResult> unitResults;
+            List<ScenarioTask> unitConcreteTasks;
             WorkerTelemetry telemetry = null;
             try {
                 registrationValidator.requireCanRun(connection.registration, representative.adapterId(), null);
@@ -150,26 +153,31 @@ final class WorkerPool implements TaskExecutionPool {
                 Envelope response = responseReader.readTerminal(
                         connection.workerId, request.config().workerTaskTimeout(), connection::read);
                 if (response == null) {
+                    unitConcreteTasks = unit.tasks();
                     unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
                             "Worker disconnected before returning a work-unit result");
                 } else {
                     workAuthority.acceptResult(connection.workerId, response, Instant.now());
-                    unitResults = resultValidator.validateBatchOrFailures(
+                    ExecutionResultValidator.ValidatedWorkUnit validated = resultValidator.validateWorkUnit(
                             unit.tasks(), connection.workerId, attempt, started, response);
-                    if (unitResults.stream().noneMatch(this::isProtocolValidationFailure)) {
-                        telemetry = response.telemetry();
-                    }
+                    unitConcreteTasks = validated.tasks();
+                    unitResults = validated.results();
+                    if (unitResults.stream().noneMatch(this::isProtocolValidationFailure)) telemetry = response.telemetry();
                 }
             } catch (CapabilityMismatchException exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = protocolFailures(unit.tasks(), connection.workerId, attempt, started,
                         "Worker capability mismatch: " + safeMessage(exception));
             } catch (LeaseRegistry.StaleLeaseException exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = protocolFailures(unit.tasks(), connection.workerId, attempt, started,
                         "Rejected stale or non-authoritative worker result: " + safeMessage(exception));
             } catch (SocketTimeoutException exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = failures(unit.tasks(), connection.workerId, attempt, started,
                         "Worker exceeded work-unit timeout " + request.config().workerTaskTimeout());
             } catch (Exception exception) {
+                unitConcreteTasks = unit.tasks();
                 unitResults = failures(unit.tasks(), connection.workerId, attempt, started, safeMessage(exception));
             }
 
@@ -189,6 +197,7 @@ final class WorkerPool implements TaskExecutionPool {
             }
 
             attempts.remove(representative.id());
+            concreteTasks.addAll(unitConcreteTasks);
             for (ExecutionResult result : unitResults) {
                 results.add(result);
                 int completed = progress.completed.incrementAndGet();
@@ -300,10 +309,7 @@ final class WorkerPool implements TaskExecutionPool {
 
     private void retireConnection(WorkerConnection connection, String reason) {
         connections.remove(connection);
-        try {
-            connection.close();
-        } catch (Exception ignored) {
-        }
+        try { connection.close(); } catch (Exception ignored) { }
         logger.progress(connection.workerId + " RETIRED after " + reason + ".");
         retireProcess(connection.workerId);
     }
@@ -320,33 +326,23 @@ final class WorkerPool implements TaskExecutionPool {
     }
 
     private String nextWorkerId() { return "worker-" + workerSequence.incrementAndGet(); }
-
     private Path logsDirectory() { return dir.resolve("logs"); }
-
-    private void prepareLogsDirectory() throws Exception {
-        if (request.config().workerLogFiles()) Files.createDirectories(logsDirectory());
-    }
+    private void prepareLogsDirectory() throws Exception { if (request.config().workerLogFiles()) Files.createDirectories(logsDirectory()); }
 
     private void launchWorker(String id) throws Exception {
         prepareLogsDirectory();
         String host = InetAddress.getLoopbackAddress().getHostAddress();
         int port = server.getLocalPort();
-        List<String> args = List.of(
-                "--host", host,
-                "--port", Integer.toString(port),
-                "--worker-id", id,
-                "--auth-token", token);
+        List<String> args = List.of("--host", host, "--port", Integer.toString(port), "--worker-id", id, "--auth-token", token);
         List<String> command = JavaProcessSupport.command(
                 request.runtimeClasspath(), request.effectiveJvmArgs(), request.effectiveSystemProperties(),
                 WorkerMain.class.getName(), args);
         ProcessBuilder builder = new ProcessBuilder(command)
-                .directory(request.projectDirectory().toFile())
-                .redirectErrorStream(true);
+                .directory(request.projectDirectory().toFile()).redirectErrorStream(true);
         request.excludedEnvironmentVariables().forEach(builder.environment()::remove);
         builder.environment().putAll(request.executorEnvironmentVariables());
         Process process = builder.start();
         processes.put(id, process);
-
         Thread pump = new Thread(
                 new WorkerOutputPump(id, process, request.config(), logsDirectory().resolve(id + ".log"), logger),
                 "scenariomesh-output-" + id);
@@ -375,12 +371,8 @@ final class WorkerPool implements TaskExecutionPool {
     }
 
     private void retireUnconnectedProcesses() {
-        Set<String> connectedIds = connections.stream()
-                .map(connection -> connection.workerId)
-                .collect(Collectors.toSet());
-        for (String workerId : new ArrayList<>(processes.keySet())) {
-            if (!connectedIds.contains(workerId)) retireProcess(workerId);
-        }
+        Set<String> connectedIds = connections.stream().map(connection -> connection.workerId).collect(Collectors.toSet());
+        for (String workerId : new ArrayList<>(processes.keySet())) if (!connectedIds.contains(workerId)) retireProcess(workerId);
     }
 
     private WorkerConnection acceptWorker(String expectedWorkerId) throws Exception {
@@ -388,32 +380,20 @@ final class WorkerPool implements TaskExecutionPool {
             Socket socket = server.accept();
             WorkerConnection connection = new WorkerConnection(socket);
             Envelope hello = connection.read();
-            boolean ownedProcess = hello != null
-                    && hello.workerId() != null
-                    && processes.containsKey(hello.workerId())
+            boolean ownedProcess = hello != null && hello.workerId() != null && processes.containsKey(hello.workerId())
                     && (expectedWorkerId == null || expectedWorkerId.equals(hello.workerId()))
                     && connections.stream().noneMatch(existing -> hello.workerId().equals(existing.workerId));
-            if (!ownedProcess) {
-                connection.close();
-                continue;
-            }
-
+            if (!ownedProcess) { connection.close(); continue; }
             RemoteWorkerRegistration registration;
-            try {
-                registration = registrationValidator.requireRegistration(hello, token);
-            } catch (RuntimeException invalidRegistration) {
+            try { registration = registrationValidator.requireRegistration(hello, token); }
+            catch (RuntimeException invalidRegistration) {
                 logger.progress("Rejected " + hello.workerId() + " registration: " + safeMessage(invalidRegistration));
-                connection.close();
-                retireProcess(hello.workerId());
-                continue;
+                connection.close(); retireProcess(hello.workerId()); continue;
             }
-
             connection.workerId = registration.workerId();
             connection.registration = registration;
-            logger.progress(connection.workerId + " READY"
-                    + " agent=" + registration.labels().get("agentId")
-                    + " slots=" + registration.slots()
-                    + " java=" + registration.javaFeature()
+            logger.progress(connection.workerId + " READY agent=" + registration.labels().get("agentId")
+                    + " slots=" + registration.slots() + " java=" + registration.javaFeature()
                     + " adapters=" + String.join(",", registration.adapterIds()));
             return connection;
         }
@@ -426,19 +406,14 @@ final class WorkerPool implements TaskExecutionPool {
             connection.socket.setSoTimeout(Math.toIntExact(request.config().workerShutdownTimeout().toMillis()));
             connection.write(Envelope.stop(connection.workerId));
             Envelope response = connection.read();
-            if (response == null
-                    || response.protocolVersion() != Protocol.VERSION
-                    || response.type() != Protocol.Type.ACK
+            if (response == null || response.protocolVersion() != Protocol.VERSION || response.type() != Protocol.Type.ACK
                     || !connection.workerId.equals(response.workerId())) {
                 logger.progress(connection.workerId + " did not acknowledge STOP; process cleanup will continue.");
             }
         } catch (Exception exception) {
             logger.progress(connection.workerId + " graceful STOP did not complete; process cleanup will continue.");
         } finally {
-            try {
-                connection.socket.setSoTimeout(originalTimeout);
-            } catch (Exception ignored) {
-            }
+            try { connection.socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
         }
     }
 
@@ -454,80 +429,47 @@ final class WorkerPool implements TaskExecutionPool {
         List<ProcessHandle> descendants = root.descendants().toList();
         for (int index = descendants.size() - 1; index >= 0; index--) {
             ProcessHandle descendant = descendants.get(index);
-            if (descendant.isAlive()) {
-                if (force) descendant.destroyForcibly(); else descendant.destroy();
-            }
+            if (descendant.isAlive()) { if (force) descendant.destroyForcibly(); else descendant.destroy(); }
         }
-        if (process.isAlive()) {
-            if (force) process.destroyForcibly(); else process.destroy();
-        }
+        if (process.isAlive()) { if (force) process.destroyForcibly(); else process.destroy(); }
         if (force) awaitProcessTreeTermination(root, descendants, request.config().workerShutdownTimeout());
     }
 
     private void awaitProcessTreeTermination(ProcessHandle root, List<ProcessHandle> descendants, Duration timeout) {
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
         List<ProcessHandle> handles = new ArrayList<>(descendants.size() + 1);
-        handles.addAll(descendants);
-        handles.add(root);
+        handles.addAll(descendants); handles.add(root);
         for (ProcessHandle handle : handles) {
             if (!handle.isAlive()) continue;
             long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) return;
-            try {
-                handle.onExit().get(remainingNanos, TimeUnit.NANOSECONDS);
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                return;
-            } catch (Exception ignored) {
-                return;
-            }
+            try { handle.onExit().get(remainingNanos, TimeUnit.NANOSECONDS); }
+            catch (InterruptedException exception) { Thread.currentThread().interrupt(); return; }
+            catch (Exception ignored) { return; }
         }
     }
 
     @Override
     public void close() {
         finish();
-        for (WorkerConnection connection : connections) {
-            try {
-                connection.close();
-            } catch (Exception ignored) {
-            }
-        }
-
+        for (WorkerConnection connection : connections) try { connection.close(); } catch (Exception ignored) { }
         for (Process process : processes.values()) destroyProcessTree(process, false);
-
         long deadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
         for (Process process : processes.values()) {
             if (!process.isAlive()) continue;
             long remainingNanos = deadlineNanos - System.nanoTime();
-            if (remainingNanos <= 0) {
-                destroyProcessTree(process, true);
-                continue;
-            }
-            try {
-                if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) destroyProcessTree(process, true);
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                destroyProcessTree(process, true);
-            }
+            if (remainingNanos <= 0) { destroyProcessTree(process, true); continue; }
+            try { if (!process.waitFor(remainingNanos, TimeUnit.NANOSECONDS)) destroyProcessTree(process, true); }
+            catch (InterruptedException exception) { Thread.currentThread().interrupt(); destroyProcessTree(process, true); }
         }
-
         long pumpDeadlineNanos = System.nanoTime() + request.config().workerShutdownTimeout().toNanos();
         for (Thread pump : outputPumps.values()) {
             long remainingNanos = pumpDeadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) break;
-            try {
-                long millis = Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
-                pump.join(millis);
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                break;
-            }
+            try { pump.join(Math.max(1L, TimeUnit.NANOSECONDS.toMillis(remainingNanos))); }
+            catch (InterruptedException exception) { Thread.currentThread().interrupt(); break; }
         }
-        try {
-            server.close();
-        } catch (Exception ignored) {
-        }
+        try { server.close(); } catch (Exception ignored) { }
     }
 
     private static final class RunProgress {
@@ -535,20 +477,14 @@ final class WorkerPool implements TaskExecutionPool {
         private final AtomicInteger completed = new AtomicInteger();
         private final AtomicInteger failed = new AtomicInteger();
         private final AtomicInteger busy = new AtomicInteger();
-
         private RunProgress(int total) { this.total = total; }
     }
 
     private record WorkUnit(ScenarioTask representative, List<ScenarioTask> tasks, boolean scoped, String label) {
         private WorkUnit { tasks = List.copyOf(tasks); }
     }
-
     private record WorkPlan(List<WorkUnit> units, Map<ScenarioId, WorkUnit> byRepresentative) {
-        private WorkPlan {
-            units = List.copyOf(units);
-            byRepresentative = Map.copyOf(byRepresentative);
-        }
-
+        private WorkPlan { units = List.copyOf(units); byRepresentative = Map.copyOf(byRepresentative); }
         static WorkPlan from(List<ScenarioTask> tasks) {
             Map<String, List<ScenarioTask>> grouped = new LinkedHashMap<>();
             Map<String, Boolean> scopedByKey = new LinkedHashMap<>();
@@ -565,18 +501,13 @@ final class WorkerPool implements TaskExecutionPool {
                 List<ScenarioTask> members = List.copyOf(entry.getValue());
                 ScenarioTask representative = members.get(0);
                 boolean scoped = scopedByKey.get(entry.getKey());
-                String label = scoped
-                        ? representative.framework() + " scope " + members.size() + " leaf/leaves"
-                        : representative.displayName();
+                String label = scoped ? representative.framework() + " scope " + members.size() + " leaf/leaves" : representative.displayName();
                 WorkUnit unit = new WorkUnit(representative, members, scoped, label);
-                units.add(unit);
-                byRepresentative.put(representative.id(), unit);
+                units.add(unit); byRepresentative.put(representative.id(), unit);
             }
             return new WorkPlan(units, byRepresentative);
         }
-
         List<ScenarioTask> representatives() { return units.stream().map(WorkUnit::representative).toList(); }
-
         WorkUnit required(ScenarioId representativeId) {
             WorkUnit unit = byRepresentative.get(representativeId);
             if (unit == null) throw new IllegalStateException("No work unit for representative " + representativeId.value());
@@ -590,35 +521,23 @@ final class WorkerPool implements TaskExecutionPool {
         private final BufferedWriter writer;
         private String workerId;
         private RemoteWorkerRegistration registration;
-
         private WorkerConnection(Socket socket) throws Exception {
             this.socket = socket;
             this.reader = new ProtocolFrameReader(socket.getInputStream());
             this.writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
         }
-
         private Envelope read() throws Exception {
             byte[] frame = reader.readBlocking();
             return frame == null ? null : mapper.readValue(frame, Envelope.class);
         }
-
         private Envelope read(Duration timeout) throws Exception {
             int originalTimeout = socket.getSoTimeout();
-            try {
-                socket.setSoTimeout(Math.toIntExact(timeout.toMillis()));
-                return read();
-            } finally {
-                try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { }
-            }
+            try { socket.setSoTimeout(Math.toIntExact(timeout.toMillis())); return read(); }
+            finally { try { socket.setSoTimeout(originalTimeout); } catch (Exception ignored) { } }
         }
-
         private void write(Envelope envelope) throws Exception {
-            writer.write(mapper.writeValueAsString(envelope));
-            writer.newLine();
-            writer.flush();
+            writer.write(mapper.writeValueAsString(envelope)); writer.newLine(); writer.flush();
         }
-
-        @Override
-        public void close() throws Exception { socket.close(); }
+        @Override public void close() throws Exception { socket.close(); }
     }
 }
