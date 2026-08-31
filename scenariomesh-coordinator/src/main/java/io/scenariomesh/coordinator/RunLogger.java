@@ -53,6 +53,17 @@ final class RunLogger {
         event(new RunEvent(Instant.now(), runId, "PROGRESS", null, null, safe));
     }
 
+    synchronized void mavenRerunRound(int rerunIndex, int taskCount, int configuredReruns) {
+        String message = "Maven rerun round " + rerunIndex + "/" + configuredReruns
+                + " executing " + taskCount + " failed logical test(s)";
+        if (config.showProgress()) System.out.println("[ScenarioMesh] " + message);
+        event(new RunEvent(Instant.now(), runId, "MAVEN_RERUN_ROUND", null, null,
+                null, null, null, null, rerunIndex, null, taskCount, null, null,
+                message, Map.of("rerunIndex", Integer.toString(rerunIndex),
+                        "configuredReruns", Integer.toString(configuredReruns),
+                        "logicalTaskCount", Integer.toString(taskCount))));
+    }
+
     synchronized void workerOutput(String workerId, String line) {
         String safe = sanitize(line);
         if (config.liveConsoleLogs()) System.out.println("[ScenarioMesh][" + workerId + "] " + safe);
