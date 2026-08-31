@@ -36,6 +36,18 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                                                 Set<String> requiredAdapterIds,
                                                 Set<String> requiredEngineIds,
                                                 Consumer<String> progress) throws Exception {
+        return prepare(config, requiredAdapterIds, requiredEngineIds, null, progress);
+    }
+
+    /**
+     * Prepares remote workers and, when an expected runtime fingerprint is supplied, requires every
+     * retained worker to match the exact runtime identity established by Maven preflight.
+     */
+    public static PreparedRemoteWorkers prepare(ScenarioMeshConfig config,
+                                                Set<String> requiredAdapterIds,
+                                                Set<String> requiredEngineIds,
+                                                String expectedRuntimeFingerprint,
+                                                Consumer<String> progress) throws Exception {
         Objects.requireNonNull(config, "config");
         if (!config.distributed().remote()) throw new IllegalArgumentException("PreparedRemoteWorkers requires workers.mode=remote");
         Set<String> adapters = Set.copyOf(requiredAdapterIds == null ? Set.of() : requiredAdapterIds);
@@ -58,6 +70,13 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                         server.disconnected(session);
                         continue;
                     }
+                    if (expectedRuntimeFingerprint != null && !expectedRuntimeFingerprint.isBlank()
+                            && !expectedRuntimeFingerprint.equals(session.registration().runtimeFingerprint())) {
+                        log.accept("ScenarioMesh remote preflight rejected " + session.registration().workerId()
+                                + " because its runtime fingerprint does not match the Maven-selected execution context.");
+                        server.disconnected(session);
+                        continue;
+                    }
                     sessions.add(session);
                     log.accept("ScenarioMesh remote preflight registered " + session.registration().workerId()
                             + " agent=" + session.registration().metadata().getOrDefault("agentId", "unknown")
@@ -66,11 +85,11 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
             }
             if (sessions.size() < config.minimumReadyWorkers()) {
                 throw new IllegalStateException("Only " + sessions.size() + " of " + config.workerCount()
-                        + " remote workers registered; minimum required is " + config.minimumReadyWorkers());
+                        + " equivalent remote workers registered; minimum required is " + config.minimumReadyWorkers());
             }
             verifyCapabilityCoverage(sessions.stream().map(RemoteWorkerSession::registration).toList(), adapters, engines);
             log.accept("ScenarioMesh remote preflight proved " + sessions.size()
-                    + " authenticated worker(s) with aggregate capability coverage for adapters="
+                    + " authenticated equivalent worker(s) with aggregate capability coverage for adapters="
                     + adapters + ", engines=" + engines + ".");
             return new PreparedRemoteWorkers(server, directory, sessions);
         } catch (Exception exception) {
@@ -87,9 +106,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         WorkerRegistrationValidator validator = new WorkerRegistrationValidator();
         for (String adapterId : requiredAdapterIds) {
             boolean covered = registrations.stream().anyMatch(registration -> validator.canRun(registration, adapterId, null));
-            if (!covered) {
-                throw new IllegalStateException("No prepared remote worker can execute required adapter " + adapterId);
-            }
+            if (!covered) throw new IllegalStateException("No prepared remote worker can execute required adapter " + adapterId);
         }
         for (String engineId : requiredEngineIds) {
             boolean covered = registrations.stream().anyMatch(registration ->
