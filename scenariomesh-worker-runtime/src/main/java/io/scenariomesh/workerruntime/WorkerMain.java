@@ -21,15 +21,12 @@ import java.lang.management.MemoryUsage;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.Socket;
-import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +50,10 @@ public final class WorkerMain {
                 : inlineClasspath != null && !inlineClasspath.isBlank()
                     ? TargetClasspathDescriptor.decodeInline(inlineClasspath)
                     : currentClasspath();
+        // Make the effective target realm identity available to the same strict equivalence
+        // fingerprint used by Maven preflight, including workers bootstrapped from a descriptor file.
+        System.setProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY,
+                TargetClasspathDescriptor.encodeInline(targetClasspath));
         try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
             ClassLoader previous = thread.getContextClassLoader();
             thread.setContextClassLoader(targetLoader);
@@ -220,14 +221,9 @@ public final class WorkerMain {
         Set<String> adapterIds = adapters.available(classLoader).stream()
                 .map(adapter -> adapter.id()).collect(Collectors.toUnmodifiableSet());
         Set<String> engineIds = detectJUnitPlatformEngineIds(classLoader);
-        String fingerprintInput = String.join("\n",
-                Integer.toString(Protocol.VERSION), Integer.toString(javaFeature),
-                System.getProperty("java.vendor", "unknown"), System.getProperty("java.version", "unknown"),
-                os, architecture, executionRealmFingerprint(classLoader));
-        byte[] digest = MessageDigest.getInstance("SHA-256")
-                .digest(fingerprintInput.getBytes(StandardCharsets.UTF_8));
+        String runtimeFingerprint = RuntimeEquivalenceFingerprint.capture(classLoader);
         return new WorkerCapabilities(agentId, 1, javaFeature, os, architecture,
-                HexFormat.of().formatHex(digest), adapterIds, engineIds,
+                runtimeFingerprint, adapterIds, engineIds,
                 Protocol.MIN_SUPPORTED_VERSION, Protocol.VERSION);
     }
 
@@ -249,14 +245,6 @@ public final class WorkerMain {
             }
         }
         return Set.copyOf(ids);
-    }
-
-    private static String executionRealmFingerprint(ClassLoader classLoader) {
-        if (classLoader instanceof URLClassLoader urls) {
-            return java.util.Arrays.stream(urls.getURLs()).map(Object::toString).sorted()
-                    .collect(Collectors.joining("\n"));
-        }
-        return classLoader.getClass().getName();
     }
 
     private static List<Path> currentClasspath() {
