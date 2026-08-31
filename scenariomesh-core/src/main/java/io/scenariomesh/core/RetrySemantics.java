@@ -19,6 +19,25 @@ import java.util.Objects;
 public final class RetrySemantics {
     private RetrySemantics() {}
 
+    /** Executor-level retry configuration. Zero preserves Maven's disabled/default semantics. */
+    public record RetryPolicy(int rerunFailingTestsCount, int failOnFlakeCount) implements Serializable {
+        public RetryPolicy {
+            if (rerunFailingTestsCount < 0) {
+                throw new IllegalArgumentException("rerunFailingTestsCount must be >= 0");
+            }
+            if (failOnFlakeCount < 0) {
+                throw new IllegalArgumentException("failOnFlakeCount must be >= 0");
+            }
+        }
+
+        public static RetryPolicy none() { return new RetryPolicy(0, 0); }
+        public boolean rerunsEnabled() { return rerunFailingTestsCount > 0; }
+        public boolean failsBuildForFlakes(int flakes) {
+            if (flakes < 0) throw new IllegalArgumentException("flakes must be >= 0");
+            return failOnFlakeCount > 0 && flakes >= failOnFlakeCount;
+        }
+    }
+
     public enum RetryCause {
         INITIAL,
         MAVEN_RERUN
@@ -28,7 +47,8 @@ public final class RetrySemantics {
         PASSED,
         SKIPPED,
         FLAKY,
-        FAILED
+        FAILED,
+        INFRASTRUCTURE_FAILED
     }
 
     public record ExecutionAttempt(
@@ -66,14 +86,15 @@ public final class RetrySemantics {
             if (attempts.isEmpty()) throw new IllegalArgumentException("logical execution requires at least one attempt");
         }
 
-        public boolean flaky() {
-            return status == LogicalStatus.FLAKY;
-        }
+        public boolean flaky() { return status == LogicalStatus.FLAKY; }
+        public boolean infrastructureFailed() { return status == LogicalStatus.INFRASTRUCTURE_FAILED; }
     }
 
     /**
-     * Aggregates an initial test result plus Maven reruns using Surefire's observable rules:
-     * a later pass is flaky; if every run fails, the first failure remains canonical.
+     * Aggregates an initial test result plus Maven reruns using Surefire/Failsafe observable rules:
+     * a later pass is flaky; if every test attempt fails, the first failure remains canonical.
+     * Infrastructure/configuration failure during a rerun remains fatal and is never hidden behind
+     * the earlier assertion failure.
      */
     public static LogicalExecution aggregate(List<ExecutionAttempt> attempts) {
         if (attempts == null || attempts.isEmpty()) {
@@ -99,7 +120,7 @@ public final class RetrySemantics {
         }
         if (first.status() != ResultStatus.TEST_FAILURE) {
             requireSingleAttempt(ordered, "infrastructure/configuration outcomes are not Maven-rerun eligible");
-            return new LogicalExecution(id, ordered, LogicalStatus.FAILED, first);
+            return new LogicalExecution(id, ordered, LogicalStatus.INFRASTRUCTURE_FAILED, first);
         }
 
         for (int index = 1; index < ordered.size(); index++) {
@@ -110,8 +131,14 @@ public final class RetrySemantics {
                 }
                 return new LogicalExecution(id, ordered, LogicalStatus.FLAKY, result);
             }
+            if (result.status() == ResultStatus.SKIPPED) {
+                throw new IllegalArgumentException("a Maven rerun may not turn a failed selected test into SKIPPED");
+            }
             if (result.status() != ResultStatus.TEST_FAILURE) {
-                throw new IllegalArgumentException("Maven reruns may only contain test failures before a pass");
+                if (index != ordered.size() - 1) {
+                    throw new IllegalArgumentException("Maven reruns must stop after an infrastructure/configuration failure");
+                }
+                return new LogicalExecution(id, ordered, LogicalStatus.INFRASTRUCTURE_FAILED, result);
             }
         }
         return new LogicalExecution(id, ordered, LogicalStatus.FAILED, first);
