@@ -86,10 +86,6 @@ final class FailsafeCompatibility {
                 settings.systemProperties.putAll(externalProperties.properties());
             }
 
-            if (settings.rerunFailingTestsCount > 0) {
-                reasons.add("rerunFailingTestsCount resolves to " + settings.rerunFailingTestsCount
-                        + "; ScenarioMesh will not risk duplicating retries until exact Failsafe retry semantics are implemented");
-            }
             if (settings.includeJUnit5Engines.contains("junit-vintage")) {
                 reasons.add("JUnit Vintage is explicitly included; generic JUnit 4 ownership is reserved for the P1 Vintage equivalence gate");
             }
@@ -110,6 +106,10 @@ final class FailsafeCompatibility {
             if (!settings.suiteXmlFiles.isEmpty()) {
                 settings.systemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
             }
+            settings.systemProperties.put(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT,
+                    Integer.toString(settings.rerunFailingTestsCount));
+            settings.systemProperties.put(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT,
+                    Integer.toString(settings.failOnFlakeCount));
 
             boolean explicitSelection = !settings.includes.isEmpty() || !settings.excludes.isEmpty();
             List<String> exactIncludes = settings.includes.isEmpty() ? DEFAULT_INCLUDE_PATTERNS : List.copyOf(settings.includes);
@@ -202,6 +202,10 @@ final class FailsafeCompatibility {
                 Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
                 if (value != null) settings.rerunFailingTestsCount = value;
             }
+            case "failOnFlakeCount" -> {
+                Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
+                if (value != null) settings.failOnFlakeCount = value;
+            }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
     }
@@ -261,29 +265,36 @@ final class FailsafeCompatibility {
     private void readSelectionFile(Xpp3Dom node, Set<String> destination, String location,
                                    List<String> reasons, Function<String, String> propertyResolver) {
         if (node.getChildCount() > 0) {
-            reasons.add(location + " uses structured <" + node.getName() + "> and file selection semantics cannot be proven"); return;
+            reasons.add(location + " uses structured <" + node.getName() + "> and file selection semantics cannot be proven");
+            return;
         }
         String configuredPath = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (configuredPath == null) return;
         String baseDirValue = propertyResolver.apply("project.basedir");
         if (baseDirValue == null || baseDirValue.isBlank()) {
-            reasons.add(location + " uses <" + node.getName() + "> but Maven project.basedir is unavailable for exact relative-path resolution"); return;
+            reasons.add(location + " uses <" + node.getName() + "> but Maven project.basedir is unavailable for exact relative-path resolution");
+            return;
         }
         Path baseDir;
         try { baseDir = Path.of(baseDirValue); }
         catch (RuntimeException invalidBaseDir) {
-            reasons.add(location + " uses <" + node.getName() + "> but Maven project.basedir is invalid: " + invalidBaseDir.getMessage()); return;
+            reasons.add(location + " uses <" + node.getName() + "> but Maven project.basedir is invalid: " + invalidBaseDir.getMessage());
+            return;
         }
         ExternalSelectionFile.Analysis file = ExternalSelectionFile.read(baseDir, configuredPath, node.getName());
         if (!file.supported()) {
-            reasons.add(location + " uses <" + node.getName() + "> that ScenarioMesh cannot reproduce: " + file.reason()); return;
+            reasons.add(location + " uses <" + node.getName() + "> that ScenarioMesh cannot reproduce: " + file.reason());
+            return;
         }
         destination.addAll(file.patterns());
     }
 
     private void readArgLine(Xpp3Dom node, String location, EffectiveSettings settings, List<String> reasons,
                              Function<String, String> propertyResolver, Function<String, String> stableLatePropertyResolver) {
-        if (node.getChildCount() > 0) { reasons.add(location + " contains a structured <argLine> that cannot be reproduced safely"); return; }
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " contains a structured <argLine> that cannot be reproduced safely");
+            return;
+        }
         String resolved = resolve(node.getValue(), location + " <argLine>", reasons, propertyResolver);
         if (resolved == null || resolved.isBlank()) { settings.jvmArgs.clear(); return; }
         resolved = resolveLate(resolved, location + " <argLine>", reasons, stableLatePropertyResolver);
@@ -297,24 +308,28 @@ final class FailsafeCompatibility {
         Matcher matcher = LATE_PROPERTY_REFERENCE.matcher(value);
         StringBuffer resolved = new StringBuffer();
         while (matcher.find()) {
-            String key = matcher.group(1); String replacement = stableLatePropertyResolver.apply(key);
+            String key = matcher.group(1);
+            String replacement = stableLatePropertyResolver.apply(key);
             if (replacement == null) {
                 reasons.add(location + " uses late property replacement @{" + key + "}; its value is not fixed by Maven user/system properties, the process environment, or Java system properties. ScenarioMesh will pass through because an earlier lifecycle plugin may mutate it.");
                 return null;
             }
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
         }
-        matcher.appendTail(resolved); return resolved.toString();
+        matcher.appendTail(resolved);
+        return resolved.toString();
     }
 
     private void readPatternList(Xpp3Dom parent, Set<String> destination, String location,
                                  List<String> reasons, Function<String, String> propertyResolver) {
         for (Xpp3Dom item : parent.getChildren()) {
             if (!"include".equals(item.getName()) && !"exclude".equals(item.getName())) {
-                reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">"); continue;
+                reasons.add(location + " contains unsupported <" + item.getName() + "> inside <" + parent.getName() + ">");
+                continue;
             }
             if (item.getChildCount() > 0) {
-                reasons.add(location + " contains a structured selection pattern in <" + parent.getName() + ">"); continue;
+                reasons.add(location + " contains a structured selection pattern in <" + parent.getName() + ">");
+                continue;
             }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
             if (value == null || value.isBlank()) reasons.add(location + " contains an empty selection pattern in <" + parent.getName() + ">");
@@ -324,32 +339,54 @@ final class FailsafeCompatibility {
 
     private Boolean resolvedBoolean(Xpp3Dom node, String location, List<String> reasons,
                                     Function<String, String> propertyResolver) {
-        if (node.getChildCount() > 0) { reasons.add(location + " uses structured <" + node.getName() + "> and boolean semantics cannot be proven"); return null; }
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <" + node.getName() + "> and boolean semantics cannot be proven");
+            return null;
+        }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null || value.isBlank()) return Boolean.FALSE;
         if ("true".equalsIgnoreCase(value)) return Boolean.TRUE;
         if ("false".equalsIgnoreCase(value)) return Boolean.FALSE;
-        reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'"); return null;
+        reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'");
+        return null;
     }
 
     private Integer resolvedNonNegativeInteger(Xpp3Dom node, String location, List<String> reasons,
                                                Function<String, String> propertyResolver) {
-        if (node.getChildCount() > 0) { reasons.add(location + " uses structured <" + node.getName() + "> and integer semantics cannot be proven"); return null; }
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <" + node.getName() + "> and integer semantics cannot be proven");
+            return null;
+        }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null || value.isBlank()) return 0;
-        try { int parsed = Integer.parseInt(value.trim()); if (parsed < 0) { reasons.add(location + " uses negative <" + node.getName() + "> value '" + value + "'"); return null; } return parsed; }
-        catch (NumberFormatException exception) { reasons.add(location + " uses non-integer <" + node.getName() + "> value '" + value + "'"); return null; }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            if (parsed < 0) {
+                reasons.add(location + " uses negative <" + node.getName() + "> value '" + value + "'");
+                return null;
+            }
+            return parsed;
+        } catch (NumberFormatException exception) {
+            reasons.add(location + " uses non-integer <" + node.getName() + "> value '" + value + "'");
+            return null;
+        }
     }
 
     private String resolve(String raw, String location, List<String> reasons, Function<String, String> propertyResolver) {
-        String value = trim(raw); if (value == null) return "";
-        Matcher matcher = PROPERTY_REFERENCE.matcher(value); StringBuffer resolved = new StringBuffer();
+        String value = trim(raw);
+        if (value == null) return "";
+        Matcher matcher = PROPERTY_REFERENCE.matcher(value);
+        StringBuffer resolved = new StringBuffer();
         while (matcher.find()) {
             String replacement = propertyResolver.apply(matcher.group(1));
-            if (replacement == null) { reasons.add(location + " references unresolved Maven property ${" + matcher.group(1) + "}"); return null; }
+            if (replacement == null) {
+                reasons.add(location + " references unresolved Maven property ${" + matcher.group(1) + "}");
+                return null;
+            }
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
         }
-        matcher.appendTail(resolved); return resolved.toString();
+        matcher.appendTail(resolved);
+        return resolved.toString();
     }
 
     private Path projectBaseDirectory(Function<String, String> propertyResolver, List<String> reasons) {
@@ -365,7 +402,8 @@ final class FailsafeCompatibility {
 
     private String safeMessage(Throwable throwable) {
         String message = throwable.getMessage();
-        return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message.replace('\n', ' ').replace('\r', ' ');
+        return message == null || message.isBlank() ? throwable.getClass().getSimpleName()
+                : message.replace('\n', ' ').replace('\r', ' ');
     }
 
     static String mavenClassPatternToRegex(String pattern) { return MavenClassNamePatterns.toRegex(pattern); }
@@ -410,5 +448,6 @@ final class FailsafeCompatibility {
         private boolean explicitlySkipped;
         private boolean testFailureIgnore;
         private int rerunFailingTestsCount;
+        private int failOnFlakeCount;
     }
 }
