@@ -9,12 +9,16 @@ import java.util.ServiceConfigurationError;
 import java.util.ServiceLoader;
 import java.util.Set;
 
-/** Loads explicitly installed report artifact providers and exporters through Java's standard SPI. */
+/** Loads built-in logical retry reporting plus explicitly installed report exporters through Java's standard SPI. */
 public final class ReportExporters {
     private ReportExporters() {}
 
     public static void export(RunOutcome outcome, Path reportingDirectory,
                               ReportWriter.ReportPaths builtInReports) throws Exception {
+        // Materialize the executor-compatible JUnit retry vocabulary first so downstream artifact
+        // collectors and CI exporters observe the final authoritative report, not the generic draft.
+        new MavenRetryReportWriter().write(outcome, reportingDirectory, builtInReports);
+
         ReportExportContext baseContext = new ReportExportContext(outcome, reportingDirectory, builtInReports);
         List<ReportArtifact> artifacts = ReportArtifacts.collect(baseContext);
         ReportArtifacts.writeManifest(reportingDirectory, artifacts);
