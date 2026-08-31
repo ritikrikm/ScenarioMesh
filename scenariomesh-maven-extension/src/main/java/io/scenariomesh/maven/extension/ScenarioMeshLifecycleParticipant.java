@@ -198,6 +198,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             addMap(preflightConfig, "executorSystemProperties", plan.executorSystemProperties());
             addLaunchConfiguration(preflightConfig, launchAnalysis.required(plan.executionId()));
             addClasspathConfiguration(preflightConfig, classpathAnalysis.required(plan.executionId()));
+            addList(preflightConfig, "dependencyTestScanPatterns", "pattern", plan.dependenciesToScan());
         }
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);
@@ -217,6 +218,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                     plan,
                     launchAnalysis.required(plan.executionId()),
                     classpathAnalysis.required(plan.executionId()),
+                    plan.dependenciesToScan(),
                     invocationId,
                     single ? downstreamRuntimeProperties : Map.of()));
             plugin.addExecution(run);
@@ -250,6 +252,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             ProjectCompatibilityDetector.ExecutorPlan plan,
             MavenForkLaunchConfiguration.LaunchSettings launchSettings,
             MavenExecutorClasspathConfiguration.Settings classpathSettings,
+            List<String> dependencyTestScanPatterns,
             String invocationId,
             Map<String, String> downstreamRuntimeProperties) {
         Xpp3Dom root = new Xpp3Dom("configuration");
@@ -265,6 +268,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         addMap(root, "executorSystemProperties", systemProperties);
         addLaunchConfiguration(root, launchSettings);
         addClasspathConfiguration(root, classpathSettings);
+        addList(root, "dependencyTestScanPatterns", "pattern", dependencyTestScanPatterns);
         return root;
     }
 

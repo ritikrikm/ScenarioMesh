@@ -8,6 +8,7 @@ import io.scenariomesh.core.Ports.ExecutionContext;
 import io.scenariomesh.core.Ports.ScenarioAdapter;
 import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.ScenarioIds;
+import io.scenariomesh.core.SelectedTestClasses;
 import io.scenariomesh.core.TaskMetadata;
 import io.scenariomesh.maven.selection.SurefireGroupSelection;
 import org.testng.IConfigurationListener;
@@ -74,31 +75,24 @@ public final class TestNgAdapter implements ScenarioAdapter {
                     .map(this::suiteTask)
                     .toList();
         }
-        GroupSelection groupSelection = GroupSelection.from(context.properties());
         List<ScenarioTask> tasks = new ArrayList<>();
         List<String> inspectionFailures = new ArrayList<>();
         Set<String> seen = new HashSet<>();
 
-        for (Path root : context.testRoots()) {
-            if (!Files.isDirectory(root)) continue;
-            try (Stream<Path> stream = Files.walk(root)) {
-                for (Path file : stream
-                        .filter(path -> path.toString().endsWith(".class"))
-                        .filter(path -> !path.getFileName().toString().contains("$"))
-                        .sorted()
-                        .toList()) {
-                    String className = root.relativize(file).toString()
-                            .replace('/', '.')
-                            .replace('\\', '.')
-                            .replaceAll("\\.class$", "");
-                    if (!context.discoverySelection().matchesClassName(className)) continue;
-                    try {
-                        Class<?> candidate = Class.forName(className, false, context.classLoader());
-                        discoverMethods(candidate, tasks, seen, groupSelection);
-                    } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
-                        inspectionFailures.add(className + " -> " + message(exception));
-                    }
+        for (String className : SelectedTestClasses.scan(context.testRoots(), context.discoverySelection())) {
+            if (className.contains("$")) continue;
+            try {
+                Class<?> candidate = Class.forName(className, false, context.classLoader());
+                if (hasTestNgTests(candidate)) {
+                    discoverMethods(candidate, tasks, seen, GroupSelection.from(context.properties()));
                 }
+            } catch (IllegalArgumentException exception) {
+                if (exception.getMessage() != null && exception.getMessage().contains("Cannot parse Surefire group")) {
+                    throw exception;
+                }
+                inspectionFailures.add(className + " -> " + message(exception));
+            } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
+                inspectionFailures.add(className + " -> " + message(exception));
             }
         }
 
@@ -108,6 +102,14 @@ public final class TestNgAdapter implements ScenarioAdapter {
                             + String.join("; ", inspectionFailures));
         }
         return List.copyOf(tasks);
+    }
+
+    private boolean hasTestNgTests(Class<?> candidate) {
+        if (candidate.isAnnotationPresent(Test.class)) return true;
+        for (Method method : candidate.getDeclaredMethods()) {
+            if (method.isAnnotationPresent(Test.class)) return true;
+        }
+        return false;
     }
 
     private ScenarioTask suiteTask(String suiteXmlFile) {
@@ -407,6 +409,8 @@ public final class TestNgAdapter implements ScenarioAdapter {
     }
 
     private static void applyTestNgSuiteGroupSelection(TestNG testNg, Map<String, String> properties) {
+        // Current Surefire forwards these provider settings even with suite XML.
+        // TestNG remains responsible for applying the suite and group semantics.
         String groups = properties.get("groups");
         String excludedGroups = properties.get("excludedGroups");
         if (groups != null && !groups.isEmpty()) testNg.setGroups(groups);

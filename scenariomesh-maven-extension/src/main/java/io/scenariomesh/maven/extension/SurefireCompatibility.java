@@ -106,7 +106,7 @@ final class SurefireCompatibility {
         }
 
         return new Analysis(settings.explicitlySkipsTests, List.copyOf(reasons), includes, excludes,
-                exactIncludes, exactExcludes, Map.copyOf(settings.systemProperties));
+                exactIncludes, exactExcludes, Map.copyOf(settings.systemProperties), List.copyOf(settings.dependenciesToScan));
     }
 
     static List<String> defaultIncludeClassNameRegexes() { return MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS); }
@@ -147,6 +147,7 @@ final class SurefireCompatibility {
             case "excludes" -> readPatternList(child, settings.excludes, location, reasons, propertyResolver);
             case "includesFile" -> readSelectionFile(child, settings.includes, location, reasons, propertyResolver);
             case "excludesFile" -> readSelectionFile(child, settings.excludes, location, reasons, propertyResolver);
+            case "dependenciesToScan" -> readDependenciesToScan(child, location, settings, reasons, propertyResolver);
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
             case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
@@ -213,6 +214,19 @@ final class SurefireCompatibility {
             reasons.add(location + " uses <" + node.getName() + "> that ScenarioMesh cannot reproduce: " + file.reason()); return;
         }
         destination.addAll(file.patterns());
+    }
+
+    private void readDependenciesToScan(Xpp3Dom parent, String location, EffectiveSettings settings,
+                                        List<String> reasons, Function<String, String> propertyResolver) {
+        for (Xpp3Dom item : parent.getChildren()) {
+            if (!"dependency".equals(item.getName()) || item.getChildCount() > 0) {
+                reasons.add(location + " contains unsupported structure inside <dependenciesToScan>");
+                continue;
+            }
+            String value = resolve(item.getValue(), location + " <dependency>", reasons, propertyResolver);
+            if (value == null || value.isBlank()) reasons.add(location + " contains a blank dependency scan pattern");
+            else settings.dependenciesToScan.add(value.trim());
+        }
     }
 
     private void readProviderProperties(Xpp3Dom parent, String location, EffectiveSettings settings,
@@ -317,7 +331,8 @@ final class SurefireCompatibility {
 
     record Analysis(boolean explicitlySkipsTests, List<String> reasons, List<String> includeClassNameRegexes,
                     List<String> excludeClassNameRegexes, List<String> includedTestPatterns,
-                    List<String> excludedTestPatterns, Map<String, String> systemProperties) {
+                    List<String> excludedTestPatterns, Map<String, String> systemProperties,
+                    List<String> dependenciesToScan) {
         Analysis {
             reasons = List.copyOf(reasons == null ? List.of() : reasons);
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
@@ -325,6 +340,7 @@ final class SurefireCompatibility {
             includedTestPatterns = List.copyOf(includedTestPatterns == null ? List.of() : includedTestPatterns);
             excludedTestPatterns = List.copyOf(excludedTestPatterns == null ? List.of() : excludedTestPatterns);
             systemProperties = Map.copyOf(systemProperties == null ? Map.of() : systemProperties);
+            dependenciesToScan = List.copyOf(dependenciesToScan == null ? List.of() : dependenciesToScan);
         }
     }
 
@@ -335,6 +351,7 @@ final class SurefireCompatibility {
         private final Set<String> excludeJUnit5Engines = new LinkedHashSet<>();
         private final Map<String, String> systemProperties = new LinkedHashMap<>();
         private final Set<String> suiteXmlFiles = new LinkedHashSet<>();
+        private final Set<String> dependenciesToScan = new LinkedHashSet<>();
         private boolean explicitlySkipsTests;
     }
 }

@@ -90,6 +90,9 @@ jobs:
           bash scripts/compat/maven-equivalence.sh examples/failsafe-junit5-example \
             '-Dfailsafe.includes=**/CheckoutIT.java,**/LoginIT.java' \
             '-Dfailsafe.excludes=**/LoginIT.java'
+      - name: Native and ScenarioMesh TestNG suite XML group precedence is identical
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/testng-suite-xml-example
       - name: Native and ScenarioMesh fork process context is identical
         run: |
           bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \

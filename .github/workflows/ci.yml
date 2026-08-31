@@ -166,7 +166,7 @@ jobs:
       - name: Unsupported generic JUnit 4 uses normal Maven execution
         working-directory: examples/unsupported-junit4-example
         run: mvn -B test
-      - name: Mixed JUnit 4 and JUnit 5 remains native Maven execution
+      - name: Mixed JUnit 4 and JUnit 5 is owned once through JUnit Platform
         working-directory: examples/mixed-junit4-junit5-pass-through-example
         run: mvn -B clean test
       - name: TestNG group filtering is reproduced by ScenarioMesh
@@ -210,11 +210,14 @@ jobs:
         run: |
           test -f examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
           test ! -e examples/unsupported-junit4-example/target/scenariomesh/report.html
-      - name: Verify mixed JUnit project was not taken over and both frameworks ran
+      - name: Verify mixed JUnit project has one ScenarioMesh owner for both engines
         run: |
-          test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.JupiterTest.xml
-          test -f examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
-          test ! -e examples/mixed-junit4-junit5-pass-through-example/target/scenariomesh/report.html
+          summary=examples/mixed-junit4-junit5-pass-through-example/target/scenariomesh/summary.json
+          test -f "$summary"
+          grep -Fq '"total" : 2' "$summary"
+          grep -Fq 'jupiterRunsThroughScenarioMesh()' "$summary"
+          grep -Fq 'vintageRunsThroughScenarioMesh' "$summary"
+          test ! -d examples/mixed-junit4-junit5-pass-through-example/target/surefire-reports
       - name: Verify TestNG group-filtered project is owned exactly once
         run: |
           summary=examples/testng-group-pass-through-example/target/scenariomesh/summary.json

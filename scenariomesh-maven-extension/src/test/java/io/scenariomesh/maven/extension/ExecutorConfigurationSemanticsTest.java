@@ -33,10 +33,9 @@ class ExecutorConfigurationSemanticsTest {
     }
 
     @Test
-    void knownUnsupportedFeaturesNameTheirRequiredCapability() {
+    void dependencyTestScanningIsPreservedForScenarioMeshOwnership() {
         var scan = ExecutorConfigurationSemantics.forSurefire("dependenciesToScan");
-        assertEquals(ExecutorConfigurationSemantics.Kind.REQUIRES_CAPABILITY, scan.kind());
-        assertEquals("dependency-test-scanning", scan.capability());
+        assertEquals(ExecutorConfigurationSemantics.Kind.PRESERVED, scan.kind());
     }
 
     @Test

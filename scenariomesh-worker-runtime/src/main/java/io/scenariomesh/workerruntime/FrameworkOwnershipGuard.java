@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.ServiceLoader;
 
 /**
  * Detects executable framework families that are present in the Maven-selected
@@ -26,6 +27,8 @@ public final class FrameworkOwnershipGuard {
 
     public void verifyNoUnsupportedExecutableFamilies(AdapterContext context) {
         if (!classPresent(JUNIT4_TEST, context.classLoader())) return;
+        // Vintage is the target runtime's explicit JUnit 4 execution contract.
+        if (hasVintageEngine(context.classLoader())) return;
 
         List<String> unsupportedJUnit4 = new ArrayList<>();
         List<String> uncertainClasses = new ArrayList<>();
@@ -102,6 +105,19 @@ public final class FrameworkOwnershipGuard {
             Class.forName(name, false, loader);
             return true;
         } catch (ClassNotFoundException exception) {
+            return false;
+        }
+    }
+
+    private boolean hasVintageEngine(ClassLoader loader) {
+        try {
+            Class<?> engineType = Class.forName("org.junit.platform.engine.TestEngine", false, loader);
+            for (Object engine : ServiceLoader.load(engineType, loader)) {
+                Object id = engineType.getMethod("getId").invoke(engine);
+                if ("junit-vintage".equals(id)) return true;
+            }
+            return false;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             return false;
         }
     }
