@@ -116,8 +116,6 @@ public final class RunMojo extends AbstractMojo {
                 return;
             }
 
-            Map<String, String> effectiveExecutorProperties = new LinkedHashMap<>(
-                    executorSystemProperties == null ? Map.of() : executorSystemProperties);
             int modelReruns = removeInternalNonNegativeInt(effectiveExecutorProperties,
                     RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT);
             int modelFailOnFlake = removeInternalNonNegativeInt(effectiveExecutorProperties,
