@@ -21,7 +21,7 @@ import java.util.Set;
 final class AdvancedSurefireCompatibilityDetector {
     private static final String SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin";
     private static final Set<String> MULTI_EXECUTION_PREFLIGHT_SAFE = Set.of(
-            "includes", "excludes", "includesFile", "excludesFile",
+            "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "skip", "skipTests", "testFailureIgnore", "failIfNoTests", "failIfNoSpecifiedTests",
             "runOrder", "runOrderRandomSeed", "runOrderStatisticsFileChecksum",
             "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
@@ -105,7 +105,7 @@ final class AdvancedSurefireCompatibilityDetector {
 
             plans.add(new ProjectCompatibilityDetector.ExecutorPlan(
                     executionId(execution), includes, excludes, List.of(), Map.copyOf(systemProperties),
-                    analysis.testFailureIgnore()));
+                    analysis.testFailureIgnore(), analysis.dependenciesToScan()));
         }
         if (plans.isEmpty()) {
             return ProjectCompatibilityDetector.CompatibilityDecision.passThrough("all active Surefire executions explicitly skip tests");
