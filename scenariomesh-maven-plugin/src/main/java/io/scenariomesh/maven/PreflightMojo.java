@@ -35,10 +35,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Proves runtime ownership in the exact JVM and process context Maven selected for target tests.
- *
- * <p>For multiple native Maven test executions the proof is execution-scoped: this mojo reads the
- * exact ScenarioMesh run executions injected by the lifecycle extension and probes every one. The
- * native executor is suppressed only after all plans have independently proven ownership.</p>
+ * For multiple native Maven test executions every injected run plan is proven independently.
  */
 @Mojo(name = "preflight", defaultPhase = LifecyclePhase.PROCESS_TEST_CLASSES, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
@@ -77,11 +74,6 @@ public final class PreflightMojo extends AbstractMojo {
         }
 
         try {
-            if (new ModulePathCompatibility().nativeExecutorUsesModulePath(project, session, normalizedExecutor())) {
-                passThrough("JPMS module-path execution is active; ScenarioMesh currently launches target tests on the classpath and will not change native module semantics");
-                return;
-            }
-
             Map<String, String> configProperties = EffectiveMavenProperties.configuration(project, session);
             ScenarioMeshConfig config = resolveConfig(configProperties);
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
@@ -128,8 +120,15 @@ public final class PreflightMojo extends AbstractMojo {
                 testSystemProperties, RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
         removeInternalControlProperties(testSystemProperties);
         if (promoteUserProperties) testSystemProperties.putAll(EffectiveMavenProperties.user(session));
-        List<String> effectiveJvmArgs = MavenArgLineSupport.merge(
-                plan.executorJvmArgs(), executorArgLine, project, session);
+        List<String> effectiveJvmArgs = new ArrayList<>(MavenArgLineSupport.merge(
+                plan.executorJvmArgs(), executorArgLine, project, session));
+
+        ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
+                project, session, normalizedExecutor(), classpaths.targetClasspath());
+        if (moduleLaunch.modulePath()) {
+            effectiveJvmArgs.addAll(moduleLaunch.jvmArgs());
+            testSystemProperties.put(ModulePathCompatibility.TARGET_MODULE_PATH_PROPERTY, "true");
+        }
 
         int modelReruns = removeInternalNonNegativeInt(
                 testSystemProperties, RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT);
@@ -149,7 +148,7 @@ public final class PreflightMojo extends AbstractMojo {
 
         PreflightProbeMain.ProbeResult probe = probe(plan.executionId(), javaExecutable,
                 classpaths.controlClasspath(), classpaths.targetClasspath(), testRoots, testSystemProperties,
-                effectiveJvmArgs, plan.includes(), plan.excludes(), plan.enableAssertions(), environment,
+                List.copyOf(effectiveJvmArgs), plan.includes(), plan.excludes(), plan.enableAssertions(), environment,
                 excludedEnvironment, workingDirectory);
 
         if ("DETECTED_NOT_OWNABLE".equals(probe.ownership())) {
@@ -169,10 +168,6 @@ public final class PreflightMojo extends AbstractMojo {
         return probe;
     }
 
-    /**
-     * The run mojos are the canonical effective execution model. Reading their configuration here
-     * prevents preflight/run drift as new Maven settings are added in the future.
-     */
     private List<ProbePlan> probePlans() {
         Plugin plugin = project.getPlugin(SCENARIOMESH_PLUGIN);
         List<PluginExecution> runs = plugin == null || plugin.getExecutions() == null ? List.of()
