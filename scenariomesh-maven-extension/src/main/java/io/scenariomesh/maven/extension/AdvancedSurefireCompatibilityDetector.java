@@ -5,6 +5,7 @@ import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.apache.maven.project.MavenProject;
+import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -19,6 +20,13 @@ import java.util.Set;
  */
 final class AdvancedSurefireCompatibilityDetector {
     private static final String SUREFIRE = "org.apache.maven.plugins:maven-surefire-plugin";
+    private static final Set<String> MULTI_EXECUTION_PREFLIGHT_SAFE = Set.of(
+            "includes", "excludes", "includesFile", "excludesFile",
+            "skip", "skipTests", "testFailureIgnore", "failIfNoTests", "failIfNoSpecifiedTests",
+            "runOrder", "runOrderRandomSeed", "runOrderStatisticsFileChecksum",
+            "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
+            "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
+            "useUnlimitedThreads", "parallelOptimized");
     private final SurefireCompatibility compatibility = new SurefireCompatibility();
 
     ProjectCompatibilityDetector.CompatibilityDecision evaluate(MavenSession session, MavenProject project) {
@@ -37,6 +45,14 @@ final class AdvancedSurefireCompatibilityDetector {
         List<PluginExecution> executions = activeTestExecutions(plugin);
         if (executions.isEmpty()) {
             return ProjectCompatibilityDetector.CompatibilityDecision.passThrough("no active Surefire test execution could be isolated");
+        }
+        if (executions.size() > 1) {
+            String unsafe = firstPreflightCriticalSetting(plugin, executions);
+            if (unsafe != null) {
+                return ProjectCompatibilityDetector.CompatibilityDecision.passThrough(
+                        "multiple Surefire executions use preflight-critical configuration <" + unsafe
+                                + ">; ScenarioMesh will not suppress all executions after proving only one process/discovery context");
+            }
         }
 
         EffectivePropertyResolver properties = new EffectivePropertyResolver(session, project);
@@ -99,6 +115,30 @@ final class AdvancedSurefireCompatibilityDetector {
                 "test", false, plans);
     }
 
+    private String firstPreflightCriticalSetting(Plugin plugin, List<PluginExecution> executions) {
+        String unsafe = firstUnsafeConfigurationName(plugin.getConfiguration());
+        if (unsafe != null) return unsafe;
+        for (PluginExecution execution : executions) {
+            unsafe = firstUnsafeConfigurationName(execution.getConfiguration());
+            if (unsafe != null) return unsafe;
+        }
+        return null;
+    }
+
+    private String firstUnsafeConfigurationName(Object raw) {
+        if (!(raw instanceof Xpp3Dom configuration)) return null;
+        for (Xpp3Dom child : configuration.getChildren()) {
+            if (!hasMeaningfulValue(child)) continue;
+            if (!MULTI_EXECUTION_PREFLIGHT_SAFE.contains(child.getName())) return child.getName();
+        }
+        return null;
+    }
+
+    private boolean hasMeaningfulValue(Xpp3Dom node) {
+        return node.getValue() != null || node.getChildCount() > 0
+                || (node.getAttributeNames() != null && node.getAttributeNames().length > 0);
+    }
+
     private List<PluginExecution> activeTestExecutions(Plugin plugin) {
         List<PluginExecution> active = new ArrayList<>();
         if (plugin.getExecutions() == null) return active;
@@ -107,6 +147,8 @@ final class AdvancedSurefireCompatibilityDetector {
             boolean testGoal = execution.getGoals() != null
                     && execution.getGoals().stream().anyMatch(goal -> "test".equals(trim(goal)));
             if (!testGoal) continue;
+            // Maven 4 phase indices (for example test[100]) affect ordering relative to other executions.
+            // Do not flatten them into an ordinary test phase until that ordering contract is modeled.
             if (phase.isEmpty() || "test".equals(phase)) active.add(execution);
         }
         return List.copyOf(active);
