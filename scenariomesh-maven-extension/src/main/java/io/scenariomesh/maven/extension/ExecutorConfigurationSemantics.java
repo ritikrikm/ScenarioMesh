@@ -23,25 +23,30 @@ final class ExecutorConfigurationSemantics {
             "jvm", "jdkToolchain",
             "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory",
             "additionalClasspathElements", "additionalClasspathDependencies",
-            "classpathDependencyExcludes", "classpathDependencyScopeExclude");
+            "classpathDependencyExcludes", "classpathDependencyScopeExclude",
+            "runOrder", "runOrderRandomSeed", "runOrderStatisticsFileChecksum");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
-            "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
+            "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
-            "systemPropertyVariables", "properties", "suiteXmlFiles");
+            "argLine", "systemProperties", "systemPropertiesFile", "systemPropertyVariables",
+            "promoteUserPropertiesToSystemProperties",
+            "testFailureIgnore", "failIfNoTests", "failIfNoSpecifiedTests",
+            "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
-            "skipITs", "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
+            "skipITs", "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
             "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount",
             "suiteXmlFiles");
 
-    private static final Map<String, String> CAPABILITY_REQUIRED = Map.of();
+    private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
+            Map.entry("dependenciesToScan", "dependency-test-scanning"));
 
     static Classification forSurefire(String name) {
         if (SCENARIOMESH_OWNED.contains(name)) return Classification.replaced();
