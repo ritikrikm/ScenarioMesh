@@ -24,10 +24,7 @@ import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Classifies the effective Surefire model without confusing Maven's generated
- * default lifecycle execution with a user-defined custom execution.
- */
+/** Classifies the effective Surefire model without confusing generated lifecycle execution with custom execution. */
 final class SurefireCompatibility {
     static final String TESTNG_SUITE_XML_FILES_PROPERTY = "scenariomesh.testng.suiteXmlFiles";
     static final String INCLUDE_JUNIT5_ENGINES_PROPERTY = "includejunit5engines";
@@ -159,6 +156,10 @@ final class SurefireCompatibility {
             effectiveSystemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
         }
         effectiveSystemProperties.putAll(settings.providerProperties);
+        effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT,
+                Integer.toString(settings.rerunFailingTestsCount));
+        effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT,
+                Integer.toString(settings.failOnFlakeCount));
 
         return new Analysis(settings.explicitlySkipsTests, List.copyOf(reasons), includes, excludes,
                 exactIncludes, exactExcludes, Map.copyOf(effectiveSystemProperties),
@@ -232,6 +233,14 @@ final class SurefireCompatibility {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (value != null && !Boolean.FALSE.equals(value)) reasons.add(location
                         + " uses <useModulePath> with a value ScenarioMesh does not yet reproduce");
+            }
+            case "rerunFailingTestsCount" -> {
+                Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
+                if (value != null) settings.rerunFailingTestsCount = value;
+            }
+            case "failOnFlakeCount" -> {
+                Integer value = resolvedNonNegativeInteger(child, location, reasons, propertyResolver);
+                if (value != null) settings.failOnFlakeCount = value;
             }
             default -> reasons.add(location + " has no preservation implementation for <" + child.getName() + ">");
         }
@@ -384,10 +393,7 @@ final class SurefireCompatibility {
 
     private void readScalarSystemProperty(Xpp3Dom node, String location, EffectiveSettings settings,
                                           List<String> reasons, Function<String, String> propertyResolver) {
-        if (node.getChildCount() > 0) {
-            reasons.add(location + " contains structured <" + node.getName() + "> group selection");
-            return;
-        }
+        if (node.getChildCount() > 0) { reasons.add(location + " contains structured <" + node.getName() + "> group selection"); return; }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null) return;
         if (value.isBlank()) settings.frameworkSystemProperties.remove(node.getName());
@@ -398,8 +404,7 @@ final class SurefireCompatibility {
                                 List<String> reasons, Function<String, String> propertyResolver) {
         for (Xpp3Dom item : parent.getChildren()) {
             if (!"engine".equals(item.getName()) || item.getChildCount() > 0) {
-                reasons.add(location + " contains unsupported JUnit engine selection inside <" + parent.getName() + ">");
-                continue;
+                reasons.add(location + " contains unsupported JUnit engine selection inside <" + parent.getName() + ">"); continue;
             }
             String value = resolve(item.getValue(), location + " <" + parent.getName() + ">", reasons, propertyResolver);
             if (value == null || value.isBlank() || value.contains(",")) {
@@ -503,6 +508,22 @@ final class SurefireCompatibility {
         reasons.add(location + " uses non-boolean <" + node.getName() + "> value '" + value + "'"); return null;
     }
 
+    private Integer resolvedNonNegativeInteger(Xpp3Dom node, String location, List<String> reasons,
+                                               Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <" + node.getName() + "> and integer semantics cannot be proven"); return null;
+        }
+        String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
+        if (value == null || value.isBlank()) return 0;
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            if (parsed < 0) { reasons.add(location + " uses negative <" + node.getName() + "> value '" + value + "'"); return null; }
+            return parsed;
+        } catch (NumberFormatException exception) {
+            reasons.add(location + " uses non-integer <" + node.getName() + "> value '" + value + "'"); return null;
+        }
+    }
+
     private String resolve(String raw, String location, List<String> reasons, Function<String, String> propertyResolver) {
         String value = trimToNull(raw);
         if (value == null) return "";
@@ -579,5 +600,7 @@ final class SurefireCompatibility {
         private boolean failIfNoTests;
         private boolean failIfNoSpecifiedTests = true;
         private boolean promoteUserPropertiesToSystemProperties = true;
+        private int rerunFailingTestsCount;
+        private int failOnFlakeCount;
     }
 }
