@@ -23,7 +23,8 @@ final class ExecutorConfigurationSemantics {
             "jvm", "jdkToolchain",
             "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory",
             "additionalClasspathElements", "additionalClasspathDependencies",
-            "classpathDependencyExcludes", "classpathDependencyScopeExclude");
+            "classpathDependencyExcludes", "classpathDependencyScopeExclude",
+            "runOrder", "runOrderRandomSeed", "runOrderStatisticsFileChecksum");
 
     /**
      * These are consumed by EffectiveExecutorSystemProperties as one semantic
@@ -43,6 +44,8 @@ final class ExecutorConfigurationSemantics {
             "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
+            "argLine",
+            "testFailureIgnore", "failIfNoTests", "failIfNoSpecifiedTests",
             "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(

@@ -234,7 +234,7 @@ final class EffectiveExecutorSystemProperties {
             return Result.unsupported("<systemPropertiesFile> resolves to an invalid path: " + safeMessage(invalidPath));
         }
         if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-            return Result.unsupported("<systemPropertiesFile> does not resolve to a readable regular file: " + path);
+            return Result.unsupported("<systemPropertiesFile> does not exist or is not a readable regular file: " + path);
         }
 
         Properties loaded = new Properties();

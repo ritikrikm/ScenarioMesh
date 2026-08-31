@@ -30,9 +30,7 @@ final class MavenExecutorClasspathConfiguration {
         List<String> reasons = new ArrayList<>();
         Map<String, Settings> byExecution = new LinkedHashMap<>();
         String executor = executorKind == ProjectCompatibilityDetector.ExecutorKind.FAILSAFE ? "failsafe" : "surefire";
-
-        List<String> ids = executorKind == ProjectCompatibilityDetector.ExecutorKind.SUREFIRE
-                ? List.of("default-test") : executionIds;
+        List<String> ids = executionIds == null || executionIds.isEmpty() ? List.of("default-test") : executionIds;
         for (String executionId : ids) {
             MutableSettings settings = new MutableSettings();
             if (plugin != null) {
@@ -42,6 +40,9 @@ final class MavenExecutorClasspathConfiguration {
                 if (execution != null) {
                     inspect(execution.getConfiguration(), "maven-" + executor + "-plugin execution '" + executionId + "'",
                             settings, reasons, propertyResolver);
+                } else if (!"default-test".equals(executionId)) {
+                    reasons.add("maven-" + executor + "-plugin execution '" + executionId
+                            + "' disappeared while resolving classpath settings");
                 }
             }
             applyUserOverrides(settings, reasons, userPropertyResolver);
@@ -248,16 +249,13 @@ final class MavenExecutorClasspathConfiguration {
     }
 
     private boolean blank(String value) { return value == null || value.isBlank(); }
-
     private String safeMessage(Throwable throwable) {
         String value = throwable.getMessage();
         return value == null || value.isBlank() ? throwable.getClass().getName() : value;
     }
 
     @FunctionalInterface
-    interface AdditionalDependencyResolver {
-        List<String> resolve(List<Dependency> dependencies) throws Exception;
-    }
+    interface AdditionalDependencyResolver { List<String> resolve(List<Dependency> dependencies) throws Exception; }
 
     record Settings(List<String> additionalClasspathElements,
                     List<String> classpathDependencyExcludes,
@@ -295,8 +293,10 @@ final class MavenExecutorClasspathConfiguration {
         private final Set<String> classpathDependencyExcludes = new LinkedHashSet<>();
         private final List<Dependency> additionalClasspathDependencies = new ArrayList<>();
         private String classpathDependencyScopeExclude;
-        Settings freeze() { return new Settings(List.copyOf(additionalClasspathElements),
-                List.copyOf(classpathDependencyExcludes), classpathDependencyScopeExclude,
-                List.copyOf(additionalClasspathDependencies)); }
+        Settings freeze() {
+            return new Settings(List.copyOf(additionalClasspathElements),
+                    List.copyOf(classpathDependencyExcludes), classpathDependencyScopeExclude,
+                    List.copyOf(additionalClasspathDependencies));
+        }
     }
 }

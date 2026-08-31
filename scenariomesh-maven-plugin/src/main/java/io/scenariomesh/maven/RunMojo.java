@@ -9,6 +9,7 @@ import io.scenariomesh.coordinator.RunRequest;
 import io.scenariomesh.coordinator.ScenarioMeshRunner;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ResultStatus;
+import io.scenariomesh.core.RuntimePropertyNames;
 import io.scenariomesh.reporting.LatestReportCleaner;
 import io.scenariomesh.reporting.ReportExporters;
 import io.scenariomesh.reporting.ReportWriter;
@@ -87,7 +88,26 @@ public final class RunMojo extends AbstractMojo {
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         PreparedRemoteWorkers preparedRemoteWorkers = null;
         try {
-            Map<String, String> userProperties = EffectiveMavenProperties.user(session);
+            Map<String, String> effectiveExecutorProperties = new LinkedHashMap<>(
+                    executorSystemProperties == null ? Map.of() : executorSystemProperties);
+            String executorArgLine = effectiveExecutorProperties.remove(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE);
+            boolean zeroTestPolicyEnabled = removeInternalBoolean(
+                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_ZERO_TEST_POLICY_ENABLED, false);
+            boolean failIfNoTests = removeInternalBoolean(
+                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_FAIL_IF_NO_TESTS, false);
+            boolean failIfNoSpecifiedTests = removeInternalBoolean(
+                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_FAIL_IF_NO_SPECIFIED_TESTS, true);
+            boolean explicitTestSelection = removeInternalBoolean(
+                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION, false);
+            boolean promoteUserProperties = removeInternalBoolean(
+                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
+
+            Map<String, String> userProperties = promoteUserProperties
+                    ? EffectiveMavenProperties.user(session)
+                    : Map.of();
+            List<String> effectiveExecutorJvmArgs = MavenArgLineSupport.merge(
+                    executorJvmArgs, executorArgLine, project, session);
+
             Map<String, String> configProperties = EffectiveMavenProperties.configuration(project, session);
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
             ConfigResolution resolution = new ConfigResolver().resolveDetailed(
@@ -122,8 +142,8 @@ public final class RunMojo extends AbstractMojo {
                     userProperties,
                     config,
                     selection,
-                    executorJvmArgs == null ? List.of() : executorJvmArgs,
-                    executorSystemProperties == null ? Map.of() : executorSystemProperties,
+                    effectiveExecutorJvmArgs,
+                    Map.copyOf(effectiveExecutorProperties),
                     testJava,
                     enableAssertions,
                     decodeEnvironmentEntries(executorEnvironmentEntries),
@@ -147,12 +167,20 @@ public final class RunMojo extends AbstractMojo {
             long passed = outcome.results().stream().filter(result -> result.passed()).count();
             long skipped = outcome.results().stream().filter(result -> result.skipped()).count();
             long failed = outcome.results().size() - passed - skipped;
-            boolean effectiveSuccess = effectiveSuccess(outcome);
             getLog().info("ScenarioMesh selected adapter: " + String.join(", ", outcome.adapters()));
             getLog().info("ScenarioMesh results: discovered=" + outcome.tasks().size()
                     + ", passed=" + passed + ", skipped=" + skipped
                     + ", failed=" + failed + ", duration=" + outcome.duration());
             getLog().info("ScenarioMesh report: " + reports.latestHtml());
+
+            String zeroTestFailure = ZeroTestPolicy.failureMessage(
+                    outcome.tasks().size(), zeroTestPolicyEnabled, explicitTestSelection,
+                    failIfNoTests, failIfNoSpecifiedTests);
+            if (zeroTestFailure != null) {
+                throw new MojoFailureException(zeroTestFailure + " See " + reports.latestHtml());
+            }
+
+            boolean effectiveSuccess = effectiveSuccess(outcome);
             if (testFailureIgnore && !outcome.successful() && effectiveSuccess) {
                 getLog().warn("ScenarioMesh observed test failures, but Maven executor testFailureIgnore=true; infrastructure failures are still fatal.");
             }
@@ -185,6 +213,14 @@ public final class RunMojo extends AbstractMojo {
             if (preparedRemoteWorkers != null) preparedRemoteWorkers.close();
             RemotePreflightState.clear(getPluginContext());
         }
+    }
+
+    private boolean removeInternalBoolean(Map<String, String> properties, String key, boolean defaultValue) {
+        String raw = properties.remove(key);
+        if (raw == null) return defaultValue;
+        if ("true".equalsIgnoreCase(raw.trim())) return true;
+        if ("false".equalsIgnoreCase(raw.trim())) return false;
+        throw new IllegalArgumentException("Invalid internal Maven compatibility boolean '" + key + "': " + raw);
     }
 
     private Map<String, String> decodeEnvironmentEntries(List<String> encodedEntries) {

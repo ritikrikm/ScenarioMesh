@@ -9,7 +9,9 @@ import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.StringReader;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -52,6 +54,20 @@ final class SurefireCompatibility {
     Analysis analyze(Plugin surefire,
                      Function<String, String> propertyResolver,
                      Properties mavenUserProperties) {
+        return analyze(surefire, propertyResolver, mavenUserProperties,
+                key -> mavenUserProperties == null ? null : mavenUserProperties.getProperty(key));
+    }
+
+    Analysis analyze(Plugin surefire,
+                     Function<String, String> propertyResolver,
+                     Function<String, String> userPropertyResolver) {
+        return analyze(surefire, propertyResolver, new Properties(), userPropertyResolver);
+    }
+
+    private Analysis analyze(Plugin surefire,
+                             Function<String, String> propertyResolver,
+                             Properties mavenUserProperties,
+                             Function<String, String> userPropertyResolver) {
         List<String> reasons = new ArrayList<>();
         EffectiveSettings settings = new EffectiveSettings();
         List<Xpp3Dom> propertyConfigurations = new ArrayList<>();
@@ -60,7 +76,6 @@ final class SurefireCompatibility {
         if (dependencies != null && !dependencies.isEmpty()) {
             reasons.add("maven-surefire-plugin declares custom provider/plugin dependencies");
         }
-
         Xpp3Dom pluginConfiguration = asDom(surefire.getConfiguration());
         if (pluginConfiguration != null) propertyConfigurations.add(pluginConfiguration);
         inspectConfiguration(pluginConfiguration, "maven-surefire-plugin configuration",
@@ -98,10 +113,16 @@ final class SurefireCompatibility {
         } else {
             settings.systemProperties.putAll(externalProperties.properties());
         }
+        settings.promoteUserPropertiesToSystemProperties = promotionEnabled(
+                propertyConfigurations, settings.promoteUserPropertiesToSystemProperties, reasons, propertyResolver);
 
         if (settings.includeJUnit5Engines.contains("junit-vintage")) {
             reasons.add("maven-surefire-plugin includes JUnit Vintage; generic JUnit 4 ownership is reserved for the P1 Vintage equivalence gate");
         }
+
+        applyUserPropertyOverrides(settings, reasons, propertyResolver, userPropertyResolver);
+        Map<String, String> effectiveSystemProperties = new LinkedHashMap<>(settings.systemProperties);
+        effectiveSystemProperties.putAll(settings.frameworkSystemProperties);
 
         boolean explicitSelection = !settings.includes.isEmpty() || !settings.excludes.isEmpty();
         List<String> exactIncludes = settings.includes.isEmpty() ? DEFAULT_INCLUDE_PATTERNS : List.copyOf(settings.includes);
@@ -111,9 +132,9 @@ final class SurefireCompatibility {
         if (explicitSelection) {
             try {
                 SurefireTestSelection.fromPatterns(exactIncludes, exactExcludes);
-                settings.systemProperties.put(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS,
+                effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS,
                         MavenSelectionCodec.encode(exactIncludes));
-                settings.systemProperties.put(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS,
+                effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS,
                         MavenSelectionCodec.encode(exactExcludes));
                 includes = List.of(".*");
                 excludes = List.of();
@@ -129,14 +150,21 @@ final class SurefireCompatibility {
         }
 
         if (!settings.includeJUnit5Engines.isEmpty()) {
-            settings.systemProperties.put(INCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.includeJUnit5Engines));
+            effectiveSystemProperties.put(INCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.includeJUnit5Engines));
         }
         if (!settings.excludeJUnit5Engines.isEmpty()) {
-            settings.systemProperties.put(EXCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.excludeJUnit5Engines));
+            effectiveSystemProperties.put(EXCLUDE_JUNIT5_ENGINES_PROPERTY, String.join(",", settings.excludeJUnit5Engines));
         }
+        if (!settings.suiteXmlFiles.isEmpty()) {
+            effectiveSystemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
+        }
+        effectiveSystemProperties.putAll(settings.providerProperties);
 
         return new Analysis(settings.explicitlySkipsTests, List.copyOf(reasons), includes, excludes,
-                exactIncludes, exactExcludes, Map.copyOf(settings.systemProperties), List.copyOf(settings.dependenciesToScan));
+                exactIncludes, exactExcludes, Map.copyOf(effectiveSystemProperties),
+                List.copyOf(settings.dependenciesToScan), settings.argLine, settings.testFailureIgnore,
+                settings.failIfNoTests, settings.failIfNoSpecifiedTests,
+                settings.promoteUserPropertiesToSystemProperties);
     }
 
     static List<String> defaultIncludeClassNameRegexes() { return MavenClassNamePatterns.toRegexes(DEFAULT_INCLUDE_PATTERNS); }
@@ -181,6 +209,19 @@ final class SurefireCompatibility {
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
             case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
+            case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver);
+            case "testFailureIgnore" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null) settings.testFailureIgnore = value;
+            }
+            case "failIfNoTests" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null) settings.failIfNoTests = value;
+            }
+            case "failIfNoSpecifiedTests" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null) settings.failIfNoSpecifiedTests = value;
+            }
             case "properties" -> readProviderProperties(child, location, settings, reasons, propertyResolver);
             case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
             case "skip", "skipTests" -> {
@@ -196,6 +237,151 @@ final class SurefireCompatibility {
         }
     }
 
+    private void applyUserPropertyOverrides(EffectiveSettings settings,
+                                            List<String> reasons,
+                                            Function<String, String> propertyResolver,
+                                            Function<String, String> userPropertyResolver) {
+        String argLine = trimToNull(userPropertyResolver.apply("argLine"));
+        if (argLine != null) {
+            settings.argLine = resolveArgLine(argLine, "Surefire user property 'argLine'", reasons, propertyResolver);
+        }
+        overrideBoolean(settings, "maven.test.failure.ignore", userPropertyResolver, reasons,
+                value -> settings.testFailureIgnore = value);
+        overrideBoolean(settings, "failIfNoTests", userPropertyResolver, reasons,
+                value -> settings.failIfNoTests = value);
+        overrideBoolean(settings, "surefire.failIfNoSpecifiedTests", userPropertyResolver, reasons,
+                value -> settings.failIfNoSpecifiedTests = value);
+
+        String systemPropertiesFile = trimToNull(userPropertyResolver.apply("surefire.systemPropertiesFile"));
+        if (systemPropertiesFile != null) {
+            settings.systemPropertiesFile = resolve(systemPropertiesFile,
+                    "Surefire user property 'surefire.systemPropertiesFile'", reasons, propertyResolver);
+        }
+    }
+
+    private boolean promotionEnabled(List<Xpp3Dom> configurations,
+                                     boolean defaultValue,
+                                     List<String> reasons,
+                                     Function<String, String> propertyResolver) {
+        boolean value = defaultValue;
+        for (Xpp3Dom configuration : configurations) {
+            Xpp3Dom promotion = configuration.getChild("promoteUserPropertiesToSystemProperties");
+            if (promotion == null || !hasMeaningfulValue(promotion)) continue;
+            Boolean parsed = resolvedBoolean(promotion, "maven-surefire-plugin configuration", reasons, propertyResolver);
+            if (parsed != null) value = parsed;
+        }
+        return value;
+    }
+
+    private void overrideBoolean(EffectiveSettings settings,
+                                 String key,
+                                 Function<String, String> userPropertyResolver,
+                                 List<String> reasons,
+                                 java.util.function.Consumer<Boolean> consumer) {
+        String raw = userPropertyResolver.apply(key);
+        if (raw == null) return;
+        String value = raw.trim();
+        if ("true".equalsIgnoreCase(value)) consumer.accept(Boolean.TRUE);
+        else if ("false".equalsIgnoreCase(value)) consumer.accept(Boolean.FALSE);
+        else reasons.add("Surefire user property '" + key + "' has non-boolean value '" + raw + "'");
+    }
+
+    private Map<String, String> effectiveSystemProperties(EffectiveSettings settings,
+                                                           List<String> reasons,
+                                                           Function<String, String> propertyResolver) {
+        Map<String, String> result = new LinkedHashMap<>(settings.legacySystemProperties);
+        if (settings.systemPropertiesFile != null && !settings.systemPropertiesFile.isBlank()) {
+            result.putAll(loadSystemPropertiesFile(settings.systemPropertiesFile, reasons, propertyResolver));
+        }
+        result.putAll(settings.systemPropertyVariables);
+        result.putAll(settings.frameworkSystemProperties);
+        return result;
+    }
+
+    private Map<String, String> loadSystemPropertiesFile(String configuredPath,
+                                                          List<String> reasons,
+                                                          Function<String, String> propertyResolver) {
+        String baseDirValue = propertyResolver.apply("project.basedir");
+        Path path;
+        try {
+            path = Path.of(configuredPath);
+            if (!path.isAbsolute()) {
+                if (baseDirValue == null || baseDirValue.isBlank()) {
+                    reasons.add("maven-surefire-plugin uses <systemPropertiesFile> but Maven project.basedir is unavailable for exact relative-path resolution");
+                    return Map.of();
+                }
+                path = Path.of(baseDirValue).resolve(path);
+            }
+            path = path.toAbsolutePath().normalize();
+        } catch (RuntimeException invalidPath) {
+            reasons.add("maven-surefire-plugin uses invalid <systemPropertiesFile> path '" + configuredPath + "': " + safeMessage(invalidPath));
+            return Map.of();
+        }
+        if (!Files.isRegularFile(path)) {
+            reasons.add("maven-surefire-plugin <systemPropertiesFile> does not exist or is not a regular file: " + path);
+            return Map.of();
+        }
+        Properties loaded = new Properties();
+        try (InputStream input = Files.newInputStream(path)) {
+            loaded.load(input);
+        } catch (IOException | IllegalArgumentException exception) {
+            reasons.add("maven-surefire-plugin <systemPropertiesFile> cannot be read exactly: " + safeMessage(exception));
+            return Map.of();
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        loaded.forEach((key, value) -> result.put(String.valueOf(key), String.valueOf(value)));
+        return result;
+    }
+
+    private void readArgLine(Xpp3Dom node, String location, EffectiveSettings settings,
+                             List<String> reasons, Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " contains a structured <argLine> that cannot be reproduced safely");
+            return;
+        }
+        settings.argLine = resolveArgLine(node.getValue(), location + " <argLine>", reasons, propertyResolver);
+    }
+
+    private String resolveArgLine(String raw, String location, List<String> reasons,
+                                  Function<String, String> propertyResolver) {
+        String value = trimToNull(raw);
+        if (value == null) return "";
+        if (value.contains("${surefire.forkNumber}") || value.contains("@{surefire.forkNumber}")) {
+            reasons.add(location + " uses surefire.forkNumber; ScenarioMesh cannot yet prove per-fork numbering equivalence");
+            return null;
+        }
+        return resolve(value, location, reasons, propertyResolver);
+    }
+
+    private void readLegacySystemProperties(Xpp3Dom parent, String location, EffectiveSettings settings,
+                                            List<String> reasons, Function<String, String> propertyResolver) {
+        for (Xpp3Dom property : parent.getChildren()) {
+            if (!"property".equals(property.getName())) {
+                reasons.add(location + " contains unsupported <" + property.getName() + "> inside <systemProperties>");
+                continue;
+            }
+            Xpp3Dom name = property.getChild("name");
+            Xpp3Dom value = property.getChild("value");
+            if (name == null || value == null || property.getChildCount() != 2) {
+                reasons.add(location + " contains malformed legacy <systemProperties><property> entry");
+                continue;
+            }
+            String resolvedName = resolve(name.getValue(), location + " legacy system property name", reasons, propertyResolver);
+            String resolvedValue = resolve(value.getValue(), location + " legacy system property '" + resolvedName + "'", reasons, propertyResolver);
+            if (resolvedName == null || resolvedName.isBlank() || resolvedValue == null) continue;
+            settings.legacySystemProperties.put(resolvedName, resolvedValue);
+        }
+    }
+
+    private void readSystemPropertiesFile(Xpp3Dom node, String location, EffectiveSettings settings,
+                                          List<String> reasons, Function<String, String> propertyResolver) {
+        if (node.getChildCount() > 0) {
+            reasons.add(location + " uses structured <systemPropertiesFile> and file semantics cannot be proven");
+            return;
+        }
+        settings.systemPropertiesFile = resolve(node.getValue(), location + " <systemPropertiesFile>", reasons, propertyResolver);
+    }
+
     private void readScalarSystemProperty(Xpp3Dom node, String location, EffectiveSettings settings,
                                           List<String> reasons, Function<String, String> propertyResolver) {
         if (node.getChildCount() > 0) {
@@ -204,8 +390,8 @@ final class SurefireCompatibility {
         }
         String value = resolve(node.getValue(), location + " <" + node.getName() + ">", reasons, propertyResolver);
         if (value == null) return;
-        if (value.isBlank()) settings.systemProperties.remove(node.getName());
-        else settings.systemProperties.put(node.getName(), value);
+        if (value.isBlank()) settings.frameworkSystemProperties.remove(node.getName());
+        else settings.frameworkSystemProperties.put(node.getName(), value);
     }
 
     private void readEngineList(Xpp3Dom parent, Set<String> destination, String location,
@@ -271,7 +457,7 @@ final class SurefireCompatibility {
             catch (IOException | IllegalArgumentException invalid) {
                 reasons.add(location + " contains invalid Java-properties syntax in <configurationParameters>: " + invalid.getMessage()); continue;
             }
-            parsed.forEach((key, configuredValue) -> settings.systemProperties.put(String.valueOf(key), String.valueOf(configuredValue)));
+            parsed.forEach((key, configuredValue) -> settings.providerProperties.put(String.valueOf(key), String.valueOf(configuredValue)));
         }
     }
 
@@ -285,7 +471,6 @@ final class SurefireCompatibility {
             if (value == null || value.isBlank()) reasons.add(location + " contains an empty TestNG suite XML path");
             else settings.suiteXmlFiles.add(value);
         }
-        if (!settings.suiteXmlFiles.isEmpty()) settings.systemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
     }
 
     private void readPatternList(Xpp3Dom parent, Set<String> destination, String location,
@@ -361,7 +546,9 @@ final class SurefireCompatibility {
     record Analysis(boolean explicitlySkipsTests, List<String> reasons, List<String> includeClassNameRegexes,
                     List<String> excludeClassNameRegexes, List<String> includedTestPatterns,
                     List<String> excludedTestPatterns, Map<String, String> systemProperties,
-                    List<String> dependenciesToScan) {
+                    List<String> dependenciesToScan, String argLine, boolean testFailureIgnore,
+                    boolean failIfNoTests, boolean failIfNoSpecifiedTests,
+                    boolean promoteUserPropertiesToSystemProperties) {
         Analysis {
             reasons = List.copyOf(reasons == null ? List.of() : reasons);
             includeClassNameRegexes = List.copyOf(includeClassNameRegexes == null ? List.of() : includeClassNameRegexes);
@@ -379,8 +566,18 @@ final class SurefireCompatibility {
         private final Set<String> includeJUnit5Engines = new LinkedHashSet<>();
         private final Set<String> excludeJUnit5Engines = new LinkedHashSet<>();
         private final Map<String, String> systemProperties = new LinkedHashMap<>();
+        private final Map<String, String> legacySystemProperties = new LinkedHashMap<>();
+        private final Map<String, String> systemPropertyVariables = new LinkedHashMap<>();
+        private final Map<String, String> frameworkSystemProperties = new LinkedHashMap<>();
+        private final Map<String, String> providerProperties = new LinkedHashMap<>();
         private final Set<String> suiteXmlFiles = new LinkedHashSet<>();
         private final Set<String> dependenciesToScan = new LinkedHashSet<>();
+        private String systemPropertiesFile;
+        private String argLine;
         private boolean explicitlySkipsTests;
+        private boolean testFailureIgnore;
+        private boolean failIfNoTests;
+        private boolean failIfNoSpecifiedTests = true;
+        private boolean promoteUserPropertiesToSystemProperties = true;
     }
 }

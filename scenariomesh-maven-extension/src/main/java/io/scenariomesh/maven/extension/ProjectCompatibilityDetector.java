@@ -24,10 +24,6 @@ final class ProjectCompatibilityDetector {
     private static final Set<String> TEST_LIFECYCLE_PHASES = Set.of(
             "test", "prepare-package", "package", "pre-integration-test",
             "integration-test", "post-integration-test", "verify", "install", "deploy");
-    private static final Set<String> SUREFIRE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "dependenciesToScan");
-    private static final Set<String> FAILSAFE_UNSAFE_SELECTION_PROPERTIES = Set.of(
-            "dependenciesToScan");
     private static final Set<String> CUCUMBER_SELECTION_PROPERTIES = Set.of(
             "cucumber.filter.tags", "cucumber.filter.name", "cucumber.features");
     private static final List<String> FRAMEWORK_PROPERTY_PREFIXES = List.of(
@@ -94,13 +90,6 @@ final class ProjectCompatibilityDetector {
                                 + "mixed, Cucumber, and JUnit4 category semantics remain native");
             }
             if (!analysis.explicitlySkipped()) {
-                String unsafe = firstPresentProperty(properties, FAILSAFE_UNSAFE_SELECTION_PROPERTIES);
-                if (unsafe != null) {
-                    return CompatibilityDecision.passThrough(
-                            "Failsafe test-selection property '" + unsafe
-                                    + "' is present and is not yet reproduced by ScenarioMesh discovery");
-                }
-
                 CommandLineClassSelection.Analysis commandSelection = CommandLineClassSelection.analyze(
                         "Failsafe", "it.test", properties.userProperty("it.test"));
                 if (!commandSelection.supported()) {
@@ -156,8 +145,6 @@ final class ProjectCompatibilityDetector {
         } else if (executorGroupPropertyPresent(properties) && !frameworks.testNgOnly() && !frameworks.junitPlatformOnly()) {
             reasons.add("Surefire groups/excludedGroups are currently owned only for pure TestNG and pure JUnit Platform provider sets");
         }
-        String unsafe = firstPresentProperty(properties, SUREFIRE_UNSAFE_SELECTION_PROPERTIES);
-        if (unsafe != null) reasons.add("Maven test-selection property '" + unsafe + "' is present and is not yet reproduced by ScenarioMesh discovery");
         if (!reasons.isEmpty()) return CompatibilityDecision.passThrough(String.join("; ", reasons));
 
         CommandLineClassSelection.Analysis commandSelection = CommandLineClassSelection.analyze(
@@ -193,10 +180,32 @@ final class ProjectCompatibilityDetector {
         if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
         surefireSystemProperties.putAll(frameworkSystemProperties);
         applySelectionProperties(surefireSystemProperties, commandSelection, selectionOverride);
+        addSurefireExecutionSemantics(surefireSystemProperties, surefireAnalysis, commandSelection.present());
+
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false,
+                List.of(new ExecutorPlan(
+                        "default-test", includes, excludes, List.of(), surefireSystemProperties,
+                        surefireAnalysis != null && surefireAnalysis.testFailureIgnore(),
                         surefireAnalysis == null ? List.of() : surefireAnalysis.dependenciesToScan())));
+    }
+
+    private void addSurefireExecutionSemantics(Map<String, String> target,
+                                               SurefireCompatibility.Analysis analysis,
+                                               boolean explicitTestSelection) {
+        String argLine = analysis == null ? null : analysis.argLine();
+        if (argLine != null && !argLine.isBlank()) {
+            target.put(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE, argLine);
+        }
+        target.put(RuntimePropertyNames.MAVEN_ZERO_TEST_POLICY_ENABLED, "true");
+        target.put(RuntimePropertyNames.MAVEN_FAIL_IF_NO_TESTS,
+                Boolean.toString(analysis != null && analysis.failIfNoTests()));
+        target.put(RuntimePropertyNames.MAVEN_FAIL_IF_NO_SPECIFIED_TESTS,
+                Boolean.toString(analysis == null || analysis.failIfNoSpecifiedTests()));
+        target.put(RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION,
+                Boolean.toString(explicitTestSelection));
+        target.put(RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES,
+                Boolean.toString(analysis == null || analysis.promoteUserPropertiesToSystemProperties()));
     }
 
     private void applySelectionProperties(Map<String, String> target,
@@ -312,11 +321,6 @@ final class ProjectCompatibilityDetector {
     private boolean booleanProperty(EffectivePropertyResolver properties, String key) {
         String value = properties.resolve(key);
         return value != null && Boolean.parseBoolean(value.trim());
-    }
-
-    private String firstPresentProperty(EffectivePropertyResolver properties, Set<String> keys) {
-        for (String key : keys) if (properties.present(key)) return key;
-        return null;
     }
 
     private FrameworkSignals detectFrameworks(MavenProject project) {

@@ -2,6 +2,7 @@ package io.scenariomesh.coordinator;
 
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.RuntimePropertyNames;
 import io.scenariomesh.workerruntime.TargetClasspathDescriptor;
 
 import java.nio.file.Path;
@@ -102,6 +103,9 @@ public record RunRequest(Path projectDirectory,
 
     Map<String,String> effectiveSystemProperties(){
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
+        result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER);
+        result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED);
+        result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_STATISTICS_FILE);
         result.putAll(userProperties);
         result.put(INTERNAL_JAVA_EXECUTABLE_PROPERTY, javaExecutable.toString());
         result.put(TargetClasspathDescriptor.SYSTEM_PROPERTY,
