@@ -5,14 +5,12 @@ import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Function;
 
 /** Resolves class run-order semantics independently for each Maven test execution. */
@@ -41,16 +39,13 @@ final class MavenRunOrderConfiguration {
                 }
             }
             applyUserProperties(prefix, settings, reasons, userPropertyResolver);
-            normalize(prefix, settings, reasons, propertyResolver);
+            normalize(prefix, settings, reasons);
             values.put(executionId, settings.freeze());
         }
         return reasons.isEmpty() ? Analysis.supported(values) : Analysis.unsupported(String.join("; ", reasons));
     }
 
-    private void inspect(Object raw,
-                         String location,
-                         MutableSettings settings,
-                         List<String> reasons,
+    private void inspect(Object raw, String location, MutableSettings settings, List<String> reasons,
                          Function<String, String> propertyResolver) {
         if (!(raw instanceof Xpp3Dom configuration)) return;
         for (Xpp3Dom child : configuration.getChildren()) {
@@ -63,9 +58,7 @@ final class MavenRunOrderConfiguration {
         }
     }
 
-    private void applyUserProperties(String prefix,
-                                     MutableSettings settings,
-                                     List<String> reasons,
+    private void applyUserProperties(String prefix, MutableSettings settings, List<String> reasons,
                                      Function<String, String> userPropertyResolver) {
         String mode = userPropertyResolver.apply(prefix + ".runOrder");
         if (mode != null) settings.mode = mode;
@@ -80,10 +73,7 @@ final class MavenRunOrderConfiguration {
         if (checksum != null) settings.statisticsChecksum = checksum;
     }
 
-    private void normalize(String prefix,
-                           MutableSettings settings,
-                           List<String> reasons,
-                           Function<String, String> propertyResolver) {
+    private void normalize(String prefix, MutableSettings settings, List<String> reasons) {
         String mode = settings.mode == null || settings.mode.isBlank()
                 ? "filesystem" : settings.mode.trim().toLowerCase(Locale.ROOT);
         if (!STATELESS_MODES.contains(mode) && !STATEFUL_MODES.contains(mode)) {
@@ -92,37 +82,17 @@ final class MavenRunOrderConfiguration {
         }
         settings.mode = mode;
         if ("random".equals(mode) && settings.randomSeed == null) {
-            // Surefire seeds java.util.Random from System.nanoTime() when the user did not provide a seed.
-            // Generate and persist one effective seed for this ScenarioMesh execution so the ordering can be reproduced.
-            settings.randomSeed = ThreadLocalRandom.current().nextLong();
+            // Mirrors Surefire DefaultRunOrderCalculator's default Random(System.nanoTime()) seed.
+            settings.randomSeed = System.nanoTime();
         }
         if (STATEFUL_MODES.contains(mode)) {
-            String checksum = settings.statisticsChecksum == null ? "" : settings.statisticsChecksum.trim();
-            if (checksum.isEmpty()) {
-                reasons.add("maven-" + prefix + "-plugin runOrder=" + mode
-                        + " depends on Surefire's configuration-checksummed .surefire-* statistics file; "
-                        + "ScenarioMesh will not guess that checksum. Configure " + prefix
-                        + ".runOrder.statisticsFile.checksum explicitly to make the state file identity reproducible");
-                return;
-            }
-            String basedir = propertyResolver.apply("project.basedir");
-            if (basedir == null || basedir.isBlank()) {
-                reasons.add("maven-" + prefix + "-plugin runOrder=" + mode
-                        + " requires project.basedir to resolve its statistics file");
-                return;
-            }
-            try {
-                settings.statisticsFile = Path.of(basedir).resolve(".surefire-" + checksum)
-                        .toAbsolutePath().normalize().toString();
-            } catch (RuntimeException invalid) {
-                reasons.add("maven-" + prefix + "-plugin run-order statistics path cannot be resolved safely");
-            }
+            reasons.add("maven-" + prefix + "-plugin runOrder=" + mode
+                    + " depends on Surefire's persistent .surefire-* statistics read/update contract; "
+                    + "ScenarioMesh does not yet own that state file and will keep native Maven execution");
         }
     }
 
-    private String scalar(Xpp3Dom node,
-                          String location,
-                          List<String> reasons,
+    private String scalar(Xpp3Dom node, String location, List<String> reasons,
                           Function<String, String> propertyResolver) {
         if (node.getChildCount() > 0) {
             reasons.add(location + " contains structured <" + node.getName() + ">");
@@ -142,9 +112,7 @@ final class MavenRunOrderConfiguration {
         return value;
     }
 
-    private Long longValue(Xpp3Dom node,
-                           String location,
-                           List<String> reasons,
+    private Long longValue(Xpp3Dom node, String location, List<String> reasons,
                            Function<String, String> propertyResolver) {
         String value = scalar(node, location, reasons, propertyResolver);
         if (value == null || value.isBlank()) return null;
@@ -162,16 +130,11 @@ final class MavenRunOrderConfiguration {
                 .findFirst().orElse(null);
     }
 
-    record Settings(String mode, Long randomSeed, String statisticsFile) {
+    record Settings(String mode, Long randomSeed) {
         Map<String, String> internalProperties() {
             Map<String, String> values = new LinkedHashMap<>();
             values.put(RuntimePropertyNames.MAVEN_RUN_ORDER, mode == null ? "filesystem" : mode);
-            if (randomSeed != null) {
-                values.put(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED, Long.toString(randomSeed));
-            }
-            if (statisticsFile != null) {
-                values.put(RuntimePropertyNames.MAVEN_RUN_ORDER_STATISTICS_FILE, statisticsFile);
-            }
+            if (randomSeed != null) values.put(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED, Long.toString(randomSeed));
             return Map.copyOf(values);
         }
     }
@@ -190,8 +153,7 @@ final class MavenRunOrderConfiguration {
     private static final class MutableSettings {
         private String mode = "filesystem";
         private Long randomSeed;
-        private String statisticsChecksum;
-        private String statisticsFile;
-        Settings freeze() { return new Settings(mode, randomSeed, statisticsFile); }
+        @SuppressWarnings("unused") private String statisticsChecksum;
+        Settings freeze() { return new Settings(mode, randomSeed); }
     }
 }
