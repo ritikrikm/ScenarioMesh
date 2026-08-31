@@ -76,7 +76,8 @@ final class ProjectCompatibilityDetector {
                     failsafe,
                     failsafeParticipation,
                     properties::resolve,
-                    properties::resolveStableLate);
+                    properties::resolveStableLate,
+                    session.getUserProperties());
             if (!analysis.supported()) {
                 return CompatibilityDecision.passThrough(
                         "maven-failsafe-plugin participates in this invocation but ScenarioMesh cannot reproduce it safely: "
@@ -117,18 +118,18 @@ final class ProjectCompatibilityDetector {
                         return CompatibilityDecision.passThrough("Failsafe execution '" + plan.executionId()
                                 + "': " + selectionOverride.reason());
                     }
-                            Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
-                            planProperties.putAll(finalFrameworkSystemProperties);
+                    Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
+                    planProperties.putAll(finalFrameworkSystemProperties);
                     applySelectionProperties(planProperties, commandSelection, selectionOverride);
                     plans.add(new ExecutorPlan(
-                                    plan.executionId(),
-                                    selectionOverride.includes() == null
-                                            ? plan.includeClassNameRegexes() : selectionOverride.includes(),
-                                    selectionOverride.excludes() == null
-                                            ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
-                                    plan.jvmArgs(),
-                                    planProperties,
-                                    plan.testFailureIgnore()));
+                            plan.executionId(),
+                            selectionOverride.includes() == null
+                                    ? plan.includeClassNameRegexes() : selectionOverride.includes(),
+                            selectionOverride.excludes() == null
+                                    ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
+                            plan.jvmArgs(),
+                            planProperties,
+                            plan.testFailureIgnore()));
                 }
                 if (!plans.isEmpty()) {
                     return CompatibilityDecision.takeOver(
@@ -141,7 +142,8 @@ final class ProjectCompatibilityDetector {
         Plugin surefire = plugin(project, SUREFIRE);
         SurefireCompatibility.Analysis surefireAnalysis = null;
         if (surefire != null) {
-            surefireAnalysis = surefireCompatibility.analyze(surefire, properties::resolve);
+            surefireAnalysis = surefireCompatibility.analyze(
+                    surefire, properties::resolve, session.getUserProperties());
             if (surefireAnalysis.explicitlySkipsTests()) return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             reasons.addAll(surefireAnalysis.reasons());
             if (suiteXmlWithGroupSelection(properties, surefireAnalysis.systemProperties())) {
@@ -199,7 +201,6 @@ final class ProjectCompatibilityDetector {
                                           CommandLineClassSelection.Analysis commandSelection,
                                           SelectionOverride selectionOverride) {
         if (commandSelection != null && commandSelection.present()) {
-            // Surefire's test/it.test parameter overrides configured include and exclude collections.
             target.remove(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS);
             target.remove(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS);
             target.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);

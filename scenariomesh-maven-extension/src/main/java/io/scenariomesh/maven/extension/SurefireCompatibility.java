@@ -38,16 +38,33 @@ final class SurefireCompatibility {
             "**/Test*.java", "**/*Test.java", "**/*Tests.java", "**/*TestCase.java");
     private static final List<String> DEFAULT_EXCLUDE_PATTERNS = List.of("**/*$*");
 
-    Analysis analyze(Plugin surefire) { return analyze(surefire, ignored -> null); }
+    private final EffectiveExecutorSystemProperties effectiveSystemProperties =
+            new EffectiveExecutorSystemProperties();
+
+    Analysis analyze(Plugin surefire) {
+        return analyze(surefire, ignored -> null, new Properties());
+    }
 
     Analysis analyze(Plugin surefire, Function<String, String> propertyResolver) {
+        return analyze(surefire, propertyResolver, new Properties());
+    }
+
+    Analysis analyze(Plugin surefire,
+                     Function<String, String> propertyResolver,
+                     Properties mavenUserProperties) {
         List<String> reasons = new ArrayList<>();
         EffectiveSettings settings = new EffectiveSettings();
+        List<Xpp3Dom> propertyConfigurations = new ArrayList<>();
+
         List<Dependency> dependencies = surefire.getDependencies();
         if (dependencies != null && !dependencies.isEmpty()) {
             reasons.add("maven-surefire-plugin declares custom provider/plugin dependencies");
         }
-        inspectConfiguration(surefire.getConfiguration(), "maven-surefire-plugin configuration", settings, reasons, propertyResolver);
+
+        Xpp3Dom pluginConfiguration = asDom(surefire.getConfiguration());
+        if (pluginConfiguration != null) propertyConfigurations.add(pluginConfiguration);
+        inspectConfiguration(pluginConfiguration, "maven-surefire-plugin configuration",
+                settings, reasons, propertyResolver);
 
         List<PluginExecution> executions = surefire.getExecutions();
         int standardLifecycleExecutions = 0;
@@ -58,7 +75,9 @@ final class SurefireCompatibility {
                     continue;
                 }
                 standardLifecycleExecutions++;
-                inspectConfiguration(execution.getConfiguration(),
+                Xpp3Dom executionConfiguration = asDom(execution.getConfiguration());
+                if (executionConfiguration != null) propertyConfigurations.add(executionConfiguration);
+                inspectConfiguration(executionConfiguration,
                         "maven-surefire-plugin execution '" + DEFAULT_TEST_EXECUTION_ID + "'",
                         settings, reasons, propertyResolver);
             }
@@ -66,6 +85,20 @@ final class SurefireCompatibility {
         if (standardLifecycleExecutions > 1) {
             reasons.add("maven-surefire-plugin exposes multiple default-test executions; ScenarioMesh cannot prove single-execution equivalence");
         }
+
+        EffectiveExecutorSystemProperties.Result externalProperties = effectiveSystemProperties.build(
+                propertyConfigurations,
+                projectBaseDirectory(propertyResolver, reasons),
+                propertyResolver,
+                mavenUserProperties,
+                surefire.getVersion());
+        if (!externalProperties.supported()) {
+            reasons.add("maven-surefire-plugin system-property configuration cannot be reproduced safely: "
+                    + externalProperties.reason());
+        } else {
+            settings.systemProperties.putAll(externalProperties.properties());
+        }
+
         if (settings.includeJUnit5Engines.contains("junit-vintage")) {
             reasons.add("maven-surefire-plugin includes JUnit Vintage; generic JUnit 4 ownership is reserved for the P1 Vintage equivalence gate");
         }
@@ -77,9 +110,6 @@ final class SurefireCompatibility {
         List<String> excludes;
         if (explicitSelection) {
             try {
-                // Validate and execute the complete public Surefire grammar with Surefire itself.
-                // Discovery deliberately over-selects classes; the exact post-filter owns method,
-                // negation, wildcard and %regex semantics without a ScenarioMesh parser.
                 SurefireTestSelection.fromPatterns(exactIncludes, exactExcludes);
                 settings.systemProperties.put(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS,
                         MavenSelectionCodec.encode(exactIncludes));
@@ -150,7 +180,6 @@ final class SurefireCompatibility {
             case "includeJUnit5Engines" -> readEngineList(child, settings.includeJUnit5Engines, location, reasons, propertyResolver);
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
             case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
-            case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
             case "properties" -> readProviderProperties(child, location, settings, reasons, propertyResolver);
             case "suiteXmlFiles" -> readSuiteXmlFiles(child, location, settings, reasons, propertyResolver);
             case "skip", "skipTests" -> {
@@ -262,17 +291,6 @@ final class SurefireCompatibility {
         }
     }
 
-    private void readSystemProperties(Xpp3Dom parent, String location, EffectiveSettings settings,
-                                      List<String> reasons, Function<String, String> propertyResolver) {
-        for (Xpp3Dom property : parent.getChildren()) {
-            if (property.getChildCount() > 0) {
-                reasons.add(location + " contains nested system property '" + property.getName() + "'"); continue;
-            }
-            String value = resolve(property.getValue(), location + " system property '" + property.getName() + "'", reasons, propertyResolver);
-            if (value != null) settings.systemProperties.put(property.getName(), value);
-        }
-    }
-
     private Boolean resolvedBoolean(Xpp3Dom node, String location, List<String> reasons,
                                     Function<String, String> propertyResolver) {
         if (node.getChildCount() > 0) {
@@ -300,6 +318,17 @@ final class SurefireCompatibility {
         }
         matcher.appendTail(resolved);
         return resolved.toString();
+    }
+
+    private Path projectBaseDirectory(Function<String, String> propertyResolver, List<String> reasons) {
+        String value = propertyResolver.apply("project.basedir");
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Path.of(value).toAbsolutePath().normalize();
+        } catch (RuntimeException invalid) {
+            reasons.add("Maven project.basedir is invalid for executor property resolution: " + safeMessage(invalid));
+            return null;
+        }
     }
 
     private String safeMessage(Throwable throwable) {

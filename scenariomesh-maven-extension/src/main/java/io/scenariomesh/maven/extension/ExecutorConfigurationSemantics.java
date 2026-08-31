@@ -25,6 +25,17 @@ final class ExecutorConfigurationSemantics {
             "additionalClasspathElements", "additionalClasspathDependencies",
             "classpathDependencyExcludes", "classpathDependencyScopeExclude");
 
+    /**
+     * These are consumed by EffectiveExecutorSystemProperties as one semantic
+     * unit. Keeping them out of the per-node preservation switches prevents
+     * accidental precedence drift as new executor configuration is added.
+     */
+    private static final Set<String> EFFECTIVE_SYSTEM_PROPERTY_SOURCES = Set.of(
+            "systemProperties",
+            "systemPropertiesFile",
+            "systemPropertyVariables",
+            "promoteUserPropertiesToSystemProperties");
+
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
 
@@ -32,27 +43,31 @@ final class ExecutorConfigurationSemantics {
             "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
-            "systemPropertyVariables", "properties", "suiteXmlFiles");
+            "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
-            "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount",
+            "argLine", "testFailureIgnore", "rerunFailingTestsCount",
             "suiteXmlFiles");
 
     private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
             Map.entry("dependenciesToScan", "dependency-test-scanning"));
 
     static Classification forSurefire(String name) {
-        if (SCENARIOMESH_OWNED.contains(name)) return Classification.replaced();
+        if (SCENARIOMESH_OWNED.contains(name) || EFFECTIVE_SYSTEM_PROPERTY_SOURCES.contains(name)) {
+            return Classification.replaced();
+        }
         if (COMMON_PRESERVED.contains(name) || SUREFIRE_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);
     }
 
     static Classification forFailsafe(String name) {
-        if (SCENARIOMESH_OWNED.contains(name)) return Classification.replaced();
+        if (SCENARIOMESH_OWNED.contains(name) || EFFECTIVE_SYSTEM_PROPERTY_SOURCES.contains(name)) {
+            return Classification.replaced();
+        }
         if (COMMON_PRESERVED.contains(name) || FAILSAFE_PRESERVED.contains(name)) return Classification.preserved();
         String capability = CAPABILITY_REQUIRED.get(name);
         return capability == null ? Classification.unknown() : Classification.requires(capability);

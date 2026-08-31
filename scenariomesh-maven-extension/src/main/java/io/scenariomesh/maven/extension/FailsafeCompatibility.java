@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -29,14 +30,24 @@ final class FailsafeCompatibility {
     private static final Pattern PROPERTY_REFERENCE = Pattern.compile("\\$\\{([^}]+)}");
     private static final Pattern LATE_PROPERTY_REFERENCE = Pattern.compile("@\\{([^}]+)}");
 
+    private final EffectiveExecutorSystemProperties effectiveSystemProperties =
+            new EffectiveExecutorSystemProperties();
+
     Analysis analyze(Plugin plugin, MavenExecutionPlan.PluginParticipation participation,
                      Function<String, String> propertyResolver) {
-        return analyze(plugin, participation, propertyResolver, propertyResolver);
+        return analyze(plugin, participation, propertyResolver, propertyResolver, new Properties());
     }
 
     Analysis analyze(Plugin plugin, MavenExecutionPlan.PluginParticipation participation,
                      Function<String, String> propertyResolver,
                      Function<String, String> stableLatePropertyResolver) {
+        return analyze(plugin, participation, propertyResolver, stableLatePropertyResolver, new Properties());
+    }
+
+    Analysis analyze(Plugin plugin, MavenExecutionPlan.PluginParticipation participation,
+                     Function<String, String> propertyResolver,
+                     Function<String, String> stableLatePropertyResolver,
+                     Properties mavenUserProperties) {
         if (plugin.getDependencies() != null && !plugin.getDependencies().isEmpty()) {
             return Analysis.unsupported("maven-failsafe-plugin declares custom provider/plugin dependencies; provider semantics are not yet reproducible");
         }
@@ -55,6 +66,25 @@ final class FailsafeCompatibility {
                     settings, reasons, propertyResolver, stableLatePropertyResolver);
             inspectConfiguration(execution.getConfiguration(), "maven-failsafe-plugin execution '" + executionId(execution) + "'",
                     settings, reasons, propertyResolver, stableLatePropertyResolver);
+
+            List<Xpp3Dom> propertyConfigurations = new ArrayList<>();
+            if (plugin.getConfiguration() instanceof Xpp3Dom pluginConfiguration) {
+                propertyConfigurations.add(pluginConfiguration);
+            }
+            if (execution.getConfiguration() instanceof Xpp3Dom executionConfiguration) {
+                propertyConfigurations.add(executionConfiguration);
+            }
+            EffectiveExecutorSystemProperties.Result externalProperties = effectiveSystemProperties.build(
+                    propertyConfigurations,
+                    projectBaseDirectory(propertyResolver, reasons),
+                    propertyResolver,
+                    mavenUserProperties,
+                    plugin.getVersion());
+            if (!externalProperties.supported()) {
+                reasons.add("system-property configuration cannot be reproduced safely: " + externalProperties.reason());
+            } else {
+                settings.systemProperties.putAll(externalProperties.properties());
+            }
 
             if (settings.rerunFailingTestsCount > 0) {
                 reasons.add("rerunFailingTestsCount resolves to " + settings.rerunFailingTestsCount
@@ -162,7 +192,6 @@ final class FailsafeCompatibility {
                 if (value != null && !Boolean.FALSE.equals(value)) reasons.add(location + " uses <useModulePath> with unsupported semantics");
             }
             case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver, stableLatePropertyResolver);
-            case "systemPropertyVariables" -> readSystemProperties(child, location, settings, reasons, propertyResolver);
             case "testFailureIgnore" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (value != null) settings.testFailureIgnore = value;
@@ -263,15 +292,6 @@ final class FailsafeCompatibility {
         matcher.appendTail(resolved); return resolved.toString();
     }
 
-    private void readSystemProperties(Xpp3Dom parent, String location, EffectiveSettings settings,
-                                      List<String> reasons, Function<String, String> propertyResolver) {
-        for (Xpp3Dom property : parent.getChildren()) {
-            if (property.getChildCount() > 0) { reasons.add(location + " contains nested system property '" + property.getName() + "'"); continue; }
-            String value = resolve(property.getValue(), location + " system property '" + property.getName() + "'", reasons, propertyResolver);
-            if (value != null) settings.systemProperties.put(property.getName(), value);
-        }
-    }
-
     private void readPatternList(Xpp3Dom parent, Set<String> destination, String location,
                                  List<String> reasons, Function<String, String> propertyResolver) {
         for (Xpp3Dom item : parent.getChildren()) {
@@ -315,6 +335,17 @@ final class FailsafeCompatibility {
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(resolved); return resolved.toString();
+    }
+
+    private Path projectBaseDirectory(Function<String, String> propertyResolver, List<String> reasons) {
+        String value = propertyResolver.apply("project.basedir");
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Path.of(value).toAbsolutePath().normalize();
+        } catch (RuntimeException invalid) {
+            reasons.add("Maven project.basedir is invalid for executor property resolution: " + safeMessage(invalid));
+            return null;
+        }
     }
 
     private String safeMessage(Throwable throwable) {
