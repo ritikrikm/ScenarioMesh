@@ -110,8 +110,9 @@ public final class PreflightMojo extends AbstractMojo {
                 passThrough("runtime backend is detected but not safely ownable: " + probe.summary());
                 return;
             }
-            if ("NOT_DETECTED".equals(probe.ownership()) && !knownModelFramework) {
-                passThrough("no executable runtime backend was detected and no known legacy framework signal exists: " + probe.summary());
+            if ("NOT_DETECTED".equals(probe.ownership())) {
+                passThrough("no executable runtime backend was detected; ScenarioMesh will not suppress native "
+                        + normalizedExecutor() + " without executable-leaf proof: " + probe.summary());
                 return;
             }
 
