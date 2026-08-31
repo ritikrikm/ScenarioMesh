@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
 public final class PreflightMojo extends AbstractMojo {
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(60);
+    private static final Set<String> MAVEN_RERUN_ADAPTERS = Set.of("junit-platform", "testng");
 
     @Parameter(defaultValue = "${project}", readonly = true, required = true) private MavenProject project;
     @Parameter(defaultValue = "${session}", readonly = true, required = true) private MavenSession session;
@@ -85,6 +86,16 @@ public final class PreflightMojo extends AbstractMojo {
             removeInternalControlProperties(testSystemProperties);
             if (promoteUserProperties) testSystemProperties.putAll(EffectiveMavenProperties.user(session));
             List<String> executorJvmArgs = MavenArgLineSupport.merge(List.of(), executorArgLine, project, session);
+            int modelReruns = removeInternalNonNegativeInt(
+                    testSystemProperties, RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT);
+            removeInternalNonNegativeInt(testSystemProperties, RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT);
+            int effectiveReruns = commandLineNonNegativeInt(executorPrefix() + "rerunFailingTestsCount", modelReruns);
+            int skipAfterFailureCount = commandLineNonNegativeInt(executorPrefix() + "skipAfterFailureCount", 0);
+            if (skipAfterFailureCount > 0) {
+                passThrough(executorPrefix() + "skipAfterFailureCount=" + skipAfterFailureCount
+                        + " requires an exact global stop-after-failure barrier; ScenarioMesh will not approximate this interaction with retries");
+                return;
+            }
 
             List<String> includes = includeClassNameRegexes == null ? List.of() : List.copyOf(includeClassNameRegexes);
             List<String> excludes = excludeClassNameRegexes == null ? List.of() : List.copyOf(excludeClassNameRegexes);
@@ -115,6 +126,13 @@ public final class PreflightMojo extends AbstractMojo {
                         + normalizedExecutor() + " without executable-leaf proof: " + probe.summary());
                 return;
             }
+            if (effectiveReruns > 0 && !rerunProviderSupported(probe)) {
+                passThrough("rerunFailingTestsCount=" + effectiveReruns
+                        + " but runtime retry ownership is not proven for adapters=" + probe.requiredAdapterIds()
+                        + ", engines=" + probe.requiredEngineIds()
+                        + "; supported retry ownership currently requires JUnit Platform/JUnit 5/Cucumber-on-Platform or TestNG");
+                return;
+            }
 
             String reason = "runtime ownership proven in Maven-selected test JVM; " + probe.summary();
             PreflightState.owned(project, probe.summary() + "; testJvm=" + javaExecutable);
@@ -125,6 +143,37 @@ public final class PreflightMojo extends AbstractMojo {
         } catch (Exception | LinkageError exception) {
             passThrough("preflight could not prove complete runtime ownership: " + message(exception));
         }
+    }
+
+    private boolean rerunProviderSupported(PreflightProbeMain.ProbeResult probe) {
+        if (probe.requiredAdapterIds().isEmpty()) return false;
+        if (!MAVEN_RERUN_ADAPTERS.containsAll(probe.requiredAdapterIds())) return false;
+        return !probe.requiredEngineIds().contains("junit-vintage");
+    }
+
+    private int removeInternalNonNegativeInt(Map<String, String> properties, String key) {
+        String raw = properties.remove(key);
+        return raw == null ? 0 : parseNonNegativeInt(key, raw);
+    }
+
+    private int commandLineNonNegativeInt(String key, int fallback) {
+        String raw = session.getUserProperties().getProperty(key);
+        if (raw == null) raw = session.getSystemProperties().getProperty(key);
+        return raw == null ? fallback : parseNonNegativeInt(key, raw);
+    }
+
+    private int parseNonNegativeInt(String key, String raw) {
+        try {
+            int value = Integer.parseInt(raw.trim());
+            if (value < 0) throw new IllegalArgumentException(key + " must be >= 0 but was " + raw);
+            return value;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(key + " must be a non-negative integer but was '" + raw + "'", exception);
+        }
+    }
+
+    private String executorPrefix() {
+        return "failsafe".equals(normalizedExecutor()) ? "failsafe." : "surefire.";
     }
 
     private ScenarioMeshConfig resolveConfig(Map<String, String> properties) throws Exception {
@@ -164,18 +213,9 @@ public final class PreflightMojo extends AbstractMojo {
         command.add(PreflightProbeMain.class.getName());
         command.add("--output");
         command.add(output.toString());
-        for (Path root : testRoots) {
-            command.add("--test-root");
-            command.add(root.toString());
-        }
-        for (String include : includes) {
-            command.add("--include-class-regex");
-            command.add(include);
-        }
-        for (String exclude : excludes) {
-            command.add("--exclude-class-regex");
-            command.add(exclude);
-        }
+        for (Path root : testRoots) { command.add("--test-root"); command.add(root.toString()); }
+        for (String include : includes) { command.add("--include-class-regex"); command.add(include); }
+        for (String exclude : excludes) { command.add("--exclude-class-regex"); command.add(exclude); }
 
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(workingDirectory.toFile())
