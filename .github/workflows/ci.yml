@@ -163,7 +163,7 @@ jobs:
       - name: Surefire includes selection is reproduced by ScenarioMesh
         working-directory: examples/junit5-surefire-pass-through-example
         run: mvn -B test
-      - name: Unsupported generic JUnit 4 uses normal Maven execution
+      - name: JUnit 4 Vintage is owned once through JUnit Platform
         working-directory: examples/unsupported-junit4-example
         run: mvn -B test
       - name: Mixed JUnit 4 and JUnit 5 is owned once through JUnit Platform
@@ -206,10 +206,14 @@ jobs:
             echo 'Surefire include parity selected a class native Surefire would exclude'
             exit 1
           fi
-      - name: Verify unsupported project was not taken over
+      - name: Verify JUnit 4 Vintage project is owned exactly once
         run: |
-          test -f examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
-          test ! -e examples/unsupported-junit4-example/target/scenariomesh/report.html
+          summary=examples/unsupported-junit4-example/target/scenariomesh/summary.json
+          test -f "$summary"
+          grep -Fq '"total" : 1' "$summary"
+          grep -Fq '"passed" : 1' "$summary"
+          grep -Fq '"junit-platform"' "$summary"
+          test ! -e examples/unsupported-junit4-example/target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
       - name: Verify mixed JUnit project has one ScenarioMesh owner for both engines
         run: |
           summary=examples/mixed-junit4-junit5-pass-through-example/target/scenariomesh/summary.json

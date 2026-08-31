@@ -108,6 +108,9 @@ jobs:
           (
             cd examples/unsupported-junit4-example
             mvn -B clean test
-            test -f target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
-            test ! -e target/scenariomesh/report.html
+            test -f target/scenariomesh/summary.json
+            grep -Fq '"total" : 1' target/scenariomesh/summary.json
+            grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+            grep -Fq '"junit-platform"' target/scenariomesh/summary.json
+            test ! -e target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
           )
