@@ -32,7 +32,10 @@ final class ExecutorConfigurationSemantics {
             "includes", "excludes", "includesFile", "excludesFile",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
-            "systemPropertyVariables", "properties", "suiteXmlFiles");
+            "argLine", "systemProperties", "systemPropertiesFile", "systemPropertyVariables",
+            "promoteUserPropertiesToSystemProperties",
+            "testFailureIgnore", "failIfNoTests", "failIfNoSpecifiedTests",
+            "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
             "skipITs", "includes", "excludes", "includesFile", "excludesFile",

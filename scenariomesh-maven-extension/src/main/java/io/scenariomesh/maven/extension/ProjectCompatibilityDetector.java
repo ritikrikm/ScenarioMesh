@@ -117,18 +117,18 @@ final class ProjectCompatibilityDetector {
                         return CompatibilityDecision.passThrough("Failsafe execution '" + plan.executionId()
                                 + "': " + selectionOverride.reason());
                     }
-                            Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
-                            planProperties.putAll(finalFrameworkSystemProperties);
+                    Map<String, String> planProperties = new LinkedHashMap<>(plan.systemProperties());
+                    planProperties.putAll(finalFrameworkSystemProperties);
                     applySelectionProperties(planProperties, commandSelection, selectionOverride);
                     plans.add(new ExecutorPlan(
-                                    plan.executionId(),
-                                    selectionOverride.includes() == null
-                                            ? plan.includeClassNameRegexes() : selectionOverride.includes(),
-                                    selectionOverride.excludes() == null
-                                            ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
-                                    plan.jvmArgs(),
-                                    planProperties,
-                                    plan.testFailureIgnore()));
+                            plan.executionId(),
+                            selectionOverride.includes() == null
+                                    ? plan.includeClassNameRegexes() : selectionOverride.includes(),
+                            selectionOverride.excludes() == null
+                                    ? plan.excludeClassNameRegexes() : selectionOverride.excludes(),
+                            plan.jvmArgs(),
+                            planProperties,
+                            plan.testFailureIgnore()));
                 }
                 if (!plans.isEmpty()) {
                     return CompatibilityDecision.takeOver(
@@ -141,7 +141,7 @@ final class ProjectCompatibilityDetector {
         Plugin surefire = plugin(project, SUREFIRE);
         SurefireCompatibility.Analysis surefireAnalysis = null;
         if (surefire != null) {
-            surefireAnalysis = surefireCompatibility.analyze(surefire, properties::resolve);
+            surefireAnalysis = surefireCompatibility.analyze(surefire, properties::resolve, properties::userProperty);
             if (surefireAnalysis.explicitlySkipsTests()) return CompatibilityDecision.passThrough("maven-surefire-plugin explicitly skips tests");
             reasons.addAll(surefireAnalysis.reasons());
             if (suiteXmlWithGroupSelection(properties, surefireAnalysis.systemProperties())) {
@@ -190,16 +190,37 @@ final class ProjectCompatibilityDetector {
         if (surefireAnalysis != null) surefireSystemProperties.putAll(surefireAnalysis.systemProperties());
         surefireSystemProperties.putAll(frameworkSystemProperties);
         applySelectionProperties(surefireSystemProperties, commandSelection, selectionOverride);
+        addSurefireExecutionSemantics(surefireSystemProperties, surefireAnalysis, commandSelection.present());
+
         return CompatibilityDecision.takeOver(
                 frameworks.names(), ExecutorKind.SUREFIRE, "test", false,
-                List.of(new ExecutorPlan("default-test", includes, excludes, List.of(), surefireSystemProperties, false)));
+                List.of(new ExecutorPlan(
+                        "default-test", includes, excludes, List.of(), surefireSystemProperties,
+                        surefireAnalysis != null && surefireAnalysis.testFailureIgnore())));
+    }
+
+    private void addSurefireExecutionSemantics(Map<String, String> target,
+                                               SurefireCompatibility.Analysis analysis,
+                                               boolean explicitTestSelection) {
+        String argLine = analysis == null ? null : analysis.argLine();
+        if (argLine != null && !argLine.isBlank()) {
+            target.put(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE, argLine);
+        }
+        target.put(RuntimePropertyNames.MAVEN_ZERO_TEST_POLICY_ENABLED, "true");
+        target.put(RuntimePropertyNames.MAVEN_FAIL_IF_NO_TESTS,
+                Boolean.toString(analysis != null && analysis.failIfNoTests()));
+        target.put(RuntimePropertyNames.MAVEN_FAIL_IF_NO_SPECIFIED_TESTS,
+                Boolean.toString(analysis == null || analysis.failIfNoSpecifiedTests()));
+        target.put(RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION,
+                Boolean.toString(explicitTestSelection));
+        target.put(RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES,
+                Boolean.toString(analysis == null || analysis.promoteUserPropertiesToSystemProperties()));
     }
 
     private void applySelectionProperties(Map<String, String> target,
                                           CommandLineClassSelection.Analysis commandSelection,
                                           SelectionOverride selectionOverride) {
         if (commandSelection != null && commandSelection.present()) {
-            // Surefire's test/it.test parameter overrides configured include and exclude collections.
             target.remove(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS);
             target.remove(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS);
             target.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
