@@ -18,7 +18,8 @@ class PreflightProbeResultTest {
                 "OWNABLE",
                 "JUnit Platform + Cucumber",
                 Set.of("junit-platform", "cucumber-junit4"),
-                Set.of("junit-jupiter", "cucumber"));
+                Set.of("junit-jupiter", "cucumber"),
+                "runtime-fingerprint");
 
         PreflightProbeMain.writeResult(output, expected);
 
