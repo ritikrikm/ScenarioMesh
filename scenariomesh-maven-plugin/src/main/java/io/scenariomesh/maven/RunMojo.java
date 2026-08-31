@@ -176,9 +176,10 @@ public final class RunMojo extends AbstractMojo {
             long failed = outcome.results().size() - passed - skipped;
             getLog().info("ScenarioMesh selected adapter: " + String.join(", ", outcome.adapters()));
             getLog().info("ScenarioMesh results: discovered=" + outcome.tasks().size()
-                    + ", logical=" + outcome.results().size()
                     + ", passed=" + passed + ", skipped=" + skipped
-                    + ", failed=" + failed + ", flakes=" + outcome.flakyCount()
+                    + ", failed=" + failed
+                    + ", logical=" + outcome.results().size()
+                    + ", flakes=" + outcome.flakyCount()
                     + ", duration=" + outcome.duration());
             getLog().info("ScenarioMesh report: " + reports.latestHtml());
 
