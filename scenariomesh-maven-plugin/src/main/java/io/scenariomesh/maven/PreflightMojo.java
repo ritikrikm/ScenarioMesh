@@ -36,9 +36,9 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Proves runtime ownership in the exact JVM/process model Maven selected.
- * Multiple local Maven test executions are proven independently. Transparent remote takeover is
- * enabled only when an authenticated remote worker registration has the exact runtime fingerprint
- * and framework/engine capabilities established by the selected-JVM probe.
+ * Multiple Maven test executions are proven independently. Transparent remote takeover is enabled
+ * only after an independent authenticated worker cohort has the exact runtime fingerprint and
+ * framework/engine capabilities established for every selected-JVM execution plan.
  */
 @Mojo(name = "preflight", defaultPhase = LifecyclePhase.PROCESS_TEST_CLASSES, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
@@ -76,7 +76,7 @@ public final class PreflightMojo extends AbstractMojo {
             return;
         }
 
-        PreparedRemoteWorkers prepared = null;
+        List<PreparedRemoteWorkers> prepared = new ArrayList<>();
         try {
             ScenarioMeshConfig config = resolveConfig(EffectiveMavenProperties.configuration(project, session));
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
@@ -85,43 +85,42 @@ public final class PreflightMojo extends AbstractMojo {
                 passThrough("no ScenarioMesh execution plan is available for runtime ownership proof");
                 return;
             }
-            if (config.distributed().remote() && plans.size() != 1) {
-                passThrough("transparent remote Maven takeover currently requires one execution plan because authenticated "
-                        + "worker sessions are execution-scoped; multiple local Maven executions remain supported independently");
-                return;
-            }
 
             List<PlanProof> proofs = new ArrayList<>();
             for (ProbePlan plan : plans) proofs.add(new PlanProof(plan, provePlan(plan, javaExecutable)));
 
             if (config.distributed().remote()) {
-                PreflightProbeMain.ProbeResult probe = proofs.get(0).probe();
-                prepared = PreparedRemoteWorkers.prepare(
-                        config,
-                        probe.requiredAdapterIds(),
-                        probe.requiredEngineIds(),
-                        probe.runtimeFingerprint(),
-                        message -> getLog().info(message));
-                RemotePreflightState.store(getPluginContext(), prepared);
-                prepared = null; // ownership transferred to plugin context for RunMojo
+                List<PreparedRemoteWorkers.ExecutionRequirement> requirements = proofs.stream()
+                        .map(proof -> new PreparedRemoteWorkers.ExecutionRequirement(
+                                proof.plan().executionId(),
+                                proof.probe().requiredAdapterIds(),
+                                proof.probe().requiredEngineIds(),
+                                proof.probe().runtimeFingerprint()))
+                        .toList();
+                prepared.addAll(PreparedRemoteWorkers.prepareAll(
+                        config, requirements, message -> getLog().info(message)));
+                for (PreparedRemoteWorkers cohort : prepared) {
+                    RemotePreflightState.store(getPluginContext(), cohort);
+                }
+                prepared.clear(); // ownership transferred in execution order to the injected RunMojo instances
             }
 
             String inventory = proofs.stream()
                     .map(proof -> proof.plan().executionId() + "={" + proof.probe().summary() + "}")
                     .reduce((left, right) -> left + ", " + right).orElse("");
             String location = config.distributed().remote()
-                    ? "authenticated fingerprint-equivalent remote worker runtime"
+                    ? "independent authenticated fingerprint-equivalent remote worker cohort(s)"
                     : "Maven-selected local test JVM";
             String reason = "runtime ownership proven independently for " + plans.size()
                     + " Maven execution plan(s) in " + location + "; " + inventory;
             PreflightState.owned(project, inventory + "; testJvm=" + javaExecutable
-                    + (config.distributed().remote() ? "; remoteFingerprintProven=true" : ""));
+                    + (config.distributed().remote() ? "; remoteFingerprintsProven=" + plans.size() : ""));
             suppressNativeExecutor();
             ownership(MavenOwnershipDiagnostic.Owner.SCENARIOMESH, reason);
             getLog().info("ScenarioMesh preflight: ownership proven for all " + plans.size()
                     + " Maven execution plan(s); native " + normalizedExecutor() + " execution will be suppressed. " + inventory);
         } catch (Exception | LinkageError exception) {
-            if (prepared != null) prepared.close();
+            for (PreparedRemoteWorkers cohort : prepared) cohort.close();
             passThrough("preflight could not prove complete runtime ownership: " + message(exception));
         }
     }
