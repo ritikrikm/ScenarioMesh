@@ -1,4 +1,6 @@
-# ScenarioMesh Failure/False-Positive Hardening Plan — 2026-08-20
+# Historical Snapshot: ScenarioMesh Failure/False-Positive Hardening Plan — 2026-08-20
+
+> **Superseded plan.** This document records the starting state of the August hardening work and is not the current product contract. Consult the README, current ADRs, and CI workflows for current support. In particular, later work added JUnit Vintage ownership, compatible Failsafe ownership, logical rerun semantics, and selected multi-engine JUnit Platform coverage.
 
 Branch: `agent/worker-hardening-test`
 

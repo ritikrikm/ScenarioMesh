@@ -26,7 +26,7 @@ Worker stdout/stderr is redirected to per-worker logs. The control protocol ther
 
 A Maven Core Extension is installed once through `.mvn/extensions.xml`. During `afterProjectsRead`, it injects the ScenarioMesh Maven plugin into non-POM projects for the `test` phase and sets Maven's normal test execution to skip for that project while ScenarioMesh is enabled. The ScenarioMesh goal still runs because it does not use Surefire's skip flag.
 
-Compatibility is evaluated against the requested lifecycle, not merely against plugin presence. For example, a normal Failsafe execution bound to `integration-test`/`verify` does not block a plain `mvn test`, because those phases are not reached. The same Failsafe execution is relevant to `mvn verify`, and ScenarioMesh currently passes through because integration-test lifecycle equivalence is not yet implemented. A custom Failsafe execution bound unusually to `test`, or an execution whose phase cannot be established, also remains pass-through. Unknown behavior is conservative by design.
+Compatibility is evaluated against the requested lifecycle, not merely against plugin presence. For example, a normal Failsafe execution bound to `integration-test`/`verify` does not block a plain `mvn test`, because those phases are not reached. A compatible Failsafe execution is owned for `mvn verify`, including deferred verification behavior. A custom Failsafe execution bound unusually to `test`, multiple/ambiguous executions, or an execution whose phase cannot be established remains native Maven pass-through. Unknown behavior is conservative by design.
 
 `-Dscenariomesh.enabled=false` causes the extension to make no lifecycle modifications, preserving the repository's normal Maven behavior.
 

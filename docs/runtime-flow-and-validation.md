@@ -1,6 +1,6 @@
 # ScenarioMesh Runtime Flow and Validation
 
-This document describes the **current implemented behavior** on `agent/mvp-runtime`. It is intentionally exact: when a check is not implemented, this document does not claim that it is.
+This document describes the **current implemented behavior** on `main`. It is intentionally exact: when a check is not implemented, this document does not claim that it is.
 
 ## Complete flow
 
@@ -54,33 +54,24 @@ This document describes the **current implemented behavior** on `agent/mvp-runti
 ║    testng owner is signaled by:                                              ║
 ║      org.testng:testng                                                       ║
 ║                                                                              ║
-║ D. Generic direct JUnit 4 is NOT supported by the current product.           ║
-║    If direct junit:junit is present without Cucumber JUnit4, pass through.   ║
+║ D. Generic JUnit 4 is supported through JUnit Vintage when the target        ║
+║    runtime supplies that engine. Without Vintage, or for an unproven custom  ║
+║    JUnit 4 runner, native Maven remains the owner.                           ║
 ║                                                                              ║
-║ E. More than ONE supported owner is currently treated as ambiguous.          ║
-║    Example: junit-platform + testng => pass through.                         ║
+║ E. JUnit Platform can own compatible Jupiter, Vintage, and Cucumber engines ║
+║    together. Separate adapters still require complete, unambiguous suite     ║
+║    ownership; for example JUnit Platform + standalone TestNG passes through.║
 ║                                                                              ║
-║ F. Maven group filtering is not taken over when either is present:           ║
-║    groups                                                                    ║
-║    excludedGroups                                                            ║
+║ F. Supported Surefire/Failsafe selection, group, suite XML, dependency-scan, ║
+║    fork-launch, and rerun semantics are taken over only when their exact     ║
+║    compatibility capability proves equivalence.                              ║
 ║                                                                              ║
 ║ G. Maven lifecycle execution plan must be determinable safely.               ║
 ║                                                                              ║
-║ H. Unsupported Surefire test-selection properties cause pass-through:        ║
-║    test                                                                      ║
-║    surefire.includes                                                         ║
-║    surefire.excludes                                                         ║
-║    suiteXmlFiles                                                             ║
-║    dependenciesToScan                                                        ║
+║ H. Unknown, custom, or unsupported Surefire/Failsafe configuration causes    ║
+║    pass-through; ScenarioMesh never approximates an execution setting.       ║
 ║                                                                              ║
-║ I. Unsupported Failsafe test-selection properties cause pass-through:        ║
-║    it.test                                                                   ║
-║    failsafe.includes                                                         ║
-║    failsafe.excludes                                                         ║
-║    suiteXmlFiles                                                             ║
-║    dependenciesToScan                                                        ║
-║                                                                              ║
-║ J. Surefire/Failsafe plugin configuration is analyzed. If ScenarioMesh       ║
+║ I. Surefire/Failsafe plugin configuration is analyzed. If ScenarioMesh       ║
 ║    cannot reproduce the relevant semantics safely, it does NOT take over.    ║
 ║                                                                              ║
 ║ RESULT                                                                       ║
@@ -116,8 +107,8 @@ This document describes the **current implemented behavior** on `agent/mvp-runti
 ║   TestNG @Test methods                                                        ║
 ║        └─> testng adapter                                                     ║
 ║                                                                              ║
-║   Generic JUnit 4 without Cucumber                                            ║
-║        └─> NOT supported by current product                                    ║
+║   Generic JUnit 4 with JUnit Vintage                                           ║
+║        └─> junit-platform adapter                                              ║
 ║                                                                              ║
 ║ AUTO mode behavior:                                                          ║
 ║                                                                              ║

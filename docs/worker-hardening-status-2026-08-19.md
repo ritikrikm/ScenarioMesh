@@ -1,4 +1,6 @@
-# ScenarioMesh Worker Hardening Status — 2026-08-19
+# Historical Snapshot: ScenarioMesh Worker Hardening Status — 2026-08-19
+
+> **Superseded status snapshot.** This report is retained as historical evidence for the August worker-hardening pass; it is not the current compatibility contract. Later work added JUnit Vintage ownership, compatible Failsafe ownership, and logical rerun semantics. Consult the README and current CI workflows for release status.
 
 Branch: `agent/worker-hardening-test`
 Base branch: `agent/mvp-runtime`

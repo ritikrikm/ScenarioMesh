@@ -19,7 +19,7 @@ ScenarioMesh is not a Selenium framework, WebDriver proxy, Gherkin parser, repla
 | Compatible Maven Surefire `test` execution | Supported |
 | Compatible Maven Failsafe `integration-test` / `verify` execution | Supported; unsupported semantics pass through |
 | Standard method-level TestNG `@Test` | Supported |
-| Generic JUnit 4 without Cucumber | Native Maven pass-through |
+| Generic JUnit 4 without Cucumber | Supported through the JUnit Platform adapter when the target runtime supplies JUnit Vintage; otherwise native Maven pass-through |
 | TestNG `suiteXmlFiles` | Supported as atomic TestNG lifecycle scopes; individual outcomes are materialized after native TestNG execution |
 | Factory-heavy TestNG discovered without a suite XML | Pass-through when ScenarioMesh cannot prove equivalent isolated semantics |
 | Gradle | Not supported yet |

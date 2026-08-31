@@ -462,7 +462,7 @@ The product does not claim universal support for:
 - arbitrary custom JUnit 4 runners whose semantics the Cucumber/JUnit 4 adapter does not understand;
 - unknown/custom Surefire or Failsafe provider behavior that ScenarioMesh cannot reproduce;
 - every possible Surefire/Failsafe configuration element;
-- positive Maven rerun semantics until exact no-duplicate behavior is implemented;
+- arbitrary retry providers or retry configurations outside the proven Surefire/Failsafe logical-rerun contract;
 - ambiguous multiple Maven test executions where safe ownership cannot be determined;
 - remote worker hosts;
 - Docker/Kubernetes worker launchers;
