@@ -24,16 +24,14 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
     private final RemoteWorkerServer server;
     private final RemoteWorkerDirectory directory;
     private final List<RemoteWorkerSession> sessions;
-    private final AutoCloseable serverLease;
     private boolean transferred;
     private boolean closed;
 
     private PreparedRemoteWorkers(RemoteWorkerServer server, RemoteWorkerDirectory directory,
-                                  List<RemoteWorkerSession> sessions, AutoCloseable serverLease) {
+                                  List<RemoteWorkerSession> sessions) {
         this.server = Objects.requireNonNull(server, "server");
         this.directory = Objects.requireNonNull(directory, "directory");
         this.sessions = new ArrayList<>(sessions);
-        this.serverLease = Objects.requireNonNull(serverLease, "serverLease");
     }
 
     public static PreparedRemoteWorkers prepare(ScenarioMeshConfig config,
@@ -61,8 +59,9 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
      *
      * <p>All cohorts are proven before native Maven execution can be suppressed. A worker is assigned to only
      * one execution cohort, so execution-specific JVM/system-property/environment state cannot leak between
-     * Maven executions. Sharing the server avoids fixed bind-port collisions while retaining one-shot worker
-     * process semantics for each execution.</p>
+     * Maven executions. All workers connect through one configured bind port; after all cohorts are proven,
+     * the listening socket is closed while the already accepted worker sockets remain alive for their later
+     * one-shot Maven executions.</p>
      */
     public static List<PreparedRemoteWorkers> prepareAll(ScenarioMeshConfig config,
                                                           List<ExecutionRequirement> requirements,
@@ -137,10 +136,12 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
                         + execution.requiredAdapterIds() + ", engines=" + execution.requiredEngineIds() + ".");
             }
 
-            SharedServer shared = new SharedServer(server, required.size());
+            // Prepared ownership never accepts replacement workers. Close only the listening socket now;
+            // accepted RemoteWorkerSession sockets remain alive and are consumed by the injected run mojos.
+            server.close();
             List<PreparedRemoteWorkers> result = new ArrayList<>(required.size());
             for (List<RemoteWorkerSession> cohort : cohorts) {
-                result.add(new PreparedRemoteWorkers(server, directory, cohort, shared::release));
+                result.add(new PreparedRemoteWorkers(server, directory, cohort));
             }
             return List.copyOf(result);
         } catch (Exception exception) {
@@ -253,7 +254,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
         if (closed) throw new IllegalStateException("Prepared remote workers were already closed");
         if (transferred) throw new IllegalStateException("Prepared remote workers were already transferred");
         transferred = true;
-        return new PreparedState(server, directory, List.copyOf(sessions), serverLease);
+        return new PreparedState(server, directory, List.copyOf(sessions));
     }
 
     @Override public synchronized void close() {
@@ -263,7 +264,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
             try { server.disconnected(session); } catch (Exception ignored) { }
         }
         sessions.clear();
-        try { serverLease.close(); } catch (Exception ignored) { }
+        try { server.close(); } catch (Exception ignored) { }
     }
 
     public record ExecutionRequirement(String executionId,
@@ -280,30 +281,7 @@ public final class PreparedRemoteWorkers implements AutoCloseable {
     }
 
     record PreparedState(RemoteWorkerServer server, RemoteWorkerDirectory directory,
-                         List<RemoteWorkerSession> sessions, AutoCloseable serverLease) {
-        PreparedState {
-            sessions = List.copyOf(sessions);
-            Objects.requireNonNull(serverLease, "serverLease");
-        }
-    }
-
-    private static final class SharedServer {
-        private final RemoteWorkerServer server;
-        private int references;
-        private boolean closed;
-
-        private SharedServer(RemoteWorkerServer server, int references) {
-            this.server = Objects.requireNonNull(server, "server");
-            if (references < 1) throw new IllegalArgumentException("shared remote server requires at least one reference");
-            this.references = references;
-        }
-
-        private synchronized void release() throws Exception {
-            if (closed) return;
-            references--;
-            if (references > 0) return;
-            closed = true;
-            server.close();
-        }
+                         List<RemoteWorkerSession> sessions) {
+        PreparedState { sessions = List.copyOf(sessions); }
     }
 }
