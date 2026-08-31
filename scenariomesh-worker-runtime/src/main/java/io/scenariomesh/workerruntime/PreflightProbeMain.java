@@ -52,9 +52,10 @@ public final class PreflightProbeMain {
         new FrameworkOwnershipGuard().verifyNoUnsupportedExecutableFamilies(context);
         Set<String> adapterOwnedEngines = new LinkedHashSet<>();
         for (ScenarioAdapter adapter : registry.available(loader)) adapterOwnedEngines.addAll(adapter.capabilities().junitPlatformEngineIds());
+        RuntimeRequirements requirements = runtimeRequirements(context, registry);
         ExecutionBackendInventory.Inventory inventory = ExecutionBackendInventory.inspect(
                 loader, parsed.testRoots, parsed.includes, parsed.excludes, adapterOwnedEngines);
-        RuntimeRequirements requirements = runtimeRequirements(context, registry);
+        inventory = includeStandaloneAdapterOwnership(inventory, requirements);
 
         Files.createDirectories(parsed.output.getParent());
         writeResult(parsed.output, new ProbeResult(inventory.ownership().name(), inventory.summary(),
@@ -92,11 +93,13 @@ public final class PreflightProbeMain {
     static RuntimeRequirements runtimeRequirements(AdapterContext context, AdapterRegistry registry) throws Exception {
         Set<String> adapterIds = new LinkedHashSet<>();
         Set<String> engineIds = new LinkedHashSet<>();
+        Map<String, Integer> taskCounts = new LinkedHashMap<>();
         Map<String, String> ownerByLogicalTest = new LinkedHashMap<>();
         for (ScenarioAdapter adapter : registry.available(context.classLoader())) {
             List<ScenarioTask> tasks = DiscoveryMain.applyMavenSelection(adapter.id(), adapter.discover(context), context.discoverySelection());
             if (tasks.isEmpty()) continue;
             adapterIds.add(adapter.id());
+            taskCounts.put(adapter.id(), tasks.size());
             for (ScenarioTask task : tasks) {
                 String logicalKey = DiscoveryMain.logicalKey(task);
                 String previousOwner = ownerByLogicalTest.putIfAbsent(logicalKey, adapter.id());
@@ -114,7 +117,28 @@ public final class PreflightProbeMain {
                 }
             }
         }
-        return new RuntimeRequirements(Set.copyOf(adapterIds), Set.copyOf(engineIds));
+        return new RuntimeRequirements(Set.copyOf(adapterIds), Set.copyOf(engineIds), Map.copyOf(taskCounts));
+    }
+
+    private static ExecutionBackendInventory.Inventory includeStandaloneAdapterOwnership(
+            ExecutionBackendInventory.Inventory inventory, RuntimeRequirements requirements) {
+        // TestNG normally runs through Surefire's native provider rather than a JUnit Platform
+        // engine. Its adapter discovery is therefore the authoritative executable-leaf proof.
+        // Unsupported TestNG semantics fail discovery above and remain native Maven pass-through.
+        if (inventory.ownership() != ExecutionBackendInventory.Ownership.NOT_DETECTED
+                || !requirements.adapterIds().contains("testng")) {
+            return inventory;
+        }
+        return new ExecutionBackendInventory.Inventory(ExecutionBackendInventory.Ownership.OWNABLE,
+                List.of(new ExecutionBackendInventory.Backend("testng", "testng",
+                        requirements.taskCounts().getOrDefault("testng", 0),
+                        ExecutionBackendInventory.BackendOwnership.OWNABLE,
+                        ExecutionBackendInventory.ExecutionGranularity.CLASS,
+                        Set.of(ExecutionBackendInventory.Capability.DISCOVERY,
+                                ExecutionBackendInventory.Capability.STABLE_LEAF_IDENTITY,
+                                ExecutionBackendInventory.Capability.ISOLATED_LEAF_EXECUTION,
+                                ExecutionBackendInventory.Capability.FILTER_EQUIVALENCE))),
+                "TestNG adapter discovered Maven-selected executable methods with a proven isolated execution contract");
     }
 
     private static List<Path> currentClasspath() {
@@ -130,10 +154,11 @@ public final class PreflightProbeMain {
             requiredEngineIds = Set.copyOf(requiredEngineIds == null ? Set.of() : requiredEngineIds);
         }
     }
-    record RuntimeRequirements(Set<String> adapterIds, Set<String> engineIds) {
+    record RuntimeRequirements(Set<String> adapterIds, Set<String> engineIds, Map<String, Integer> taskCounts) {
         RuntimeRequirements {
             adapterIds = Set.copyOf(adapterIds == null ? Set.of() : adapterIds);
             engineIds = Set.copyOf(engineIds == null ? Set.of() : engineIds);
+            taskCounts = Map.copyOf(taskCounts == null ? Map.of() : taskCounts);
         }
     }
 

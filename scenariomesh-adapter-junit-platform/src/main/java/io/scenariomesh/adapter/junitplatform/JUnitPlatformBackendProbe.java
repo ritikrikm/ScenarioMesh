@@ -20,6 +20,7 @@ import java.util.ServiceLoader;
 import java.util.Set;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathResource;
 
 /** JUnit Platform-specific backend probe loaded inside the target execution classloader. */
 public final class JUnitPlatformBackendProbe {
@@ -54,9 +55,13 @@ public final class JUnitPlatformBackendProbe {
             Launcher launcher = LauncherFactory.create(config);
 
             DiscoverySelection selection = new DiscoverySelection(includeClassNameRegexes, excludeClassNameRegexes);
-            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request()
-                    .selectors(SelectedTestClasses.scan(testRoots, selection).stream()
-                            .map(className -> selectClass(className)).toList());
+            List<org.junit.platform.engine.DiscoverySelector> selectors = new ArrayList<>(SelectedTestClasses
+                    .scan(testRoots, selection).stream()
+                    .map(className -> (org.junit.platform.engine.DiscoverySelector) selectClass(className)).toList());
+            if (engines.stream().anyMatch(engine -> "cucumber".equals(engine.getId()))) {
+                selectors.add(selectClasspathResource("features"));
+            }
+            LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request().selectors(selectors);
             if (!selection.includeClassNameRegexes().isEmpty() || !selection.excludeClassNameRegexes().isEmpty()) {
                 request.filters(new MavenClassSelectionPostFilter(selection));
             }

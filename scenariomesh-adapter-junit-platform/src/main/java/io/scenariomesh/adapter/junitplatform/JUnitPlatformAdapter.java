@@ -40,6 +40,7 @@ import java.util.ServiceLoader;
 import java.util.Set;
 
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
+import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClasspathResource;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectUniqueId;
 
 public final class JUnitPlatformAdapter implements ScenarioAdapter {
@@ -78,8 +79,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         if (context.testRoots().isEmpty()) return List.of();
         LauncherDiscoveryRequestBuilder builder = JUnitEngineSelection.apply(
                 LauncherDiscoveryRequestBuilder.request()
-                        .selectors(SelectedTestClasses.scan(context.testRoots(), context.discoverySelection()).stream()
-                                .map(className -> selectClass(className)).toList()),
+                        .selectors(discoverySelectors(context)),
                 context.properties());
         if (!context.discoverySelection().includeClassNameRegexes().isEmpty()
                 || !context.discoverySelection().excludeClassNameRegexes().isEmpty()
@@ -104,6 +104,19 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
             tasks.add(taskFor(identifier, scope, null));
         }
         return List.copyOf(tasks);
+    }
+
+    private List<DiscoverySelector> discoverySelectors(AdapterContext context) {
+        List<DiscoverySelector> selectors = new ArrayList<>(SelectedTestClasses
+                .scan(context.testRoots(), context.discoverySelection()).stream()
+                .map(className -> (DiscoverySelector) selectClass(className)).toList());
+        if (cucumberEngineAvailable(context.classLoader())) selectors.add(selectClasspathResource("features"));
+        return List.copyOf(selectors);
+    }
+
+    private boolean cucumberEngineAvailable(ClassLoader classLoader) {
+        return ServiceLoader.load(TestEngine.class, classLoader).stream()
+                .anyMatch(provider -> "cucumber".equals(provider.get().getId()));
     }
 
     @Override

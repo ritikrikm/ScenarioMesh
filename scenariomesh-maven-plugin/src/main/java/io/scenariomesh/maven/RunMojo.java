@@ -87,6 +87,12 @@ public final class RunMojo extends AbstractMojo {
         try {
             Map<String, String> effectiveExecutorProperties = new LinkedHashMap<>(
                     executorSystemProperties == null ? Map.of() : executorSystemProperties);
+            String cluecumberJsonDirectory = effectiveExecutorProperties.get(
+                    RuntimePropertyNames.CLUECUMBER_JSON_DIRECTORY);
+            if (cluecumberJsonDirectory != null && !cluecumberJsonDirectory.isBlank()) {
+                getLog().info("ScenarioMesh: preserving Cluecumber JSON input for this invocation at "
+                        + cluecumberJsonDirectory);
+            }
             String executorArgLine = effectiveExecutorProperties.remove(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE);
             boolean zeroTestPolicyEnabled = removeInternalBoolean(
                     effectiveExecutorProperties, RuntimePropertyNames.MAVEN_ZERO_TEST_POLICY_ENABLED, false);
