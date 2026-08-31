@@ -39,6 +39,12 @@ public final class RuntimePropertyNames {
     public static final String MAVEN_RUN_ORDER_STATISTICS_FILE =
             INTERNAL_PREFIX + "maven.runOrder.statisticsFile";
 
+    /** Maven executor policy values carried through compatibility analysis but never exposed to target tests. */
+    public static final String MAVEN_RERUN_FAILING_TESTS_COUNT =
+            INTERNAL_PREFIX + "maven.rerunFailingTestsCount";
+    public static final String MAVEN_FAIL_ON_FLAKE_COUNT =
+            INTERNAL_PREFIX + "maven.failOnFlakeCount";
+
     /** Prevents Vintage from duplicating tests owned by the dedicated Cucumber JUnit 4 adapter. */
     public static final String JUNIT_VINTAGE_DISABLED =
             INTERNAL_PREFIX + "junit.disableVintage";
