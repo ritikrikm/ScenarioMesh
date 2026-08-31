@@ -124,3 +124,6 @@ jobs:
           grep -Fq 'jupiterRunsThroughScenarioMesh()' target/scenariomesh/summary.json
           grep -Fq 'vintageRunsThroughScenarioMesh' target/scenariomesh/summary.json
           test ! -d target/surefire-reports
+      - name: Mixed Jupiter and Cucumber Platform execution matches native Surefire
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/junit5-cucumber-platform-mixed-example
