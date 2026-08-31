@@ -38,6 +38,38 @@ class MavenAdvancedExecutionSemanticsTest {
     }
 
     @Test
+    void rejectsFailedFirstRunOrderUntilStatisticsLifecycleIsOwned() {
+        Plugin plugin = pluginWithExecution("failed-first", config("runOrder", "failedfirst"));
+        MavenRunOrderConfiguration.Analysis analysis = new MavenRunOrderConfiguration().analyze(
+                plugin, ProjectCompatibilityDetector.ExecutorKind.SUREFIRE, List.of("failed-first"),
+                key -> "/tmp/project", key -> null);
+
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("persistent .surefire-* statistics"));
+    }
+
+    @Test
+    void rejectsForkNumberInEnvironmentAndSystemPropertyConfiguration() {
+        Plugin plugin = pluginWithExecution("default-test", new Xpp3Dom("configuration"));
+        Xpp3Dom configuration = new Xpp3Dom("configuration");
+        Xpp3Dom environment = new Xpp3Dom("environmentVariables");
+        environment.addChild(child("WORKER_SLOT", "${surefire.forkNumber}"));
+        configuration.addChild(environment);
+        Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
+        properties.addChild(child("fork.slot", "@{surefire.forkNumber}"));
+        configuration.addChild(properties);
+        plugin.setConfiguration(configuration);
+
+        MavenForkNumberCompatibility.Analysis analysis = new MavenForkNumberCompatibility().analyze(
+                plugin, List.of("default-test"));
+
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("native fork and Maven-thread topology"));
+        assertTrue(analysis.reason().contains("environmentVariables"));
+        assertTrue(analysis.reason().contains("systemPropertyVariables"));
+    }
+
+    @Test
     void acceptsKnownJUnitPlatformEnginePluginDependency() {
         Plugin plugin = new Plugin();
         Dependency dependency = dependency("org.junit.jupiter", "junit-jupiter-engine", "6.0.0");

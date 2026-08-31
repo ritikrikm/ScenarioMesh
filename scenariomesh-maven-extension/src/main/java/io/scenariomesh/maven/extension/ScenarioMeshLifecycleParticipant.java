@@ -43,6 +43,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
     private final MavenForkLaunchConfiguration forkLaunchConfiguration = new MavenForkLaunchConfiguration();
     private final MavenExecutorClasspathConfiguration executorClasspathConfiguration = new MavenExecutorClasspathConfiguration();
     private final MavenRunOrderConfiguration runOrderConfiguration = new MavenRunOrderConfiguration();
+    private final MavenForkNumberCompatibility forkNumberCompatibility = new MavenForkNumberCompatibility();
     private final MavenProviderDependencyCompatibility providerDependencyCompatibility = new MavenProviderDependencyCompatibility();
     private final DownstreamReportCompatibility downstreamReportCompatibility = new DownstreamReportCompatibility();
     private final DownstreamLifecycleCompatibility downstreamLifecycleCompatibility = new DownstreamLifecycleCompatibility();
@@ -108,6 +109,14 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             if (!providerAnalysis.supported()) {
                 diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, providerAnalysis.reason());
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + providerAnalysis.reason());
+                continue;
+            }
+
+            MavenForkNumberCompatibility.Analysis forkNumberAnalysis =
+                    forkNumberCompatibility.analyze(nativeExecutor, executionIds);
+            if (!forkNumberAnalysis.supported()) {
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, forkNumberAnalysis.reason());
+                info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + forkNumberAnalysis.reason());
                 continue;
             }
 
