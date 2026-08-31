@@ -8,6 +8,7 @@ import io.scenariomesh.core.RetrySemantics.ExecutionAttempt;
 import io.scenariomesh.core.RetrySemantics.LogicalExecution;
 import io.scenariomesh.core.RetrySemantics.LogicalStatus;
 import io.scenariomesh.core.RetrySemantics.RetryCause;
+import io.scenariomesh.core.RetrySemantics.RetryPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -15,7 +16,9 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RetrySemanticsTest {
     private static final ScenarioId ID = new ScenarioId("logical-test");
@@ -32,7 +35,6 @@ class RetrySemanticsTest {
         assertEquals(LogicalStatus.FLAKY, logical.status());
         assertEquals(2, logical.attempts().size());
         assertEquals(rerunPass, logical.canonicalResult());
-        // Infrastructure attempt 3 is preserved independently from Maven rerun index 0.
         assertEquals(3, logical.attempts().get(0).result().attempt());
     }
 
@@ -52,13 +54,31 @@ class RetrySemanticsTest {
     }
 
     @Test
-    void doesNotTreatInfrastructureFailureAsMavenRerunCandidate() {
+    void initialInfrastructureFailureIsSeparateFromTestFailureAndCannotBeRerun() {
         ExecutionResult infrastructureFailure = result(ResultStatus.INFRASTRUCTURE_FAILURE, 2);
-        ExecutionResult pass = result(ResultStatus.PASSED, 1);
+        LogicalExecution logical = RetrySemantics.aggregate(List.of(
+                new ExecutionAttempt(ID, 0, RetryCause.INITIAL, infrastructureFailure)));
+
+        assertEquals(LogicalStatus.INFRASTRUCTURE_FAILED, logical.status());
+        assertEquals(infrastructureFailure, logical.canonicalResult());
+        assertTrue(logical.infrastructureFailed());
 
         assertThrows(IllegalArgumentException.class, () -> RetrySemantics.aggregate(List.of(
                 new ExecutionAttempt(ID, 0, RetryCause.INITIAL, infrastructureFailure),
-                new ExecutionAttempt(ID, 1, RetryCause.MAVEN_RERUN, pass))));
+                new ExecutionAttempt(ID, 1, RetryCause.MAVEN_RERUN, result(ResultStatus.PASSED, 1)))));
+    }
+
+    @Test
+    void infrastructureFailureDuringMavenRerunIsFatalAndCanonical() {
+        ExecutionResult firstFailure = result(ResultStatus.TEST_FAILURE, 1);
+        ExecutionResult infrastructureFailure = result(ResultStatus.WORKER_FAILURE, 4);
+
+        LogicalExecution logical = RetrySemantics.aggregate(List.of(
+                new ExecutionAttempt(ID, 0, RetryCause.INITIAL, firstFailure),
+                new ExecutionAttempt(ID, 1, RetryCause.MAVEN_RERUN, infrastructureFailure)));
+
+        assertEquals(LogicalStatus.INFRASTRUCTURE_FAILED, logical.status());
+        assertEquals(infrastructureFailure, logical.canonicalResult());
     }
 
     @Test
@@ -67,6 +87,23 @@ class RetrySemanticsTest {
                 new ExecutionAttempt(ID, 0, RetryCause.INITIAL, result(ResultStatus.TEST_FAILURE, 1)),
                 new ExecutionAttempt(ID, 1, RetryCause.MAVEN_RERUN, result(ResultStatus.PASSED, 1)),
                 new ExecutionAttempt(ID, 2, RetryCause.MAVEN_RERUN, result(ResultStatus.TEST_FAILURE, 1)))));
+    }
+
+    @Test
+    void flakeThresholdMatchesMavenCumulativeThresholdSemantics() {
+        RetryPolicy disabled = new RetryPolicy(2, 0);
+        RetryPolicy thresholdTwo = new RetryPolicy(2, 2);
+
+        assertFalse(disabled.failsBuildForFlakes(100));
+        assertFalse(thresholdTwo.failsBuildForFlakes(1));
+        assertTrue(thresholdTwo.failsBuildForFlakes(2));
+        assertTrue(thresholdTwo.failsBuildForFlakes(3));
+    }
+
+    @Test
+    void rejectsNegativeRetryPolicyValues() {
+        assertThrows(IllegalArgumentException.class, () -> new RetryPolicy(-1, 0));
+        assertThrows(IllegalArgumentException.class, () -> new RetryPolicy(0, -1));
     }
 
     private ExecutionResult result(ResultStatus status, int infrastructureAttempt) {
