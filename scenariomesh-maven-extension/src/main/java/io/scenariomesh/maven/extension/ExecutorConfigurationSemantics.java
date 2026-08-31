@@ -23,7 +23,8 @@ final class ExecutorConfigurationSemantics {
             "jvm", "jdkToolchain",
             "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory",
             "additionalClasspathElements", "additionalClasspathDependencies",
-            "classpathDependencyExcludes", "classpathDependencyScopeExclude");
+            "classpathDependencyExcludes", "classpathDependencyScopeExclude",
+            "runOrder", "runOrderRandomSeed", "runOrderStatisticsFileChecksum");
 
     private static final Set<String> COMMON_PRESERVED = Set.of(
             "skip", "skipTests", "useModulePath");
