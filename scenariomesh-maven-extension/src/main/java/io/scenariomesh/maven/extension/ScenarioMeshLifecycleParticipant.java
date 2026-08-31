@@ -7,6 +7,7 @@ import io.scenariomesh.core.MavenOwnershipDiagnostic;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
+import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Plugin;
 import org.apache.maven.model.PluginExecution;
 import org.apache.maven.project.MavenProject;
@@ -84,7 +85,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
-            ProjectCompatibilityDetector.CompatibilityDecision decision = compatibilityDetector.evaluate(session, project);
+            ProjectCompatibilityDetector.CompatibilityDecision decision = evaluateModelSemantics(session, project);
             Plugin surefire = project.getPlugin(SUREFIRE);
             if (!decision.compatible() && surefire != null && requiresAdvancedSurefireAnalysis(surefire)) {
                 ProjectCompatibilityDetector.CompatibilityDecision advanced = advancedSurefireCompatibilityDetector.evaluate(session, project);
@@ -132,12 +133,12 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
-            MavenAdditionalClasspathDependencyResolver additionalDependencyResolver =
+            MavenAdditionalClasspathDependencyResolver dependencyResolver =
                     new MavenAdditionalClasspathDependencyResolver(repositorySystem);
             MavenExecutorClasspathConfiguration.Analysis classpathAnalysis = executorClasspathConfiguration.analyze(
                     nativeExecutor, decision.executorKind(), executionIds,
                     effectiveProperties::resolve, effectiveProperties::userProperty,
-                    dependencies -> additionalDependencyResolver.resolve(session, project, dependencies));
+                    dependencies -> dependencyResolver.resolve(session, project, dependencies));
             if (!classpathAnalysis.supported()) {
                 diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision,
                         "Maven executor classpath cannot be reproduced safely: " + classpathAnalysis.reason());
@@ -148,8 +149,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
             List<String> providerClasspath;
             try {
-                providerClasspath = additionalDependencyResolver.resolve(
-                        session, project, providerAnalysis.engineDependencies());
+                providerClasspath = dependencyResolver.resolve(session, project, providerAnalysis.engineDependencies());
             } catch (Exception exception) {
                 String reason = "recognized JUnit Platform engine plugin dependencies could not be resolved exactly: " + exception.getMessage();
                 diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, reason);
@@ -193,12 +193,31 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         }
     }
 
+    private ProjectCompatibilityDetector.CompatibilityDecision evaluateModelSemantics(
+            MavenSession session, MavenProject project) {
+        Plugin surefire = project.getPlugin(SUREFIRE);
+        Plugin failsafe = project.getPlugin(FAILSAFE);
+        List<Dependency> surefireDependencies = surefire == null ? null : surefire.getDependencies();
+        List<Dependency> failsafeDependencies = failsafe == null ? null : failsafe.getDependencies();
+        boolean clearSurefire = surefire != null && providerDependencyCompatibility.analyze(surefire).supported()
+                && surefireDependencies != null && !surefireDependencies.isEmpty();
+        boolean clearFailsafe = failsafe != null && providerDependencyCompatibility.analyze(failsafe).supported()
+                && failsafeDependencies != null && !failsafeDependencies.isEmpty();
+        try {
+            if (clearSurefire) surefire.setDependencies(new ArrayList<>());
+            if (clearFailsafe) failsafe.setDependencies(new ArrayList<>());
+            return compatibilityDetector.evaluate(session, project);
+        } finally {
+            if (clearSurefire) surefire.setDependencies(surefireDependencies);
+            if (clearFailsafe) failsafe.setDependencies(failsafeDependencies);
+        }
+    }
+
     private boolean requiresAdvancedSurefireAnalysis(Plugin surefire) {
         if (surefire.getDependencies() != null && !surefire.getDependencies().isEmpty()) return true;
         if (surefire.getExecutions() == null) return false;
         long tests = surefire.getExecutions().stream()
-                .filter(execution -> execution.getGoals() != null && execution.getGoals().contains("test"))
-                .count();
+                .filter(execution -> execution.getGoals() != null && execution.getGoals().contains("test")).count();
         return tests > 1 || surefire.getExecutions().stream()
                 .anyMatch(execution -> execution.getGoals() != null && execution.getGoals().contains("test")
                         && !"default-test".equals(execution.getId()));
@@ -236,8 +255,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             ProjectCompatibilityDetector.ExecutorPlan plan = decision.executorPlans().get(0);
             addList(preflightConfig, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
             addList(preflightConfig, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
-            Map<String, String> properties = mergedProperties(plan, runOrderAnalysis.required(plan.executionId()), Map.of());
-            addMap(preflightConfig, "executorSystemProperties", properties);
+            addMap(preflightConfig, "executorSystemProperties",
+                    mergedProperties(plan, runOrderAnalysis.required(plan.executionId()), Map.of()));
             addLaunchConfiguration(preflightConfig, launchAnalysis.required(plan.executionId()));
             addClasspathConfiguration(preflightConfig, classpathAnalysis.required(plan.executionId()), providerClasspath);
         }
@@ -293,15 +312,14 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         return value.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
-    private Xpp3Dom runConfiguration(
-            ProjectCompatibilityDetector.CompatibilityDecision decision,
-            ProjectCompatibilityDetector.ExecutorPlan plan,
-            MavenForkLaunchConfiguration.LaunchSettings launchSettings,
-            MavenExecutorClasspathConfiguration.Settings classpathSettings,
-            MavenRunOrderConfiguration.Settings runOrderSettings,
-            List<String> providerClasspath,
-            String invocationId,
-            Map<String, String> downstreamRuntimeProperties) {
+    private Xpp3Dom runConfiguration(ProjectCompatibilityDetector.CompatibilityDecision decision,
+                                     ProjectCompatibilityDetector.ExecutorPlan plan,
+                                     MavenForkLaunchConfiguration.LaunchSettings launchSettings,
+                                     MavenExecutorClasspathConfiguration.Settings classpathSettings,
+                                     MavenRunOrderConfiguration.Settings runOrderSettings,
+                                     List<String> providerClasspath,
+                                     String invocationId,
+                                     Map<String, String> downstreamRuntimeProperties) {
         Xpp3Dom root = new Xpp3Dom("configuration");
         addValue(root, "invocationId", invocationId);
         addValue(root, "deferFailureUntilVerify", Boolean.toString(decision.deferFailureUntilVerify()));
@@ -327,8 +345,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         if (settings.workingDirectory() != null) addValue(root, "executorWorkingDirectory", settings.workingDirectory().toString());
     }
 
-    private void addClasspathConfiguration(Xpp3Dom root,
-                                           MavenExecutorClasspathConfiguration.Settings settings,
+    private void addClasspathConfiguration(Xpp3Dom root, MavenExecutorClasspathConfiguration.Settings settings,
                                            List<String> providerClasspath) {
         LinkedHashSet<String> additional = new LinkedHashSet<>(settings.additionalClasspathElements());
         additional.addAll(providerClasspath == null ? List.of() : providerClasspath);
@@ -371,10 +388,8 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         root.addChild(map);
     }
 
-    private void diagnosePlans(MavenOwnershipDiagnostic.Owner owner,
-                               MavenProject project,
-                               ProjectCompatibilityDetector.CompatibilityDecision decision,
-                               String reason) {
+    private void diagnosePlans(MavenOwnershipDiagnostic.Owner owner, MavenProject project,
+                               ProjectCompatibilityDetector.CompatibilityDecision decision, String reason) {
         if (decision.executorPlans().isEmpty()) {
             diagnostic(owner, project, decision.executorKind().name().toLowerCase(), "none", reason);
             return;
