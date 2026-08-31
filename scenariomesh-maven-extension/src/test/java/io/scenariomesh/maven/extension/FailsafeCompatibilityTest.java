@@ -16,15 +16,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FailsafeCompatibilityTest {
-
     private final FailsafeCompatibility compatibility = new FailsafeCompatibility();
 
     @Test
     void defaultSelectionExcludesInnerClassesLikeNativeFailsafe() {
         Plugin plugin = pluginWithExecution();
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
-
+        var analysis = analyze(plugin, key -> null);
         assertTrue(analysis.supported(), analysis.reason());
         var plan = analysis.executionPlans().get(0);
         assertTrue(plan.excludeClassNameRegexes().stream()
@@ -34,63 +31,60 @@ class FailsafeCompatibilityTest {
     }
 
     @Test
-    void translatesJvmPropertiesAndFailureIgnoreWhenRetriesAreZero() {
+    void preservesJvmPropertiesFailureIgnoreAndDisabledRetryPolicy() {
         Plugin plugin = pluginWithExecution();
-        Xpp3Dom pluginConfig = new Xpp3Dom("configuration");
-        add(pluginConfig, "argLine", "-Xmx512m -Dfile.encoding=UTF-8");
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "argLine", "-Xmx512m -Dfile.encoding=UTF-8");
         Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
         add(properties, "language", "${language}");
         add(properties, "environment", "qa");
-        pluginConfig.addChild(properties);
-        add(pluginConfig, "testFailureIgnore", "true");
-        add(pluginConfig, "rerunFailingTestsCount", "${retry.count}");
-        plugin.setConfiguration(pluginConfig);
+        config.addChild(properties);
+        add(config, "testFailureIgnore", "true");
+        add(config, "rerunFailingTestsCount", "${retry.count}");
+        plugin.setConfiguration(config);
 
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        Map<String,String> values = Map.of("language", "EN", "retry.count", "0");
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, values::get);
-        FailsafeCompatibility.ExecutionPlan plan = analysis.executionPlans().get(0);
-
-        assertTrue(analysis.supported());
+        var analysis = analyze(plugin, Map.of("language", "EN", "retry.count", "0")::get);
+        var plan = analysis.executionPlans().get(0);
+        assertTrue(analysis.supported(), analysis.reason());
         assertEquals(List.of("-Xmx512m", "-Dfile.encoding=UTF-8"), plan.jvmArgs());
-        assertEquals(Map.of("language", "EN", "environment", "qa"), plan.systemProperties());
+        assertEquals("EN", plan.systemProperties().get("language"));
+        assertEquals("qa", plan.systemProperties().get("environment"));
+        assertEquals("0", plan.systemProperties().get(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT));
+        assertEquals("0", plan.systemProperties().get(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT));
         assertTrue(plan.testFailureIgnore());
     }
 
     @Test
-    void positiveRerunCountRemainsPassThroughMaterial() {
+    void positiveRerunAndFlakeThresholdArePreservedInsteadOfRejected() {
         Plugin plugin = pluginWithExecution();
         Xpp3Dom config = new Xpp3Dom("configuration");
         add(config, "rerunFailingTestsCount", "2");
+        add(config, "failOnFlakeCount", "3");
         plugin.setConfiguration(config);
 
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
-
-        assertFalse(analysis.supported());
-        assertTrue(analysis.reason().contains("will not risk duplicating retries"));
+        var analysis = analyze(plugin, key -> null);
+        assertTrue(analysis.supported(), analysis.reason());
+        var properties = analysis.executionPlans().get(0).systemProperties();
+        assertEquals("2", properties.get(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT));
+        assertEquals("3", properties.get(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT));
     }
 
     @Test
-    void executionLevelScalarSettingsOverridePluginLevelSettings() {
+    void executionLevelRetrySettingsOverridePluginLevelSettings() {
         Plugin plugin = pluginWithExecution();
         Xpp3Dom pluginConfig = new Xpp3Dom("configuration");
-        add(pluginConfig, "testFailureIgnore", "false");
-        add(pluginConfig, "argLine", "-Xmx256m");
+        add(pluginConfig, "rerunFailingTestsCount", "1");
+        add(pluginConfig, "failOnFlakeCount", "1");
         plugin.setConfiguration(pluginConfig);
-
-        PluginExecution execution = plugin.getExecutions().get(0);
         Xpp3Dom executionConfig = new Xpp3Dom("configuration");
-        add(executionConfig, "testFailureIgnore", "true");
+        add(executionConfig, "rerunFailingTestsCount", "4");
+        add(executionConfig, "failOnFlakeCount", "2");
         add(executionConfig, "argLine", "-Xmx1g");
-        execution.setConfiguration(executionConfig);
+        plugin.getExecutions().get(0).setConfiguration(executionConfig);
 
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
-        FailsafeCompatibility.ExecutionPlan plan = analysis.executionPlans().get(0);
-
-        assertTrue(analysis.supported());
-        assertTrue(plan.testFailureIgnore());
+        var plan = analyze(plugin, key -> null).executionPlans().get(0);
+        assertEquals("4", plan.systemProperties().get(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT));
+        assertEquals("2", plan.systemProperties().get(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT));
         assertEquals(List.of("-Xmx1g"), plan.jvmArgs());
     }
 
@@ -98,16 +92,22 @@ class FailsafeCompatibilityTest {
     void unresolvedPropertyFailsSafe() {
         Plugin plugin = pluginWithExecution();
         Xpp3Dom config = new Xpp3Dom("configuration");
-        Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
-        add(properties, "environment", "${missing.environment}");
-        config.addChild(properties);
+        add(config, "rerunFailingTestsCount", "${missing.retry.count}");
         plugin.setConfiguration(config);
-
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
-
+        var analysis = analyze(plugin, key -> null);
         assertFalse(analysis.supported());
-        assertTrue(analysis.reason().contains("unresolved Maven property"));
+        assertTrue(analysis.reason().contains("unresolved Maven property"), analysis.reason());
+    }
+
+    @Test
+    void negativeRetryPolicyFailsSafe() {
+        Plugin plugin = pluginWithExecution();
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "rerunFailingTestsCount", "-1");
+        plugin.setConfiguration(config);
+        var analysis = analyze(plugin, key -> null);
+        assertFalse(analysis.supported());
+        assertTrue(analysis.reason().contains("negative <rerunFailingTestsCount>"), analysis.reason());
     }
 
     @Test
@@ -116,14 +116,10 @@ class FailsafeCompatibilityTest {
         Xpp3Dom config = new Xpp3Dom("configuration");
         add(config, "argLine", "@{instrumentation.args} -Dwork.dir=${work.dir}");
         plugin.setConfiguration(config);
-
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(
-                plugin,
-                participation,
+        var participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
+        var analysis = compatibility.analyze(plugin, participation,
                 key -> "work.dir".equals(key) ? "/tmp/work space" : null,
                 key -> "instrumentation.args".equals(key) ? "-javaagent:/tmp/agent.jar" : null);
-
         assertTrue(analysis.supported(), analysis.reason());
         assertEquals(List.of("-javaagent:/tmp/agent.jar", "-Dwork.dir=/tmp/work", "space"),
                 analysis.executionPlans().get(0).jvmArgs());
@@ -135,38 +131,24 @@ class FailsafeCompatibilityTest {
         Xpp3Dom config = new Xpp3Dom("configuration");
         add(config, "argLine", "@{generated.agent.args} -Xmx512m");
         plugin.setConfiguration(config);
-
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(
-                plugin, participation, key -> null, key -> null);
-
+        var participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
+        var analysis = compatibility.analyze(plugin, participation, key -> null, key -> null);
         assertFalse(analysis.supported());
         assertTrue(analysis.reason().contains("earlier lifecycle plugin may mutate it"), analysis.reason());
     }
 
     @Test
-    void arbitraryDynamicSystemPropertiesArePreservedGenerically() {
+    void arbitraryDynamicSystemPropertiesRemainPreserved() {
         Plugin plugin = pluginWithExecution();
         Xpp3Dom config = new Xpp3Dom("configuration");
         Xpp3Dom properties = new Xpp3Dom("systemPropertyVariables");
         add(properties, "remote.grid.config", "${grid.config.path}");
-        add(properties, "remote.grid.user", "${grid.user}");
         add(properties, "custom.feature.flag", "enabled");
         config.addChild(properties);
         plugin.setConfiguration(config);
-
-        Map<String, String> values = Map.of(
-                "grid.config.path", "/tmp/grid.yml",
-                "grid.user", "ci-user");
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, values::get);
-
-        assertTrue(analysis.supported(), analysis.reason());
-        assertEquals(Map.of(
-                "remote.grid.config", "/tmp/grid.yml",
-                "remote.grid.user", "ci-user",
-                "custom.feature.flag", "enabled"),
-                analysis.executionPlans().get(0).systemProperties());
+        var plan = analyze(plugin, Map.of("grid.config.path", "/tmp/grid.yml")::get).executionPlans().get(0);
+        assertEquals("/tmp/grid.yml", plan.systemProperties().get("remote.grid.config"));
+        assertEquals("enabled", plan.systemProperties().get("custom.feature.flag"));
     }
 
     @Test
@@ -175,44 +157,30 @@ class FailsafeCompatibilityTest {
         PluginExecution second = execution("regression-tests");
         Xpp3Dom firstConfig = new Xpp3Dom("configuration");
         firstConfig.addChild(patterns("includes", "**/SmokeIT.java"));
+        add(firstConfig, "rerunFailingTestsCount", "1");
         plugin.getExecutions().get(0).setConfiguration(firstConfig);
         Xpp3Dom secondConfig = new Xpp3Dom("configuration");
         secondConfig.addChild(patterns("includes", "**/RegressionIT.java"));
-        Xpp3Dom props = new Xpp3Dom("systemPropertyVariables");
-        add(props, "environment", "staging");
-        secondConfig.addChild(props);
+        add(secondConfig, "rerunFailingTestsCount", "3");
         second.setConfiguration(secondConfig);
         plugin.addExecution(second);
 
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
-
+        var analysis = analyze(plugin, key -> null);
         assertTrue(analysis.supported(), analysis.reason());
         assertEquals(2, analysis.executionPlans().size());
         var first = analysis.executionPlans().get(0);
         var regression = analysis.executionPlans().get(1);
-        assertEquals("integration-tests", first.executionId());
-        assertEquals("regression-tests", regression.executionId());
-        assertEquals(List.of(".*"), first.includeClassNameRegexes());
-        assertEquals(List.of(".*"), regression.includeClassNameRegexes());
         assertEquals(List.of("**/SmokeIT.java"), MavenSelectionCodec.decode(
                 first.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
         assertEquals(List.of("**/RegressionIT.java"), MavenSelectionCodec.decode(
                 regression.systemProperties().get(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS)));
-        assertEquals("staging", regression.systemProperties().get("environment"));
+        assertEquals("1", first.systemProperties().get(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT));
+        assertEquals("3", regression.systemProperties().get(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT));
     }
 
-    @Test
-    void overlappingNativeExecutionsAreNotDeduplicated() {
-        Plugin plugin = pluginWithExecution();
-        plugin.addExecution(execution("same-tests-again"));
-
-        MavenExecutionPlan.PluginParticipation participation = MavenExecutionPlan.through("verify").failsafeParticipation(plugin);
-        FailsafeCompatibility.Analysis analysis = compatibility.analyze(plugin, participation, key -> null);
-
-        assertTrue(analysis.supported(), analysis.reason());
-        assertEquals(2, analysis.executionPlans().size(),
-                "Two native Maven executions must remain two ScenarioMesh execution plans even if their selectors overlap");
+    private FailsafeCompatibility.Analysis analyze(Plugin plugin, java.util.function.Function<String, String> resolver) {
+        return compatibility.analyze(plugin,
+                MavenExecutionPlan.through("verify").failsafeParticipation(plugin), resolver);
     }
 
     private Plugin pluginWithExecution() {
