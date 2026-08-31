@@ -14,10 +14,15 @@ final class RemotePreflightState {
 
     private RemotePreflightState() {}
 
+    /** Replaces any prior state with one prepared execution cohort. */
     static void store(Map<String, Object> pluginContext, PreparedRemoteWorkers prepared) {
         storeAll(pluginContext, List.of(prepared));
     }
 
+    /**
+     * Atomically replaces prior state with execution-ordered remote cohorts.
+     * Each injected RunMojo consumes exactly one cohort with {@link #take(Map)}.
+     */
     static void storeAll(Map<String, Object> pluginContext, List<PreparedRemoteWorkers> prepared) {
         clear(pluginContext);
         if (prepared == null || prepared.isEmpty()) return;
@@ -42,6 +47,14 @@ final class RemotePreflightState {
             throw new IllegalStateException("Unexpected ScenarioMesh remote preflight queue entry: " + next.getClass().getName());
         }
         return prepared;
+    }
+
+    static boolean hasRemaining(Map<String, Object> pluginContext) {
+        Object value = pluginContext.get(KEY);
+        if (value == null) return false;
+        if (value instanceof PreparedRemoteWorkers) return true;
+        if (value instanceof Deque<?> queue) return !queue.isEmpty();
+        throw new IllegalStateException("Unexpected ScenarioMesh remote preflight state: " + value.getClass().getName());
     }
 
     static void clear(Map<String, Object> pluginContext) {
