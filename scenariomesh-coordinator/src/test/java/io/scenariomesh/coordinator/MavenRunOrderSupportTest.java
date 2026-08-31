@@ -40,7 +40,7 @@ class MavenRunOrderSupportTest {
     }
 
     @Test
-    void seededRandomIsReproducible() {
+    void seededRandomMatchesJavaCollectionsShuffleAndIsReproducible() {
         List<ScenarioTask> tasks = List.of(
                 task("a", "A"), task("b", "B"), task("c", "C"), task("d", "D"));
         Map<String, String> properties = Map.of(
@@ -51,7 +51,7 @@ class MavenRunOrderSupportTest {
         List<String> second = ids(MavenRunOrderSupport.order(request(properties), tasks));
 
         assertEquals(first, second);
-        assertEquals(List.of("b", "a", "d", "c"), first);
+        assertEquals(List.of("c", "b", "a", "d"), first);
     }
 
     @Test
