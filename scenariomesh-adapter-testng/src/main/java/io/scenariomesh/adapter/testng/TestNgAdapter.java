@@ -31,7 +31,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -249,8 +248,9 @@ public final class TestNgAdapter implements ScenarioAdapter {
         if (classes.isEmpty()) throw new IllegalStateException("TestNG native materializer has no selected classes");
         TestNG testNg = baseTestNg();
         testNg.setTestClasses(classes.toArray(Class<?>[]::new));
-        GroupSelection selection = GroupSelection.from(context.properties());
-        testNg.setMethodInterceptor(new GroupMethodInterceptor(selection));
+        // Once advanced semantics are present, TestNG itself must own group filtering so dependency,
+        // factory, lifecycle and group-before/after behavior is computed from one native graph.
+        applyTestNgSuiteGroupSelection(testNg, context.properties());
         return runAndMaterialize(parent, context, testNg, "testng-native");
     }
 
@@ -394,14 +394,6 @@ public final class TestNgAdapter implements ScenarioAdapter {
                     properties.get("groups"), properties.get("excludedGroups")));
         }
         private boolean includes(String[] groups) { return selection.matches(groups); }
-    }
-
-    private static final class GroupMethodInterceptor implements IMethodInterceptor {
-        private final GroupSelection selection;
-        private GroupMethodInterceptor(GroupSelection selection) { this.selection = selection; }
-        @Override public List<IMethodInstance> intercept(List<IMethodInstance> methods, ITestContext context) {
-            return methods.stream().filter(instance -> selection.includes(instance.getMethod().getGroups())).toList();
-        }
     }
 
     private static final class ExactMethodInterceptor implements IMethodInterceptor {
