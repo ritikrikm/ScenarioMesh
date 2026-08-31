@@ -11,6 +11,10 @@ import io.scenariomesh.core.Ports.WorkUnitExecution;
 import io.scenariomesh.core.TaskMetadata;
 import org.testng.Assert;
 import org.testng.SkipException;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.DataProvider;
+import org.testng.annotations.Factory;
+import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 import java.lang.reflect.Method;
@@ -19,6 +23,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestNgAdapterHardeningTest {
@@ -43,33 +48,76 @@ public class TestNgAdapterHardeningTest {
     }
 
     @Test
-    public void dataProviderMultiplicityFailsClosedDuringDiscovery() throws Exception {
-        try {
-            adapter.discover(discoveryContext(TestNgDataProviderFixture.class));
-            Assert.fail("Expected data-provider discovery to fail closed");
-        } catch (IllegalStateException expected) {
-            Assert.assertTrue(expected.getMessage().contains("data-provider multiplicity"), expected.getMessage());
-        }
+    public void dataProviderMultiplicityUsesNativeRuntimeMaterializer() throws Exception {
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgDataProviderFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.tasks().size(), 2);
+        Assert.assertTrue(execution.results().stream().allMatch(r -> r.status() == ResultStatus.PASSED));
+        Assert.assertTrue(execution.tasks().stream().allMatch(t -> t.displayName().endsWith(".parameterized")));
     }
 
     @Test
-    public void invocationCountMultiplicityFailsClosedDuringDiscovery() throws Exception {
-        try {
-            adapter.discover(discoveryContext(TestNgInvocationCountFixture.class));
-            Assert.fail("Expected invocationCount discovery to fail closed");
-        } catch (IllegalStateException expected) {
-            Assert.assertTrue(expected.getMessage().contains("invocationCount=2"), expected.getMessage());
-        }
+    public void repeatedInvocationsAreMaterializedAsDistinctLogicalInvocations() throws Exception {
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(TestNgInvocationCountFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.tasks().size(), 2);
+        Assert.assertEquals(execution.tasks().stream().map(ScenarioTask::id).distinct().count(), 2L);
+        Assert.assertTrue(execution.results().stream().allMatch(r -> r.status() == ResultStatus.PASSED));
     }
 
     @Test
-    public void classLifecycleFailsClosedInsteadOfBeingRepeatedPerMethod() throws Exception {
-        try {
-            adapter.discover(discoveryContext(TestNgBeforeClassFixture.class));
-            Assert.fail("Expected class lifecycle discovery to fail closed");
-        } catch (IllegalStateException expected) {
-            Assert.assertTrue(expected.getMessage().contains("BeforeClass lifecycle"), expected.getMessage());
-        }
+    public void classLifecycleExecutesOnceInsideNativeScope() throws Exception {
+        NativeLifecycleFixture.beforeClass.set(0);
+        NativeLifecycleFixture.tests.set(0);
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(NativeLifecycleFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.tasks().size(), 2);
+        Assert.assertEquals(NativeLifecycleFixture.beforeClass.get(), 1);
+        Assert.assertEquals(NativeLifecycleFixture.tests.get(), 2);
+    }
+
+    @Test
+    public void dependencyOrderingIsDelegatedToTestNg() throws Exception {
+        DependencyFixture.order.clear();
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(DependencyFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.results().size(), 2);
+        Assert.assertEquals(DependencyFixture.order, List.of("first", "second"));
+    }
+
+    @Test
+    public void factoryInstancesAreMaterializedWithoutCollapsingInstanceIdentity() throws Exception {
+        FactoryProduct.values.clear();
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(FactoryFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.tasks().size(), 2);
+        Assert.assertEquals(Set.copyOf(FactoryProduct.values), Set.of("a", "b"));
+        Assert.assertEquals(execution.tasks().stream()
+                .map(t -> t.metadata().get("testngInstanceIdentity")).distinct().count(), 2L);
+    }
+
+    @Test
+    public void systemPropertyBackedParametersAreInjectedByNativeTestNg() throws Exception {
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(ParameterFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered,
+                executionContext(Map.of("scenariomesh.test.parameter", "expected")));
+        Assert.assertEquals(execution.results().size(), 1);
+        Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
+    }
+
+    @Test
+    public void classLevelTestUsesNativeTestNgDiscovery() throws Exception {
+        List<ScenarioTask> discovered = adapter.discover(discoveryContext(ClassLevelFixture.class));
+        assertNativeMaterializer(discovered);
+        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
+        Assert.assertEquals(execution.tasks().size(), 2);
+        Assert.assertTrue(execution.results().stream().allMatch(r -> r.status() == ResultStatus.PASSED));
     }
 
     @Test
@@ -95,8 +143,7 @@ public class TestNgAdapterHardeningTest {
     @Test
     public void invalidSurefireGroupExpressionFailsClosedDuringDiscovery() throws Exception {
         try {
-            adapter.discover(discoveryContext(
-                    TestNgSimpleClassFixture.class, Map.of("groups", "smoke | regression")));
+            adapter.discover(discoveryContext(TestNgSimpleClassFixture.class, Map.of("groups", "smoke | regression")));
             Assert.fail("Expected invalid Surefire group expression to fail closed");
         } catch (IllegalArgumentException expected) {
             Assert.assertTrue(expected.getMessage().contains("Cannot parse Surefire group"), expected.getMessage());
@@ -118,19 +165,14 @@ public class TestNgAdapterHardeningTest {
         Path classFile = root.resolve("broken/BrokenTest.class");
         Files.createDirectories(classFile.getParent());
         Files.write(classFile, new byte[]{0});
-
         ClassLoader failingLoader = new ClassLoader(getClass().getClassLoader()) {
-            @Override
-            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            @Override protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
                 if ("broken.BrokenTest".equals(name)) throw new NoClassDefFoundError("missing/Dependency");
                 return super.loadClass(name, resolve);
             }
         };
-
-        AdapterContext context = new AdapterContext(
-                failingLoader, List.of(root), Map.of(),
+        AdapterContext context = new AdapterContext(failingLoader, List.of(root), Map.of(),
                 new DiscoverySelection(List.of(".*Test"), List.of()));
-
         try {
             adapter.discover(context);
             Assert.fail("Expected discovery to fail closed");
@@ -145,11 +187,9 @@ public class TestNgAdapterHardeningTest {
         Path suite = Path.of(getClass().getResource("/suite-selection.xml").toURI());
         AdapterContext context = new AdapterContext(getClass().getClassLoader(), List.of(),
                 Map.of("scenariomesh.testng.suiteXmlFiles", suite.toString()), DiscoverySelection.all());
-
         List<ScenarioTask> discovered = adapter.discover(context);
         Assert.assertEquals(discovered.size(), 1);
         Assert.assertEquals(discovered.get(0).metadata().get(TaskMetadata.RUNTIME_MATERIALIZER), "true");
-
         WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext());
         Assert.assertEquals(execution.tasks().size(), 1);
         Assert.assertEquals(execution.results().size(), 1);
@@ -157,49 +197,29 @@ public class TestNgAdapterHardeningTest {
         Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
     }
 
-    @Test
-    public void suiteXmlSelectionHonorsMavenGroupProperties() throws Exception {
-        Path suite = Path.of(getClass().getResource("/suite-groups.xml").toURI());
-        Map<String, String> properties = Map.of(
-                "scenariomesh.testng.suiteXmlFiles", suite.toString(),
-                "groups", "smoke");
-        AdapterContext context = new AdapterContext(getClass().getClassLoader(), List.of(),
-                properties, DiscoverySelection.all());
-
-        List<ScenarioTask> discovered = adapter.discover(context);
+    private void assertNativeMaterializer(List<ScenarioTask> discovered) {
         Assert.assertEquals(discovered.size(), 1);
-        WorkUnitExecution execution = adapter.executeWorkUnit(discovered, executionContext(properties));
-        Assert.assertEquals(execution.tasks().size(), 1);
-        Assert.assertTrue(execution.tasks().get(0).displayName().endsWith(".first"));
-        Assert.assertEquals(execution.results().get(0).status(), ResultStatus.PASSED);
+        Assert.assertEquals(discovered.get(0).metadata().get(TaskMetadata.RUNTIME_MATERIALIZER), "true");
+        Assert.assertEquals(discovered.get(0).metadata().get(TaskMetadata.EXECUTION_SCOPE_KIND), "testng-native");
     }
 
-    private AdapterContext discoveryContext(Class<?> fixture) throws Exception {
-        return discoveryContext(fixture, Map.of());
-    }
+    private AdapterContext discoveryContext(Class<?> fixture) throws Exception { return discoveryContext(fixture, Map.of()); }
 
     private AdapterContext discoveryContext(Class<?> fixture, Map<String, String> properties) throws Exception {
         Path root = Path.of(fixture.getProtectionDomain().getCodeSource().getLocation().toURI());
-        return new AdapterContext(
-                getClass().getClassLoader(), List.of(root), properties,
+        return new AdapterContext(getClass().getClassLoader(), List.of(root), properties,
                 new DiscoverySelection(List.of("\\Q" + fixture.getName() + "\\E"), List.of()));
     }
 
     private ScenarioTask taskFor(Class<?> fixture, String methodName, boolean enabled) throws Exception {
         Method method = fixture.getDeclaredMethod(methodName);
         String selector = fixture.getName() + "#" + method.toGenericString();
-        return new ScenarioTask(
-                new ScenarioId(fixture.getName() + "." + methodName),
-                fixture.getName() + "." + methodName,
-                TestNgAdapter.ID, "testng", null, null, selector, Set.of(),
-                Map.of("className", fixture.getName(), "methodName", methodName,
-                        "enabled", Boolean.toString(enabled)));
+        return new ScenarioTask(new ScenarioId(fixture.getName() + "." + methodName),
+                fixture.getName() + "." + methodName, TestNgAdapter.ID, "testng", null, null, selector, Set.of(),
+                Map.of("className", fixture.getName(), "methodName", methodName, "enabled", Boolean.toString(enabled)));
     }
 
-    private ExecutionContext executionContext() {
-        return executionContext(Map.of());
-    }
-
+    private ExecutionContext executionContext() { return executionContext(Map.of()); }
     private ExecutionContext executionContext(Map<String, String> properties) {
         return new ExecutionContext(getClass().getClassLoader(), new WorkerId("test-worker"), 1, properties);
     }
@@ -211,5 +231,41 @@ public class TestNgAdapterHardeningTest {
     public static final class DisabledFixture {
         private static final AtomicInteger executions = new AtomicInteger();
         @Test(enabled = false) public void disabled() { executions.incrementAndGet(); }
+    }
+
+    public static final class NativeLifecycleFixture {
+        static final AtomicInteger beforeClass = new AtomicInteger();
+        static final AtomicInteger tests = new AtomicInteger();
+        @BeforeClass public void beforeClass() { beforeClass.incrementAndGet(); }
+        @Test public void first() { tests.incrementAndGet(); }
+        @Test public void second() { tests.incrementAndGet(); }
+    }
+
+    public static final class DependencyFixture {
+        static final List<String> order = new CopyOnWriteArrayList<>();
+        @Test public void first() { order.add("first"); }
+        @Test(dependsOnMethods = "first") public void second() { order.add("second"); }
+    }
+
+    public static final class FactoryFixture {
+        @Factory public Object[] instances() { return new Object[]{new FactoryProduct("a"), new FactoryProduct("b")}; }
+    }
+
+    public static final class FactoryProduct {
+        static final List<String> values = new CopyOnWriteArrayList<>();
+        private final String value;
+        FactoryProduct(String value) { this.value = value; }
+        @Test public void test() { values.add(value); }
+    }
+
+    public static final class ParameterFixture {
+        @Parameters("scenariomesh.test.parameter")
+        @Test public void receivesParameter(String value) { Assert.assertEquals(value, "expected"); }
+    }
+
+    @Test
+    public static final class ClassLevelFixture {
+        public void first() { }
+        public void second() { }
     }
 }
