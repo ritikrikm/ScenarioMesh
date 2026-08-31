@@ -140,12 +140,11 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
-    void multipleFrameworkSignalsAreCandidatesAndRuntimePreflightProvesOwnership() {
+    void multipleAdapterFrameworkSignalsStayNativeUntilCrossAdapterOwnershipIsProven() {
         MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"), dependency("org.testng", "testng"));
         var decision = detector.evaluate(session("test"), project);
-        assertTrue(decision.compatible(), decision.reason());
-        assertEquals(Set.of("junit-platform", "testng"), decision.frameworks());
-        assertTrue(decision.reason().contains("runtime preflight"), decision.reason());
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("requires multiple ScenarioMesh adapters"), decision.reason());
     }
 
     @Test
@@ -158,11 +157,11 @@ class ProjectCompatibilityDetectorTest {
     }
 
     @Test
-    void cucumberJUnit4PlusTestNgDoesNotFailCompatibilityOnDependenciesAlone() {
+    void cucumberJUnit4PlusTestNgStaysNativeUntilCrossAdapterOwnershipIsProven() {
         MavenProject project = project(dependency("io.cucumber", "cucumber-junit"), dependency("org.testng", "testng"), dependency("junit", "junit"));
         var decision = detector.evaluate(session("test"), project);
-        assertTrue(decision.compatible(), decision.reason());
-        assertEquals(Set.of("cucumber-junit4", "testng"), decision.frameworks());
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("requires multiple ScenarioMesh adapters"), decision.reason());
     }
 
     @Test
@@ -190,7 +189,15 @@ class ProjectCompatibilityDetectorTest {
         project.getProperties().setProperty("groups", "smoke");
         var decision = detector.evaluate(session("test"), project);
         assertFalse(decision.compatible());
-        assertTrue(decision.reason().contains("pure TestNG and pure JUnit Platform provider sets"), decision.reason());
+        assertTrue(decision.reason().contains("requires multiple ScenarioMesh adapters"), decision.reason());
+    }
+
+    @Test
+    void mixedJUnitPlatformAndTestNgStayNativeUntilCrossAdapterOwnershipIsProven() {
+        MavenProject project = project(dependency("org.junit.jupiter", "junit-jupiter"), dependency("org.testng", "testng"));
+        var decision = detector.evaluate(session("test"), project);
+        assertFalse(decision.compatible());
+        assertTrue(decision.reason().contains("requires multiple ScenarioMesh adapters"), decision.reason());
     }
 
     @Test

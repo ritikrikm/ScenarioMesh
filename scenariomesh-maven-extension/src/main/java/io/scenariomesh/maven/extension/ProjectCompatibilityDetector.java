@@ -43,6 +43,10 @@ final class ProjectCompatibilityDetector {
         if (projectSkipsTests(properties)) return CompatibilityDecision.passThrough("effective Maven configuration explicitly skips tests");
 
         FrameworkSignals frameworks = detectFrameworks(project);
+        if (frameworks.requiresMultipleAdapters()) {
+            return CompatibilityDecision.passThrough(
+                    "the selected framework combination requires multiple ScenarioMesh adapters; native Maven remains the single execution owner until cross-adapter lifecycle and reporting equivalence is proven");
+        }
         if (frameworks.cucumberJUnit4() || frameworks.junitPlatform()) {
             String projectOnlySelection = firstProjectOnlyProperty(properties, CUCUMBER_SELECTION_PROPERTIES);
             if (projectOnlySelection != null) {
@@ -437,6 +441,11 @@ final class ProjectCompatibilityDetector {
 
         boolean junitPlatformOnly() {
             return junitPlatform && !cucumberJUnit4 && !testNg && !directJUnit4;
+        }
+
+        boolean requiresMultipleAdapters() {
+            return (testNg && (junitPlatform || cucumberJUnit4 || directJUnit4))
+                    || (cucumberJUnit4 && junitPlatform);
         }
 
         Set<String> names() {

@@ -110,3 +110,17 @@ jobs:
           test -f target/scenariomesh/summary.json
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq 'runsThroughTargetVintageEngine' target/scenariomesh/summary.json
+      - name: Mixed JUnit 4 and Jupiter execution matches native Surefire once
+        working-directory: examples/mixed-junit4-junit5-pass-through-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test
+          test -f target/surefire-reports/TEST-example.JupiterTest.xml
+          test -f target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+          mvn -B clean test
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 2' target/scenariomesh/summary.json
+          grep -Fq 'jupiterRunsThroughScenarioMesh()' target/scenariomesh/summary.json
+          grep -Fq 'vintageRunsThroughScenarioMesh' target/scenariomesh/summary.json
+          test ! -d target/surefire-reports

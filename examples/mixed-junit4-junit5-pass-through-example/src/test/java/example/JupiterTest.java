@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JupiterTest {
     @Test
-    void jupiterRunsThroughNativeSurefire() {
+    void jupiterRunsThroughScenarioMesh() {
         assertTrue(true);
     }
 }
