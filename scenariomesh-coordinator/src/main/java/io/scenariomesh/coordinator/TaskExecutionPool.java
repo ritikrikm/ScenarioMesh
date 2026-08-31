@@ -18,7 +18,7 @@ interface TaskExecutionPool extends AutoCloseable {
     void finish();
 
     record RoundExecution(List<ScenarioTask> tasks, List<ExecutionResult> results) {
-        RoundExecution {
+        public RoundExecution {
             tasks = List.copyOf(tasks == null ? List.of() : tasks);
             results = List.copyOf(results == null ? List.of() : results);
         }
