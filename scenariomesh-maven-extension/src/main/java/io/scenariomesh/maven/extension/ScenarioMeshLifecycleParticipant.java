@@ -259,6 +259,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                     mergedProperties(plan, runOrderAnalysis.required(plan.executionId()), Map.of()));
             addLaunchConfiguration(preflightConfig, launchAnalysis.required(plan.executionId()));
             addClasspathConfiguration(preflightConfig, classpathAnalysis.required(plan.executionId()), providerClasspath);
+            addList(preflightConfig, "dependencyTestScanPatterns", "pattern", plan.dependenciesToScan());
         }
         preflight.setConfiguration(preflightConfig);
         plugin.addExecution(preflight);
@@ -276,7 +277,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                     launchAnalysis.required(plan.executionId()),
                     classpathAnalysis.required(plan.executionId()),
                     runOrderAnalysis.required(plan.executionId()), providerClasspath,
-                    invocationId, single ? downstreamRuntimeProperties : Map.of()));
+                    plan.dependenciesToScan(), invocationId, single ? downstreamRuntimeProperties : Map.of()));
             plugin.addExecution(run);
 
             if (decision.deferFailureUntilVerify()) {
@@ -318,6 +319,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                                      MavenExecutorClasspathConfiguration.Settings classpathSettings,
                                      MavenRunOrderConfiguration.Settings runOrderSettings,
                                      List<String> providerClasspath,
+                                     List<String> dependencyTestScanPatterns,
                                      String invocationId,
                                      Map<String, String> downstreamRuntimeProperties) {
         Xpp3Dom root = new Xpp3Dom("configuration");
@@ -331,6 +333,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         addMap(root, "executorSystemProperties", mergedProperties(plan, runOrderSettings, downstreamRuntimeProperties));
         addLaunchConfiguration(root, launchSettings);
         addClasspathConfiguration(root, classpathSettings, providerClasspath);
+        addList(root, "dependencyTestScanPatterns", "pattern", dependencyTestScanPatterns);
         return root;
     }
 
