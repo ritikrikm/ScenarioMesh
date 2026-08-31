@@ -99,10 +99,8 @@ public final class PreflightMojo extends AbstractMojo {
                         .toList();
                 prepared.addAll(PreparedRemoteWorkers.prepareAll(
                         config, requirements, message -> getLog().info(message)));
-                for (PreparedRemoteWorkers cohort : prepared) {
-                    RemotePreflightState.store(getPluginContext(), cohort);
-                }
-                prepared.clear(); // ownership transferred in execution order to the injected RunMojo instances
+                RemotePreflightState.storeAll(getPluginContext(), prepared);
+                prepared.clear(); // ownership transferred atomically in execution order to the injected RunMojo instances
             }
 
             String inventory = proofs.stream()
