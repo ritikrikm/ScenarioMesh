@@ -10,7 +10,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Random;
 
 /** Applies Maven Surefire/Failsafe class-level run order before parallel dispatch. */
@@ -29,7 +28,6 @@ final class MavenRunOrderSupport {
         if ("filesystem".equals(mode)) return List.copyOf(tasks);
 
         LinkedHashMap<String, Bucket> byClass = new LinkedHashMap<>();
-        int sequence = 0;
         for (ScenarioTask task : tasks) {
             String className = trim(task.metadata().get("className"));
             String scopeId = trim(task.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID));
@@ -37,10 +35,12 @@ final class MavenRunOrderSupport {
                     : scopeId != null ? "scope:" + scopeId
                     : task.source() != null ? "source:" + task.source()
                     : "task:" + task.id().value();
-            Bucket bucket = byClass.computeIfAbsent(key,
-                    ignored -> new Bucket(className, key, sequenceHolder(sequence)));
+            Bucket bucket = byClass.get(key);
+            if (bucket == null) {
+                bucket = new Bucket(className, key);
+                byClass.put(key, bucket);
+            }
             bucket.tasks.add(task);
-            sequence++;
         }
 
         List<Bucket> buckets = new ArrayList<>(byClass.values());
@@ -63,6 +63,7 @@ final class MavenRunOrderSupport {
                 catch (NumberFormatException invalid) {
                     throw new IllegalStateException("Invalid Maven random run-order seed: " + rawSeed, invalid);
                 }
+                // Matches Surefire DefaultRunOrderCalculator: Collections.shuffle(list, new Random(seed)).
                 Collections.shuffle(buckets, new Random(seed));
             }
             case "failedfirst", "balanced" -> throw new IllegalStateException(
@@ -90,18 +91,14 @@ final class MavenRunOrderSupport {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private static int sequenceHolder(int value) { return value; }
-
     private static final class Bucket {
         private final String className;
         private final String key;
-        private final int sequence;
         private final List<ScenarioTask> tasks = new ArrayList<>();
 
-        private Bucket(String className, String key, int sequence) {
+        private Bucket(String className, String key) {
             this.className = className;
             this.key = key;
-            this.sequence = sequence;
         }
 
         String className() { return className == null ? key : className; }
