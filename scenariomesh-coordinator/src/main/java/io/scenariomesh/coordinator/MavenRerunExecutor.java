@@ -38,7 +38,7 @@ final class MavenRerunExecutor {
         for (int rerunIndex = 1;
              rerunIndex <= policy.rerunFailingTestsCount() && !roundTasks.isEmpty();
              rerunIndex++) {
-            logger.mavenRerunRound(rerunIndex, roundTasks.size(), policy.rerunFailingTestsCount());
+            if (logger != null) logger.mavenRerunRound(rerunIndex, roundTasks.size(), policy.rerunFailingTestsCount());
             TaskExecutionPool.RoundExecution rawRound = pool.executeRound(roundTasks);
             Round round = validateRound(rawRound, roundTasks);
             for (ScenarioTask requested : roundTasks) {
