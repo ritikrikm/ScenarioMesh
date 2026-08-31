@@ -85,6 +85,7 @@ public final class RunMojo extends AbstractMojo {
 
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         PreparedRemoteWorkers preparedRemoteWorkers = null;
+        boolean retainRemainingRemoteCohorts = false;
         try {
             Map<String, String> effectiveExecutorProperties = new LinkedHashMap<>(
                     executorSystemProperties == null ? Map.of() : executorSystemProperties);
@@ -169,7 +170,7 @@ public final class RunMojo extends AbstractMojo {
             if (config.distributed().remote()) {
                 preparedRemoteWorkers = RemotePreflightState.take(getPluginContext());
                 if (preflight == PreflightState.State.OWNED && preparedRemoteWorkers == null) {
-                    throw new IllegalStateException("Remote Maven takeover was marked owned without the exact preflight-authenticated worker sessions");
+                    throw new IllegalStateException("Remote Maven takeover was marked owned without the exact preflight-authenticated worker cohort for this execution");
                 }
             } else {
                 RemotePreflightState.clear(getPluginContext());
@@ -209,9 +210,11 @@ public final class RunMojo extends AbstractMojo {
                 if (!effectiveSuccess) {
                     getLog().warn("ScenarioMesh recorded failures for Maven verify; post-integration-test lifecycle phases will continue.");
                 }
+                retainRemainingRemoteCohorts = config.distributed().remote() && preflight == PreflightState.State.OWNED;
                 return;
             }
             if (!effectiveSuccess) throw new MojoFailureException("ScenarioMesh run failed. See " + reports.latestHtml());
+            retainRemainingRemoteCohorts = config.distributed().remote() && preflight == PreflightState.State.OWNED;
         } catch (MojoFailureException failure) {
             throw failure;
         } catch (Exception exception) {
@@ -228,7 +231,9 @@ public final class RunMojo extends AbstractMojo {
             throw new MojoExecutionException("ScenarioMesh infrastructure failure: " + exception.getMessage(), exception);
         } finally {
             if (preparedRemoteWorkers != null) preparedRemoteWorkers.close();
-            RemotePreflightState.clear(getPluginContext());
+            if (!retainRemainingRemoteCohorts || !RemotePreflightState.hasRemaining(getPluginContext())) {
+                RemotePreflightState.clear(getPluginContext());
+            }
         }
     }
 
