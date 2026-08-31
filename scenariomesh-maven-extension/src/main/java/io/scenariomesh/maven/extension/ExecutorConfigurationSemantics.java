@@ -30,7 +30,7 @@ final class ExecutorConfigurationSemantics {
             "skip", "skipTests", "useModulePath");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
-            "includes", "excludes", "includesFile", "excludesFile",
+            "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
             "argLine", "systemProperties", "systemPropertiesFile", "systemPropertyVariables",
@@ -39,14 +39,13 @@ final class ExecutorConfigurationSemantics {
             "properties", "suiteXmlFiles");
 
     private static final Set<String> FAILSAFE_PRESERVED = Set.of(
-            "skipITs", "includes", "excludes", "includesFile", "excludesFile",
+            "skipITs", "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
             "argLine", "systemPropertyVariables", "testFailureIgnore", "rerunFailingTestsCount",
             "suiteXmlFiles");
 
-    private static final Map<String, String> CAPABILITY_REQUIRED = Map.ofEntries(
-            Map.entry("dependenciesToScan", "dependency-test-scanning"));
+    private static final Map<String, String> CAPABILITY_REQUIRED = Map.of();
 
     static Classification forSurefire(String name) {
         if (SCENARIOMESH_OWNED.contains(name)) return Classification.replaced();
