@@ -12,8 +12,15 @@ import java.util.List;
  * not a new discovery run. Infrastructure retry remains internal to one round.</p>
  */
 interface TaskExecutionPool extends AutoCloseable {
-    List<ExecutionResult> executeRound(List<ScenarioTask> tasks) throws InterruptedException;
+    RoundExecution executeRound(List<ScenarioTask> tasks) throws InterruptedException;
 
     /** Gracefully drains/stops workers after the last logical Maven rerun round. */
     void finish();
+
+    record RoundExecution(List<ScenarioTask> tasks, List<ExecutionResult> results) {
+        RoundExecution {
+            tasks = List.copyOf(tasks == null ? List.of() : tasks);
+            results = List.copyOf(results == null ? List.of() : results);
+        }
+    }
 }
