@@ -2,6 +2,7 @@ package io.scenariomesh.maven;
 
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
+import io.scenariomesh.coordinator.PreparedRemoteWorkers;
 import io.scenariomesh.core.MavenOwnershipDiagnostic;
 import io.scenariomesh.core.RuntimePropertyNames;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
@@ -34,8 +35,10 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Proves runtime ownership in the exact JVM and process context Maven selected for target tests.
- * For multiple native Maven test executions every injected run plan is proven independently.
+ * Proves runtime ownership in the exact JVM/process model Maven selected.
+ * Multiple local Maven test executions are proven independently. Transparent remote takeover is
+ * enabled only when an authenticated remote worker registration has the exact runtime fingerprint
+ * and framework/engine capabilities established by the selected-JVM probe.
  */
 @Mojo(name = "preflight", defaultPhase = LifecyclePhase.PROCESS_TEST_CLASSES, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
@@ -73,37 +76,52 @@ public final class PreflightMojo extends AbstractMojo {
             return;
         }
 
+        PreparedRemoteWorkers prepared = null;
         try {
-            Map<String, String> configProperties = EffectiveMavenProperties.configuration(project, session);
-            ScenarioMeshConfig config = resolveConfig(configProperties);
+            ScenarioMeshConfig config = resolveConfig(EffectiveMavenProperties.configuration(project, session));
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
             List<ProbePlan> plans = probePlans();
             if (plans.isEmpty()) {
                 passThrough("no ScenarioMesh execution plan is available for runtime ownership proof");
                 return;
             }
-
-            if (config.distributed().remote()) {
-                passThrough("transparent Maven takeover cannot prove native Surefire/Failsafe fork-process equivalence across remote agents (inherited environment, working directory, and host process context differ); native Maven execution is retained. Direct ScenarioMesh remote execution remains available outside transparent takeover.");
+            if (config.distributed().remote() && plans.size() != 1) {
+                passThrough("transparent remote Maven takeover currently requires one execution plan because authenticated "
+                        + "worker sessions are execution-scoped; multiple local Maven executions remain supported independently");
                 return;
             }
 
-            List<String> summaries = new ArrayList<>();
-            for (ProbePlan plan : plans) {
-                PreflightProbeMain.ProbeResult probe = provePlan(plan, javaExecutable);
-                summaries.add(plan.executionId() + "={" + probe.summary() + "}");
+            List<PlanProof> proofs = new ArrayList<>();
+            for (ProbePlan plan : plans) proofs.add(new PlanProof(plan, provePlan(plan, javaExecutable)));
+
+            if (config.distributed().remote()) {
+                PreflightProbeMain.ProbeResult probe = proofs.get(0).probe();
+                prepared = PreparedRemoteWorkers.prepare(
+                        config,
+                        probe.requiredAdapterIds(),
+                        probe.requiredEngineIds(),
+                        probe.runtimeFingerprint(),
+                        message -> getLog().info(message));
+                RemotePreflightState.store(getPluginContext(), prepared);
+                prepared = null; // ownership transferred to plugin context for RunMojo
             }
 
-            String inventory = String.join(", ", summaries);
+            String inventory = proofs.stream()
+                    .map(proof -> proof.plan().executionId() + "={" + proof.probe().summary() + "}")
+                    .reduce((left, right) -> left + ", " + right).orElse("");
+            String location = config.distributed().remote()
+                    ? "authenticated fingerprint-equivalent remote worker runtime"
+                    : "Maven-selected local test JVM";
             String reason = "runtime ownership proven independently for " + plans.size()
-                    + " Maven execution plan(s) in Maven-selected test JVM; " + inventory;
-            PreflightState.owned(project, inventory + "; testJvm=" + javaExecutable);
+                    + " Maven execution plan(s) in " + location + "; " + inventory;
+            PreflightState.owned(project, inventory + "; testJvm=" + javaExecutable
+                    + (config.distributed().remote() ? "; remoteFingerprintProven=true" : ""));
             suppressNativeExecutor();
             ownership(MavenOwnershipDiagnostic.Owner.SCENARIOMESH, reason);
             getLog().info("ScenarioMesh preflight: ownership proven for all " + plans.size()
-                    + " Maven execution plan(s) in selected test JVM " + javaExecutable
-                    + "; native " + normalizedExecutor() + " execution will be suppressed. " + inventory);
+                    + " Maven execution plan(s); native " + normalizedExecutor() + " execution will be suppressed. " + inventory);
         } catch (Exception | LinkageError exception) {
+            if (prepared != null) prepared.close();
             passThrough("preflight could not prove complete runtime ownership: " + message(exception));
         }
     }
@@ -114,42 +132,39 @@ public final class PreflightMojo extends AbstractMojo {
                 plan.classpathDependencyScopeExclude());
         List<Path> testRoots = new TestRootResolver().resolve(project, plan.dependencyTestScanPatterns());
 
-        Map<String, String> testSystemProperties = new LinkedHashMap<>(plan.executorSystemProperties());
-        String executorArgLine = testSystemProperties.remove(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE);
+        Map<String, String> properties = new LinkedHashMap<>(plan.executorSystemProperties());
+        String executorArgLine = properties.remove(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE);
         boolean promoteUserProperties = removeInternalBoolean(
-                testSystemProperties, RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
-        removeInternalControlProperties(testSystemProperties);
-        if (promoteUserProperties) testSystemProperties.putAll(EffectiveMavenProperties.user(session));
-        List<String> effectiveJvmArgs = new ArrayList<>(MavenArgLineSupport.merge(
+                properties, RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
+        removeInternalControlProperties(properties);
+        if (promoteUserProperties) properties.putAll(EffectiveMavenProperties.user(session));
+        List<String> jvmArgs = new ArrayList<>(MavenArgLineSupport.merge(
                 plan.executorJvmArgs(), executorArgLine, project, session));
 
         ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
                 project, session, normalizedExecutor(), classpaths.targetClasspath());
         if (moduleLaunch.modulePath()) {
-            effectiveJvmArgs.addAll(moduleLaunch.jvmArgs());
-            testSystemProperties.put(ModulePathCompatibility.TARGET_MODULE_PATH_PROPERTY, "true");
+            jvmArgs.addAll(moduleLaunch.jvmArgs());
+            properties.put(ModulePathCompatibility.TARGET_MODULE_PATH_PROPERTY, "true");
         }
 
-        int modelReruns = removeInternalNonNegativeInt(
-                testSystemProperties, RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT);
-        removeInternalNonNegativeInt(testSystemProperties, RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT);
+        int modelReruns = removeInternalNonNegativeInt(properties, RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT);
+        removeInternalNonNegativeInt(properties, RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT);
         int effectiveReruns = commandLineNonNegativeInt(executorPrefix() + "rerunFailingTestsCount", modelReruns);
         int skipAfterFailureCount = commandLineNonNegativeInt(executorPrefix() + "skipAfterFailureCount", 0);
         if (skipAfterFailureCount > 0) {
             throw new IllegalStateException(executorPrefix() + "skipAfterFailureCount=" + skipAfterFailureCount
-                    + " requires an exact global stop-after-failure barrier; ScenarioMesh will not approximate this interaction with retries");
+                    + " requires an exact global stop-after-failure barrier");
         }
 
         Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
         Path workingDirectory = plan.executorWorkingDirectory() == null || plan.executorWorkingDirectory().isBlank()
                 ? projectDirectory : Path.of(plan.executorWorkingDirectory()).toAbsolutePath().normalize();
-        Map<String, String> environment = decodeEnvironmentEntries(plan.executorEnvironmentEntries());
-        Set<String> excludedEnvironment = Set.copyOf(new LinkedHashSet<>(plan.excludedEnvironmentVariables()));
-
-        PreflightProbeMain.ProbeResult probe = probe(plan.executionId(), javaExecutable,
-                classpaths.controlClasspath(), classpaths.targetClasspath(), testRoots, testSystemProperties,
-                List.copyOf(effectiveJvmArgs), plan.includes(), plan.excludes(), plan.enableAssertions(), environment,
-                excludedEnvironment, workingDirectory);
+        PreflightProbeMain.ProbeResult probe = probe(
+                plan.executionId(), javaExecutable, classpaths.controlClasspath(), classpaths.targetClasspath(), testRoots,
+                properties, List.copyOf(jvmArgs), plan.includes(), plan.excludes(), plan.enableAssertions(),
+                decodeEnvironmentEntries(plan.executorEnvironmentEntries()),
+                Set.copyOf(new LinkedHashSet<>(plan.excludedEnvironmentVariables())), workingDirectory);
 
         if ("DETECTED_NOT_OWNABLE".equals(probe.ownership())) {
             throw new IllegalStateException("execution '" + plan.executionId()
@@ -157,12 +172,11 @@ public final class PreflightMojo extends AbstractMojo {
         }
         if ("NOT_DETECTED".equals(probe.ownership())) {
             throw new IllegalStateException("execution '" + plan.executionId()
-                    + "' has no executable runtime backend; ScenarioMesh will not suppress native "
-                    + normalizedExecutor() + " without executable-leaf proof: " + probe.summary());
+                    + "' has no executable runtime backend: " + probe.summary());
         }
         if (effectiveReruns > 0 && !rerunProviderSupported(probe)) {
             throw new IllegalStateException("execution '" + plan.executionId() + "' uses rerunFailingTestsCount="
-                    + effectiveReruns + " but runtime retry ownership is not proven for adapters="
+                    + effectiveReruns + " but retry ownership is not proven for adapters="
                     + probe.requiredAdapterIds() + ", engines=" + probe.requiredEngineIds());
         }
         return probe;
@@ -173,10 +187,8 @@ public final class PreflightMojo extends AbstractMojo {
         List<PluginExecution> runs = plugin == null || plugin.getExecutions() == null ? List.of()
                 : plugin.getExecutions().stream()
                 .filter(execution -> execution.getId() != null
-                        && (RUN_EXECUTION_ID.equals(execution.getId())
-                        || execution.getId().startsWith(RUN_EXECUTION_ID + "-")))
+                        && (RUN_EXECUTION_ID.equals(execution.getId()) || execution.getId().startsWith(RUN_EXECUTION_ID + "-")))
                 .toList();
-
         if (!runs.isEmpty()) {
             List<String> ids = takeoverExecutionIds == null ? List.of() : List.copyOf(takeoverExecutionIds);
             if (!ids.isEmpty() && ids.size() != runs.size()) {
@@ -185,14 +197,12 @@ public final class PreflightMojo extends AbstractMojo {
             }
             List<ProbePlan> plans = new ArrayList<>();
             for (int index = 0; index < runs.size(); index++) {
-                String executionId = ids.isEmpty() ? runs.get(index).getId() : ids.get(index);
                 Xpp3Dom root = dom(runs.get(index).getConfiguration());
                 plans.add(new ProbePlan(
-                        executionId,
+                        ids.isEmpty() ? runs.get(index).getId() : ids.get(index),
                         list(root, "includeClassNameRegexes", "include"),
                         list(root, "excludeClassNameRegexes", "exclude"),
-                        list(root, "executorJvmArgs", "arg"),
-                        map(root, "executorSystemProperties"),
+                        list(root, "executorJvmArgs", "arg"), map(root, "executorSystemProperties"),
                         booleanValue(root, "enableAssertions", true),
                         list(root, "executorEnvironmentEntries", "entry"),
                         list(root, "excludedEnvironmentVariables", "name"),
@@ -204,16 +214,12 @@ public final class PreflightMojo extends AbstractMojo {
             }
             return List.copyOf(plans);
         }
-
-        String executionId = takeoverExecutionIds == null || takeoverExecutionIds.isEmpty()
-                ? "default" : takeoverExecutionIds.get(0);
-        return List.of(new ProbePlan(
-                executionId,
-                copy(includeClassNameRegexes), copy(excludeClassNameRegexes), copy(executorJvmArgs),
-                executorSystemProperties == null ? Map.of() : Map.copyOf(executorSystemProperties),
-                enableAssertions, copy(executorEnvironmentEntries), copy(excludedEnvironmentVariables),
-                executorWorkingDirectory, copy(additionalClasspathElements), copy(classpathDependencyExcludes),
-                classpathDependencyScopeExclude, copy(dependencyTestScanPatterns)));
+        String id = takeoverExecutionIds == null || takeoverExecutionIds.isEmpty() ? "default" : takeoverExecutionIds.get(0);
+        return List.of(new ProbePlan(id, copy(includeClassNameRegexes), copy(excludeClassNameRegexes), copy(executorJvmArgs),
+                executorSystemProperties == null ? Map.of() : Map.copyOf(executorSystemProperties), enableAssertions,
+                copy(executorEnvironmentEntries), copy(excludedEnvironmentVariables), executorWorkingDirectory,
+                copy(additionalClasspathElements), copy(classpathDependencyExcludes), classpathDependencyScopeExclude,
+                copy(dependencyTestScanPatterns)));
     }
 
     private Xpp3Dom dom(Object value) {
@@ -226,9 +232,7 @@ public final class PreflightMojo extends AbstractMojo {
         if (container == null) return List.of();
         List<String> values = new ArrayList<>();
         for (Xpp3Dom child : container.getChildren()) {
-            if (!itemName.equals(child.getName())) continue;
-            String value = child.getValue();
-            if (value != null) values.add(value);
+            if (itemName.equals(child.getName()) && child.getValue() != null) values.add(child.getValue());
         }
         return List.copyOf(values);
     }
@@ -237,9 +241,7 @@ public final class PreflightMojo extends AbstractMojo {
         Xpp3Dom container = root == null ? null : root.getChild(containerName);
         if (container == null) return Map.of();
         Map<String, String> values = new LinkedHashMap<>();
-        for (Xpp3Dom child : container.getChildren()) {
-            if (child.getValue() != null) values.put(child.getName(), child.getValue());
-        }
+        for (Xpp3Dom child : container.getChildren()) if (child.getValue() != null) values.put(child.getName(), child.getValue());
         return Map.copyOf(values);
     }
 
@@ -256,14 +258,12 @@ public final class PreflightMojo extends AbstractMojo {
         throw new IllegalStateException("ScenarioMesh run execution <" + name + "> must be true or false");
     }
 
-    private List<String> copy(List<String> value) {
-        return value == null ? List.of() : List.copyOf(value);
-    }
+    private List<String> copy(List<String> value) { return value == null ? List.of() : List.copyOf(value); }
 
     private boolean rerunProviderSupported(PreflightProbeMain.ProbeResult probe) {
-        if (probe.requiredAdapterIds().isEmpty()) return false;
-        if (!MAVEN_RERUN_ADAPTERS.containsAll(probe.requiredAdapterIds())) return false;
-        return !probe.requiredEngineIds().contains("junit-vintage");
+        return !probe.requiredAdapterIds().isEmpty()
+                && MAVEN_RERUN_ADAPTERS.containsAll(probe.requiredAdapterIds())
+                && !probe.requiredEngineIds().contains("junit-vintage");
     }
 
     private int removeInternalNonNegativeInt(Map<String, String> properties, String key) {
@@ -287,9 +287,7 @@ public final class PreflightMojo extends AbstractMojo {
         }
     }
 
-    private String executorPrefix() {
-        return "failsafe".equals(normalizedExecutor()) ? "failsafe." : "surefire.";
-    }
+    private String executorPrefix() { return "failsafe".equals(normalizedExecutor()) ? "failsafe." : "surefire."; }
 
     private ScenarioMeshConfig resolveConfig(Map<String, String> properties) throws Exception {
         Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
@@ -297,26 +295,17 @@ public final class PreflightMojo extends AbstractMojo {
         return new ConfigResolver().resolveDetailed(projectDirectory, buildDirectory, properties, System.getenv()).config();
     }
 
-    private PreflightProbeMain.ProbeResult probe(String executionId,
-                                                  Path javaExecutable,
-                                                  List<Path> controlClasspath,
-                                                  List<Path> targetClasspath,
-                                                  List<Path> testRoots,
-                                                  Map<String, String> properties,
-                                                  List<String> executorJvmArgs,
-                                                  List<String> includes,
-                                                  List<String> excludes,
-                                                  boolean assertionsEnabled,
-                                                  Map<String, String> environmentVariables,
-                                                  Set<String> excludedEnvironment,
-                                                  Path workingDirectory) throws Exception {
-        Path directory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize()
-                .resolve("scenariomesh-preflight");
+    private PreflightProbeMain.ProbeResult probe(String executionId, Path javaExecutable,
+                                                  List<Path> controlClasspath, List<Path> targetClasspath,
+                                                  List<Path> testRoots, Map<String, String> properties,
+                                                  List<String> executorJvmArgs, List<String> includes, List<String> excludes,
+                                                  boolean assertionsEnabled, Map<String, String> environmentVariables,
+                                                  Set<String> excludedEnvironment, Path workingDirectory) throws Exception {
+        Path directory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize().resolve("scenariomesh-preflight");
         Files.createDirectories(directory);
         String suffix = safe(executionId);
         Path output = directory.resolve("probe-" + suffix + ".properties");
         Path log = directory.resolve("probe-" + suffix + ".log");
-
         List<String> command = new ArrayList<>();
         command.add(javaExecutable.toString());
         command.add("-ea");
@@ -324,22 +313,17 @@ public final class PreflightMojo extends AbstractMojo {
         command.addAll(executorJvmArgs == null ? List.of() : executorJvmArgs);
         properties.entrySet().stream().sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
-        command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "="
-                + TargetClasspathDescriptor.encodeInline(targetClasspath));
+        command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "=" + TargetClasspathDescriptor.encodeInline(targetClasspath));
         command.add("-cp");
         command.add(controlClasspath.stream().map(Path::toString)
                 .reduce((left, right) -> left + File.pathSeparator + right).orElse(""));
         command.add(PreflightProbeMain.class.getName());
-        command.add("--output");
-        command.add(output.toString());
+        command.add("--output"); command.add(output.toString());
         for (Path root : testRoots) { command.add("--test-root"); command.add(root.toString()); }
         for (String include : includes) { command.add("--include-class-regex"); command.add(include); }
         for (String exclude : excludes) { command.add("--exclude-class-regex"); command.add(exclude); }
-
         ProcessBuilder builder = new ProcessBuilder(command)
-                .directory(workingDirectory.toFile())
-                .redirectErrorStream(true)
-                .redirectOutput(log.toFile());
+                .directory(workingDirectory.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
         excludedEnvironment.forEach(builder.environment()::remove);
         builder.environment().putAll(environmentVariables);
         Process process = builder.start();
@@ -401,8 +385,7 @@ public final class PreflightMojo extends AbstractMojo {
     }
 
     private void ownership(MavenOwnershipDiagnostic.Owner owner, String reason) {
-        List<String> executions = takeoverExecutionIds == null || takeoverExecutionIds.isEmpty()
-                ? List.of("none") : takeoverExecutionIds;
+        List<String> executions = takeoverExecutionIds == null || takeoverExecutionIds.isEmpty() ? List.of("none") : takeoverExecutionIds;
         for (String execution : executions) {
             getLog().info(MavenOwnershipDiagnostic.format(owner, project.getArtifactId(), normalizedExecutor(), execution, reason));
         }
@@ -433,19 +416,14 @@ public final class PreflightMojo extends AbstractMojo {
         return value == null || value.isBlank() ? throwable.getClass().getName() : value;
     }
 
+    private record PlanProof(ProbePlan plan, PreflightProbeMain.ProbeResult probe) {}
+
     private record ProbePlan(
-            String executionId,
-            List<String> includes,
-            List<String> excludes,
-            List<String> executorJvmArgs,
-            Map<String, String> executorSystemProperties,
-            boolean enableAssertions,
-            List<String> executorEnvironmentEntries,
-            List<String> excludedEnvironmentVariables,
-            String executorWorkingDirectory,
-            List<String> additionalClasspathElements,
-            List<String> classpathDependencyExcludes,
-            String classpathDependencyScopeExclude,
+            String executionId, List<String> includes, List<String> excludes, List<String> executorJvmArgs,
+            Map<String, String> executorSystemProperties, boolean enableAssertions,
+            List<String> executorEnvironmentEntries, List<String> excludedEnvironmentVariables,
+            String executorWorkingDirectory, List<String> additionalClasspathElements,
+            List<String> classpathDependencyExcludes, String classpathDependencyScopeExclude,
             List<String> dependencyTestScanPatterns) {
         private ProbePlan {
             includes = List.copyOf(includes == null ? List.of() : includes);
