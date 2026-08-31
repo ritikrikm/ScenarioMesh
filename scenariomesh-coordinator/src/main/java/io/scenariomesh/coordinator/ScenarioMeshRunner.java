@@ -41,7 +41,11 @@ public final class ScenarioMeshRunner {
         List<ScenarioTask> scheduledTasks = prepareForScheduling(request, discovery.tasks());
         logger.progress("Adapter selected: " + String.join(", ", discovery.adapters()));
         logger.progress("Discovery produced " + discovery.tasks().size() + " executable task(s).");
-        logger.progress("Scheduling strategy: " + request.config().schedulingMode().externalValue() + ".");
+        if (MavenRunOrderSupport.active(request)) {
+            logger.progress("Scheduling strategy: Maven class run order with parallel ScenarioMesh dispatch.");
+        } else {
+            logger.progress("Scheduling strategy: " + request.config().schedulingMode().externalValue() + ".");
+        }
 
         List<ExecutionResult> results;
         if (request.config().distributed().remote()) {
@@ -90,9 +94,18 @@ public final class ScenarioMeshRunner {
     }
 
     private List<ScenarioTask> prepareForScheduling(RunRequest request, List<ScenarioTask> tasks) {
+        if (MavenRunOrderSupport.active(request)) {
+            // Native Surefire/Failsafe runOrder is a semantic contract. Do not let ScenarioMesh's
+            // duration-aware LPT optimization silently reorder an explicitly Maven-owned run.
+            return MavenRunOrderSupport.order(request, withoutDurationEstimates(tasks));
+        }
         if (request.config().schedulingMode() == SchedulingMode.HISTORY_LPT) {
             return history.enrich(request.config().reportingDirectory(), tasks);
         }
+        return withoutDurationEstimates(tasks);
+    }
+
+    private List<ScenarioTask> withoutDurationEstimates(List<ScenarioTask> tasks) {
         List<ScenarioTask> fifo = new ArrayList<>(tasks.size());
         for (ScenarioTask task : tasks) {
             if (!task.metadata().containsKey(ExecutionHistoryStore.ESTIMATED_DURATION_MILLIS)) {
