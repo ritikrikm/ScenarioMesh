@@ -28,6 +28,11 @@ public final class MavenRetryReportWriter {
         List<LogicalExecution> logical = new ArrayList<>(outcome.logicalExecutions());
         logical.sort(Comparator.comparing(item -> item.logicalTask().value()));
 
+        Files.createDirectories(reportingDirectory);
+        createParent(genericPaths.junitXml());
+        createParent(genericPaths.latestJunitXml());
+        Files.createDirectories(outcome.runDirectory());
+
         String xml = junitXml(outcome, logical);
         Files.writeString(genericPaths.junitXml(), xml, StandardCharsets.UTF_8);
         Files.writeString(genericPaths.latestJunitXml(), xml, StandardCharsets.UTF_8);
@@ -39,6 +44,11 @@ public final class MavenRetryReportWriter {
         mapper.writerWithDefaultPrettyPrinter().writeValue(runJson.toFile(), summary);
         Files.copy(runJson, latestJson, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         return new RetryReportPaths(genericPaths.junitXml(), genericPaths.latestJunitXml(), runJson, latestJson);
+    }
+
+    private void createParent(Path path) throws Exception {
+        Path parent = path == null ? null : path.getParent();
+        if (parent != null) Files.createDirectories(parent);
     }
 
     private String junitXml(RunOutcome outcome, List<LogicalExecution> logical) {
