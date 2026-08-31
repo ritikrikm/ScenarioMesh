@@ -1,6 +1,8 @@
 package io.scenariomesh.maven;
 
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.artifact.Artifact;
+import org.apache.maven.shared.artifact.filter.PatternIncludesArtifactFilter;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,7 +20,7 @@ final class TestRootResolver {
         return resolve(project, List.of());
     }
 
-    List<Path> resolve(MavenProject project, List<String> dependencyTestRoots) throws Exception {
+    List<Path> resolve(MavenProject project, List<String> dependencyTestScanPatterns) throws Exception {
         Set<Path> roots = new LinkedHashSet<>();
         Path buildDirectory = normalize(project.getBuild().getDirectory());
         Path mainOutput = normalize(project.getBuild().getOutputDirectory());
@@ -38,9 +40,18 @@ final class TestRootResolver {
             }
             roots.add(candidate);
         }
-        for (String element : dependencyTestRoots == null ? List.<String>of() : dependencyTestRoots) {
-            Path candidate = normalize(element);
-            if (Files.isDirectory(candidate) || (Files.isRegularFile(candidate) && candidate.toString().endsWith(".jar"))) {
+        if (dependencyTestScanPatterns == null || dependencyTestScanPatterns.isEmpty()) {
+            return List.copyOf(roots);
+        }
+        PatternIncludesArtifactFilter filter = new PatternIncludesArtifactFilter(dependencyTestScanPatterns);
+        for (Artifact artifact : project.getTestArtifacts()) {
+            if (!filter.include(artifact)) continue;
+            if (artifact.getFile() == null || !artifact.getFile().exists()) {
+                throw new IllegalStateException("dependenciesToScan matched unresolved artifact " + artifact);
+            }
+            Path candidate = artifact.getFile().toPath().toAbsolutePath().normalize();
+            if ("jar".equals(artifact.getType()) || Files.isDirectory(candidate)
+                    || (Files.isRegularFile(candidate) && candidate.toString().endsWith(".jar"))) {
                 roots.add(candidate);
             }
         }

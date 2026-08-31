@@ -60,7 +60,7 @@ public final class RunMojo extends AbstractMojo {
     @Parameter private List<String> additionalClasspathElements;
     @Parameter private List<String> classpathDependencyExcludes;
     @Parameter private String classpathDependencyScopeExclude;
-    @Parameter private List<String> dependencyTestRoots;
+    @Parameter private List<String> dependencyTestScanPatterns;
 
     @Override
     public void execute() throws MojoExecutionException, MojoFailureException {
@@ -118,7 +118,7 @@ public final class RunMojo extends AbstractMojo {
                     projectDirectory,
                     classpaths.targetClasspath(),
                     classpaths.controlClasspath(),
-                    new TestRootResolver().resolve(project, dependencyTestRoots),
+                    new TestRootResolver().resolve(project, dependencyTestScanPatterns),
                     userProperties,
                     config,
                     selection,

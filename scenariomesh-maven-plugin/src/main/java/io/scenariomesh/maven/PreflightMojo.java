@@ -52,7 +52,7 @@ public final class PreflightMojo extends AbstractMojo {
     @Parameter private List<String> additionalClasspathElements;
     @Parameter private List<String> classpathDependencyExcludes;
     @Parameter private String classpathDependencyScopeExclude;
-    @Parameter private List<String> dependencyTestRoots;
+    @Parameter private List<String> dependencyTestScanPatterns;
 
     @Override
     public void execute() {
@@ -75,7 +75,7 @@ public final class PreflightMojo extends AbstractMojo {
                             additionalClasspathElements == null ? List.of() : additionalClasspathElements,
                             classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes,
                             classpathDependencyScopeExclude);
-            List<Path> testRoots = new TestRootResolver().resolve(project, dependencyTestRoots);
+            List<Path> testRoots = new TestRootResolver().resolve(project, dependencyTestScanPatterns);
             Map<String, String> properties = new LinkedHashMap<>(
                     EffectiveMavenProperties.configuration(project, session));
             if (executorSystemProperties != null) properties.putAll(executorSystemProperties);

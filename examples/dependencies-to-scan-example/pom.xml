@@ -1,0 +1,5 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>example</groupId><artifactId>dependencies-to-scan-example</artifactId><version>1.0-SNAPSHOT</version><packaging>pom</packaging>
+  <modules><module>dependency-tests</module><module>consumer</module></modules>
+</project>

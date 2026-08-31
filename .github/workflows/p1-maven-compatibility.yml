@@ -73,3 +73,15 @@ jobs:
           mvn -B clean test -pl module-b -am
           test -f module-a/target/scenariomesh/summary.json
           test -f module-b/target/scenariomesh/summary.json
+      - name: dependenciesToScan matches native Surefire dependency-test discovery
+        working-directory: examples/dependencies-to-scan-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test -pl consumer -am
+          test -f consumer/target/surefire-reports/TEST-example.dependency.ScannedDependencyTest.xml
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+          mvn -B clean test -pl consumer -am
+          test -f consumer/target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' consumer/target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' consumer/target/scenariomesh/summary.json
+          grep -Fq 'runsFromDependencyJar()' consumer/target/scenariomesh/summary.json
