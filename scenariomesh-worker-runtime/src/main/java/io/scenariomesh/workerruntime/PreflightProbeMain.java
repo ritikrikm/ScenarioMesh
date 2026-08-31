@@ -30,7 +30,8 @@ public final class PreflightProbeMain {
         Arguments parsed = Arguments.parse(args);
         ClassLoader controlLoader = PreflightProbeMain.class.getClassLoader();
         String encoded = System.getProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY);
-        List<Path> targetClasspath = encoded == null || encoded.isBlank() ? currentClasspath() : TargetClasspathDescriptor.decodeInline(encoded);
+        List<Path> targetClasspath = encoded == null || encoded.isBlank()
+                ? currentClasspath() : TargetClasspathDescriptor.decodeInline(encoded);
         Thread thread = Thread.currentThread();
         ClassLoader previous = thread.getContextClassLoader();
         try (TargetRuntimeClassLoader loader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
@@ -56,10 +57,11 @@ public final class PreflightProbeMain {
         ExecutionBackendInventory.Inventory inventory = ExecutionBackendInventory.inspect(
                 loader, parsed.testRoots, parsed.includes, parsed.excludes, adapterOwnedEngines);
         inventory = includeStandaloneAdapterOwnership(inventory, requirements);
+        String runtimeFingerprint = WorkerMain.capabilities(registry, loader).runtimeFingerprint();
 
         Files.createDirectories(parsed.output.getParent());
         writeResult(parsed.output, new ProbeResult(inventory.ownership().name(), inventory.summary(),
-                requirements.adapterIds(), requirements.engineIds()));
+                requirements.adapterIds(), requirements.engineIds(), runtimeFingerprint));
     }
 
     public static void writeResult(Path output, ProbeResult result) throws Exception {
@@ -68,6 +70,7 @@ public final class PreflightProbeMain {
         values.setProperty("summary", result.summary() == null ? "" : result.summary());
         values.setProperty("requiredAdapterIds", String.join(SET_SEPARATOR, result.requiredAdapterIds()));
         values.setProperty("requiredEngineIds", String.join(SET_SEPARATOR, result.requiredEngineIds()));
+        values.setProperty("runtimeFingerprint", result.runtimeFingerprint() == null ? "" : result.runtimeFingerprint());
         try (BufferedWriter writer = Files.newBufferedWriter(output, StandardCharsets.UTF_8)) {
             values.store(writer, "ScenarioMesh selected-JVM ownership probe");
         }
@@ -77,7 +80,9 @@ public final class PreflightProbeMain {
         Properties values = new Properties();
         try (var reader = Files.newBufferedReader(input, StandardCharsets.UTF_8)) { values.load(reader); }
         return new ProbeResult(require(values, "ownership"), values.getProperty("summary", ""),
-                splitSet(values.getProperty("requiredAdapterIds", "")), splitSet(values.getProperty("requiredEngineIds", "")));
+                splitSet(values.getProperty("requiredAdapterIds", "")),
+                splitSet(values.getProperty("requiredEngineIds", "")),
+                require(values, "runtimeFingerprint"));
     }
 
     private static Set<String> splitSet(String value) {
@@ -122,9 +127,6 @@ public final class PreflightProbeMain {
 
     private static ExecutionBackendInventory.Inventory includeStandaloneAdapterOwnership(
             ExecutionBackendInventory.Inventory inventory, RuntimeRequirements requirements) {
-        // TestNG normally runs through Surefire's native provider rather than a JUnit Platform
-        // engine. Its adapter discovery is therefore the authoritative executable-leaf proof.
-        // Unsupported TestNG semantics fail discovery above and remain native Maven pass-through.
         if (inventory.ownership() != ExecutionBackendInventory.Ownership.NOT_DETECTED
                 || !requirements.adapterIds().contains("testng")) {
             return inventory;
@@ -138,7 +140,7 @@ public final class PreflightProbeMain {
                                 ExecutionBackendInventory.Capability.STABLE_LEAF_IDENTITY,
                                 ExecutionBackendInventory.Capability.ISOLATED_LEAF_EXECUTION,
                                 ExecutionBackendInventory.Capability.FILTER_EQUIVALENCE))),
-                "TestNG adapter discovered Maven-selected executable methods with a proven isolated execution contract");
+                "TestNG adapter discovered Maven-selected executable methods with a proven execution-scope contract");
     }
 
     private static List<Path> currentClasspath() {
@@ -148,7 +150,8 @@ public final class PreflightProbeMain {
                 .filter(value -> value != null && !value.isBlank()).map(Path::of).toList();
     }
 
-    public record ProbeResult(String ownership, String summary, Set<String> requiredAdapterIds, Set<String> requiredEngineIds) {
+    public record ProbeResult(String ownership, String summary, Set<String> requiredAdapterIds,
+                              Set<String> requiredEngineIds, String runtimeFingerprint) {
         public ProbeResult {
             requiredAdapterIds = Set.copyOf(requiredAdapterIds == null ? Set.of() : requiredAdapterIds);
             requiredEngineIds = Set.copyOf(requiredEngineIds == null ? Set.of() : requiredEngineIds);
