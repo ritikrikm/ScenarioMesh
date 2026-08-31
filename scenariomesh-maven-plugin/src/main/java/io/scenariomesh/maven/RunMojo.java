@@ -9,6 +9,7 @@ import io.scenariomesh.coordinator.RunRequest;
 import io.scenariomesh.coordinator.ScenarioMeshRunner;
 import io.scenariomesh.core.DiscoverySelection;
 import io.scenariomesh.core.Domain.ResultStatus;
+import io.scenariomesh.core.RetrySemantics.RetryPolicy;
 import io.scenariomesh.core.RuntimePropertyNames;
 import io.scenariomesh.reporting.LatestReportCleaner;
 import io.scenariomesh.reporting.ReportExporters;
@@ -37,14 +38,10 @@ import java.util.Set;
 @Mojo(name = "run", defaultPhase = LifecyclePhase.TEST, threadSafe = true,
         requiresDependencyResolution = org.apache.maven.plugins.annotations.ResolutionScope.TEST)
 public final class RunMojo extends AbstractMojo {
-    @Parameter(defaultValue = "${project}", readonly = true, required = true)
-    private MavenProject project;
-    @Parameter(defaultValue = "${session}", readonly = true, required = true)
-    private MavenSession session;
-    @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true)
-    private List<Artifact> pluginArtifacts;
-    @Component
-    private ToolchainManager toolchainManager;
+    @Parameter(defaultValue = "${project}", readonly = true, required = true) private MavenProject project;
+    @Parameter(defaultValue = "${session}", readonly = true, required = true) private MavenSession session;
+    @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true) private List<Artifact> pluginArtifacts;
+    @Component private ToolchainManager toolchainManager;
 
     @Parameter private String invocationId;
     @Parameter(defaultValue = "false") private boolean deferFailureUntilVerify;
@@ -119,11 +116,20 @@ public final class RunMojo extends AbstractMojo {
                 return;
             }
 
+            Map<String, String> effectiveExecutorProperties = new LinkedHashMap<>(
+                    executorSystemProperties == null ? Map.of() : executorSystemProperties);
+            int modelReruns = removeInternalNonNegativeInt(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT);
+            int modelFailOnFlake = removeInternalNonNegativeInt(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT);
+            RetryPolicy retryPolicy = effectiveRetryPolicy(modelReruns, modelFailOnFlake);
+            requireNoSkipAfterFailureOverride();
+
             DiscoverySelection selection = new DiscoverySelection(
                     includeClassNameRegexes == null ? List.of() : includeClassNameRegexes,
                     excludeClassNameRegexes == null ? List.of() : excludeClassNameRegexes);
             Path testJava = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
-            if (config.showConfiguration()) logConfiguration(config, resolution, testJava);
+            if (config.showConfiguration()) logConfiguration(config, resolution, testJava, retryPolicy);
 
             RuntimeClasspathResolver.RuntimeClasspaths classpaths =
                     new RuntimeClasspathResolver().resolveSplit(
@@ -148,7 +154,8 @@ public final class RunMojo extends AbstractMojo {
                     enableAssertions,
                     decodeEnvironmentEntries(executorEnvironmentEntries),
                     excludedEnvironmentVariables == null ? Set.of() : new LinkedHashSet<>(excludedEnvironmentVariables),
-                    workingDirectory);
+                    workingDirectory,
+                    retryPolicy);
 
             if (config.distributed().remote()) {
                 preparedRemoteWorkers = RemotePreflightState.take(getPluginContext());
@@ -169,8 +176,10 @@ public final class RunMojo extends AbstractMojo {
             long failed = outcome.results().size() - passed - skipped;
             getLog().info("ScenarioMesh selected adapter: " + String.join(", ", outcome.adapters()));
             getLog().info("ScenarioMesh results: discovered=" + outcome.tasks().size()
+                    + ", logical=" + outcome.results().size()
                     + ", passed=" + passed + ", skipped=" + skipped
-                    + ", failed=" + failed + ", duration=" + outcome.duration());
+                    + ", failed=" + failed + ", flakes=" + outcome.flakyCount()
+                    + ", duration=" + outcome.duration());
             getLog().info("ScenarioMesh report: " + reports.latestHtml());
 
             String zeroTestFailure = ZeroTestPolicy.failureMessage(
@@ -182,13 +191,13 @@ public final class RunMojo extends AbstractMojo {
 
             boolean effectiveSuccess = effectiveSuccess(outcome);
             if (testFailureIgnore && !outcome.successful() && effectiveSuccess) {
-                getLog().warn("ScenarioMesh observed test failures, but Maven executor testFailureIgnore=true; infrastructure failures are still fatal.");
+                getLog().warn("ScenarioMesh observed test/flake policy failures, but Maven executor testFailureIgnore=true; infrastructure failures are still fatal.");
             }
 
             if (deferFailureUntilVerify) {
                 DeferredVerificationState.write(buildDirectory, invocationId, effectiveSuccess,
                         reports.latestHtml().toString(),
-                        effectiveSuccess ? null : "ScenarioMesh run contained failing or infrastructure results");
+                        effectiveSuccess ? null : "ScenarioMesh run contained failing, flaky-threshold, or infrastructure results");
                 if (!effectiveSuccess) {
                     getLog().warn("ScenarioMesh recorded failures for Maven verify; post-integration-test lifecycle phases will continue.");
                 }
@@ -223,15 +232,57 @@ public final class RunMojo extends AbstractMojo {
         throw new IllegalArgumentException("Invalid internal Maven compatibility boolean '" + key + "': " + raw);
     }
 
+    private RetryPolicy effectiveRetryPolicy(int modelReruns, int modelFailOnFlake) {
+        String prefix = "failsafe".equals(normalizedExecutor()) ? "failsafe." : "surefire.";
+        int reruns = commandLineNonNegativeInt(prefix + "rerunFailingTestsCount", modelReruns);
+        int failOnFlake = commandLineNonNegativeInt(prefix + "failOnFlakeCount", modelFailOnFlake);
+        return new RetryPolicy(reruns, failOnFlake);
+    }
+
+    private void requireNoSkipAfterFailureOverride() {
+        String key = ("failsafe".equals(normalizedExecutor()) ? "failsafe." : "surefire.") + "skipAfterFailureCount";
+        String raw = commandLineProperty(key);
+        if (raw == null) return;
+        int value = parseNonNegativeInt(key, raw);
+        if (value > 0) {
+            throw new IllegalStateException(key + "=" + value
+                    + " requires exact stop-after-failure scheduling semantics; transparent takeover must pass through until that capability is implemented");
+        }
+    }
+
+    private int removeInternalNonNegativeInt(Map<String, String> properties, String key) {
+        String raw = properties.remove(key);
+        return raw == null ? 0 : parseNonNegativeInt(key, raw);
+    }
+
+    private int commandLineNonNegativeInt(String key, int fallback) {
+        String raw = commandLineProperty(key);
+        return raw == null ? fallback : parseNonNegativeInt(key, raw);
+    }
+
+    private String commandLineProperty(String key) {
+        String raw = session.getUserProperties().getProperty(key);
+        if (raw == null) raw = session.getSystemProperties().getProperty(key);
+        return raw;
+    }
+
+    private int parseNonNegativeInt(String key, String raw) {
+        try {
+            int value = Integer.parseInt(raw.trim());
+            if (value < 0) throw new IllegalArgumentException(key + " must be >= 0 but was " + raw);
+            return value;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(key + " must be a non-negative integer but was '" + raw + "'", exception);
+        }
+    }
+
     private Map<String, String> decodeEnvironmentEntries(List<String> encodedEntries) {
         if (encodedEntries == null || encodedEntries.isEmpty()) return Map.of();
         Map<String, String> values = new LinkedHashMap<>();
         Base64.Decoder decoder = Base64.getUrlDecoder();
         for (String encoded : encodedEntries) {
             int separator = encoded == null ? -1 : encoded.indexOf(':');
-            if (separator <= 0) {
-                throw new IllegalArgumentException("Invalid internal Maven environment entry encoding");
-            }
+            if (separator <= 0) throw new IllegalArgumentException("Invalid internal Maven environment entry encoding");
             String key = new String(decoder.decode(encoded.substring(0, separator)), StandardCharsets.UTF_8);
             String value = new String(decoder.decode(encoded.substring(separator + 1)), StandardCharsets.UTF_8);
             values.put(key, value);
@@ -239,7 +290,8 @@ public final class RunMojo extends AbstractMojo {
         return Map.copyOf(values);
     }
 
-    private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution, Path testJava) {
+    private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution, Path testJava,
+                                  RetryPolicy retryPolicy) {
         getLog().info("---------------- ScenarioMesh runtime ----------------");
         getLog().info("ScenarioMesh version       : 0.1.0-SNAPSHOT");
         getLog().info("Project                    : " + project.getArtifactId());
@@ -249,6 +301,8 @@ public final class RunMojo extends AbstractMojo {
         getLog().info("Test JVM                   : " + testJava);
         getLog().info("Adapter intent             : " + config.executionAdapter());
         getLog().info("Adapter mismatch policy    : " + config.adapterMismatchPolicy().externalValue());
+        getLog().info("Maven logical reruns       : " + retryPolicy.rerunFailingTestsCount());
+        getLog().info("Maven fail-on-flake count  : " + retryPolicy.failOnFlakeCount());
         getLog().info("Infrastructure retries     : " + config.infrastructureRetries()
                 + (config.infrastructureRetries() > 0 ? " (at-least-once under uncertain worker/transport failure)" : ""));
         getLog().info("Workers                    : " + config.workerCount() + " "
@@ -263,6 +317,10 @@ public final class RunMojo extends AbstractMojo {
                 path -> getLog().info("Config file                : " + path),
                 () -> getLog().info("Config file                : none (defaults/overrides)"));
         getLog().info("------------------------------------------------------");
+    }
+
+    private String normalizedExecutor() {
+        return takeoverExecutor == null ? "surefire" : takeoverExecutor.trim().toLowerCase(java.util.Locale.ROOT);
     }
 
     private String enabled(boolean value) { return value ? "enabled" : "disabled"; }
