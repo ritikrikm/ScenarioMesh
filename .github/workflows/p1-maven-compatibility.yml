@@ -41,14 +41,16 @@ jobs:
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' target/scenariomesh/summary.json
           grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" toolchain-run.log
-      - name: JPMS module path safely remains native Maven
+      - name: JPMS module path is preserved by ScenarioMesh workers
         working-directory: examples/junit5-jpms-example
         run: |
-          mvn -B clean test -Dtest.module.path=true | tee jpms-native.log
-          grep -Fq 'ScenarioMesh: pass-through for junit5-jpms-example' jpms-native.log
-          grep -Fq '<useModulePath>' jpms-native.log
-          test ! -f target/scenariomesh/summary.json
-          test -f target/surefire-reports/TEST-example.ModularTest.xml
+          mvn -B clean test -Dtest.module.path=true | tee jpms-module.log
+          grep -Fq 'ScenarioMesh: takeover enabled after runtime ownership preflight' jpms-module.log
+          grep -Fq 'ScenarioMesh: preserving Maven JPMS module-path execution for target tests.' jpms-module.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          test ! -d target/surefire-reports
       - name: Modular project with useModulePath false can be accelerated
         working-directory: examples/junit5-jpms-example
         run: |

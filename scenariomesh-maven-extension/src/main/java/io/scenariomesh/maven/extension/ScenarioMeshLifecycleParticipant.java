@@ -111,6 +111,15 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + providerAnalysis.reason());
                 continue;
             }
+            if (!providerAnalysis.providerIntents().isEmpty()
+                    && !providerAnalysis.providerIntents().equals(decision.frameworks())) {
+                String reason = "explicit Maven provider selection " + providerAnalysis.providerIntents()
+                        + " does not exactly match the modeled framework ownership " + decision.frameworks()
+                        + "; ScenarioMesh will not broaden or narrow native provider execution";
+                diagnosePlans(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, project, decision, reason);
+                info("ScenarioMesh: pass-through for " + project.getArtifactId() + " - " + reason);
+                continue;
+            }
 
             MavenForkNumberCompatibility.Analysis forkNumberAnalysis =
                     forkNumberCompatibility.analyze(nativeExecutor, executionIds);

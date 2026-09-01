@@ -28,6 +28,7 @@ import org.apache.maven.toolchain.ToolchainManager;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -84,32 +85,28 @@ public final class RunMojo extends AbstractMojo {
 
         Path buildDirectory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize();
         PreparedRemoteWorkers preparedRemoteWorkers = null;
+        boolean retainRemainingRemoteCohorts = false;
         try {
             Map<String, String> effectiveExecutorProperties = new LinkedHashMap<>(
                     executorSystemProperties == null ? Map.of() : executorSystemProperties);
-            String cluecumberJsonDirectory = effectiveExecutorProperties.get(
-                    RuntimePropertyNames.CLUECUMBER_JSON_DIRECTORY);
+            String cluecumberJsonDirectory = effectiveExecutorProperties.get(RuntimePropertyNames.CLUECUMBER_JSON_DIRECTORY);
             if (cluecumberJsonDirectory != null && !cluecumberJsonDirectory.isBlank()) {
-                getLog().info("ScenarioMesh: preserving Cluecumber JSON input for this invocation at "
-                        + cluecumberJsonDirectory);
+                getLog().info("ScenarioMesh: preserving Cluecumber JSON input for this invocation at " + cluecumberJsonDirectory);
             }
             String executorArgLine = effectiveExecutorProperties.remove(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE);
-            boolean zeroTestPolicyEnabled = removeInternalBoolean(
-                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_ZERO_TEST_POLICY_ENABLED, false);
-            boolean failIfNoTests = removeInternalBoolean(
-                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_FAIL_IF_NO_TESTS, false);
-            boolean failIfNoSpecifiedTests = removeInternalBoolean(
-                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_FAIL_IF_NO_SPECIFIED_TESTS, true);
-            boolean explicitTestSelection = removeInternalBoolean(
-                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION, false);
-            boolean promoteUserProperties = removeInternalBoolean(
-                    effectiveExecutorProperties, RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
+            boolean zeroTestPolicyEnabled = removeInternalBoolean(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_ZERO_TEST_POLICY_ENABLED, false);
+            boolean failIfNoTests = removeInternalBoolean(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_FAIL_IF_NO_TESTS, false);
+            boolean failIfNoSpecifiedTests = removeInternalBoolean(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_FAIL_IF_NO_SPECIFIED_TESTS, true);
+            boolean explicitTestSelection = removeInternalBoolean(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION, false);
+            boolean promoteUserProperties = removeInternalBoolean(effectiveExecutorProperties,
+                    RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
 
-            Map<String, String> userProperties = promoteUserProperties
-                    ? EffectiveMavenProperties.user(session)
-                    : Map.of();
-            List<String> effectiveExecutorJvmArgs = MavenArgLineSupport.merge(
-                    executorJvmArgs, executorArgLine, project, session);
+            Map<String, String> userProperties = promoteUserProperties ? EffectiveMavenProperties.user(session) : Map.of();
+            List<String> effectiveExecutorJvmArgs = MavenArgLineSupport.merge(executorJvmArgs, executorArgLine, project, session);
 
             Map<String, String> configProperties = EffectiveMavenProperties.configuration(project, session);
             Path projectDirectory = project.getBasedir().toPath().toAbsolutePath().normalize();
@@ -135,13 +132,22 @@ public final class RunMojo extends AbstractMojo {
             Path testJava = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
             if (config.showConfiguration()) logConfiguration(config, resolution, testJava, retryPolicy);
 
-            RuntimeClasspathResolver.RuntimeClasspaths classpaths =
-                    new RuntimeClasspathResolver().resolveSplit(
-                            project,
-                            pluginArtifacts,
-                            additionalClasspathElements == null ? List.of() : additionalClasspathElements,
-                            classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes,
-                            classpathDependencyScopeExclude);
+            RuntimeClasspathResolver.RuntimeClasspaths classpaths = new RuntimeClasspathResolver().resolveSplit(
+                    project, pluginArtifacts,
+                    additionalClasspathElements == null ? List.of() : additionalClasspathElements,
+                    classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes,
+                    classpathDependencyScopeExclude);
+
+            ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
+                    project, session, normalizedExecutor(), classpaths.targetModulePath());
+            if (moduleLaunch.modulePath()) {
+                List<String> moduleAwareArgs = new ArrayList<>(effectiveExecutorJvmArgs);
+                moduleAwareArgs.addAll(moduleLaunch.jvmArgs());
+                effectiveExecutorJvmArgs = List.copyOf(moduleAwareArgs);
+                effectiveExecutorProperties.put(ModulePathCompatibility.TARGET_MODULE_PATH_PROPERTY, "true");
+                getLog().info("ScenarioMesh: preserving Maven JPMS module-path execution for target tests.");
+            }
+
             Path workingDirectory = executorWorkingDirectory == null || executorWorkingDirectory.isBlank()
                     ? projectDirectory : Path.of(executorWorkingDirectory).toAbsolutePath().normalize();
             RunRequest request = new RunRequest(
@@ -164,7 +170,7 @@ public final class RunMojo extends AbstractMojo {
             if (config.distributed().remote()) {
                 preparedRemoteWorkers = RemotePreflightState.take(getPluginContext());
                 if (preflight == PreflightState.State.OWNED && preparedRemoteWorkers == null) {
-                    throw new IllegalStateException("Remote Maven takeover was marked owned without the exact preflight-authenticated worker sessions");
+                    throw new IllegalStateException("Remote Maven takeover was marked owned without the exact preflight-authenticated worker cohort for this execution");
                 }
             } else {
                 RemotePreflightState.clear(getPluginContext());
@@ -180,10 +186,8 @@ public final class RunMojo extends AbstractMojo {
             long failed = outcome.results().size() - passed - skipped;
             getLog().info("ScenarioMesh selected adapter: " + String.join(", ", outcome.adapters()));
             getLog().info("ScenarioMesh results: discovered=" + outcome.tasks().size()
-                    + ", passed=" + passed + ", skipped=" + skipped
-                    + ", failed=" + failed
-                    + ", logical=" + outcome.results().size()
-                    + ", flakes=" + outcome.flakyCount()
+                    + ", passed=" + passed + ", skipped=" + skipped + ", failed=" + failed
+                    + ", logical=" + outcome.results().size() + ", flakes=" + outcome.flakyCount()
                     + ", duration=" + outcome.duration());
             getLog().info("ScenarioMesh report: " + reports.latestHtml());
 
@@ -206,9 +210,11 @@ public final class RunMojo extends AbstractMojo {
                 if (!effectiveSuccess) {
                     getLog().warn("ScenarioMesh recorded failures for Maven verify; post-integration-test lifecycle phases will continue.");
                 }
+                retainRemainingRemoteCohorts = config.distributed().remote() && preflight == PreflightState.State.OWNED;
                 return;
             }
             if (!effectiveSuccess) throw new MojoFailureException("ScenarioMesh run failed. See " + reports.latestHtml());
+            retainRemainingRemoteCohorts = config.distributed().remote() && preflight == PreflightState.State.OWNED;
         } catch (MojoFailureException failure) {
             throw failure;
         } catch (Exception exception) {
@@ -225,7 +231,9 @@ public final class RunMojo extends AbstractMojo {
             throw new MojoExecutionException("ScenarioMesh infrastructure failure: " + exception.getMessage(), exception);
         } finally {
             if (preparedRemoteWorkers != null) preparedRemoteWorkers.close();
-            RemotePreflightState.clear(getPluginContext());
+            if (!retainRemainingRemoteCohorts || !RemotePreflightState.hasRemaining(getPluginContext())) {
+                RemotePreflightState.clear(getPluginContext());
+            }
         }
     }
 

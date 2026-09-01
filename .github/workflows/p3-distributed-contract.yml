@@ -32,7 +32,7 @@ jobs:
       - name: Build bridge-v8 runtime in isolated Maven repository
         working-directory: bridge-v8
         run: mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" clean install -DskipTests
-      - name: Transparent remote Maven takeover always fails closed
+      - name: Transparent remote Maven takeover fails closed without equivalent workers
         working-directory: examples/testng-example
         run: |
           token="p3-pass-through-${{ github.run_id }}-${{ matrix.java }}"
@@ -48,12 +48,9 @@ jobs:
             -Dscenariomesh.distributed.registrationTimeout=PT2S \
             > pass-through.log 2>&1
           cat pass-through.log
-          grep -Fq 'transparent Maven takeover cannot prove native Surefire/Failsafe fork-process equivalence across remote agents' pass-through.log
+          grep -Fq 'has only 0 of 2 equivalent remote workers' pass-through.log
           grep -Fq 'MAVEN_OWNERSHIP owner=PASS_THROUGH' pass-through.log
-          if grep -Fq 'ScenarioMesh remote preflight listening on' pass-through.log; then
-            echo 'Transparent takeover attempted remote ownership despite fail-closed contract'
-            exit 1
-          fi
+          grep -Fq 'ScenarioMesh remote preflight listening on' pass-through.log
           test -d target/surefire-reports
           if test -f target/scenariomesh/summary.json; then
             echo 'ScenarioMesh unexpectedly produced a remote summary during native pass-through'

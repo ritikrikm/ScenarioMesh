@@ -7,4 +7,18 @@
     <dependency><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-maven-selection</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.testng</groupId><artifactId>testng</artifactId><version>${testng.version}</version></dependency>
   </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- These are adapter input fixtures, not tests of this module themselves. -->
+          <excludes>
+            <exclude>**/*Fixture.java</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

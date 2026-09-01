@@ -26,7 +26,7 @@ final class AdvancedSurefireCompatibilityDetector {
             "runOrder", "runOrderRandomSeed", "runOrderStatisticsFileChecksum",
             "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
-            "useUnlimitedThreads", "parallelOptimized");
+            "useUnlimitedThreads", "parallelOptimized", "useModulePath");
     private final SurefireCompatibility compatibility = new SurefireCompatibility();
 
     ProjectCompatibilityDetector.CompatibilityDecision evaluate(MavenSession session, MavenProject project) {
@@ -147,8 +147,6 @@ final class AdvancedSurefireCompatibilityDetector {
             boolean testGoal = execution.getGoals() != null
                     && execution.getGoals().stream().anyMatch(goal -> "test".equals(trim(goal)));
             if (!testGoal) continue;
-            // Maven 4 phase indices (for example test[100]) affect ordering relative to other executions.
-            // Do not flatten them into an ordinary test phase until that ordering contract is modeled.
             if (phase.isEmpty() || "test".equals(phase)) active.add(execution);
         }
         return List.copyOf(active);
@@ -166,7 +164,6 @@ final class AdvancedSurefireCompatibilityDetector {
         standard.addGoal("test");
         standard.setConfiguration(execution.getConfiguration());
         plugin.addExecution(standard);
-        // Dependencies are validated separately by MavenProviderDependencyCompatibility.
         return plugin;
     }
 

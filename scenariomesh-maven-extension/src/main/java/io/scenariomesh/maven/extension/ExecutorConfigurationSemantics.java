@@ -21,6 +21,7 @@ final class ExecutorConfigurationSemantics {
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
             "jvm", "jdkToolchain",
+            "useModulePath",
             "enableAssertions", "environmentVariables", "excludedEnvironmentVariables", "workingDirectory",
             "additionalClasspathElements", "additionalClasspathDependencies",
             "classpathDependencyExcludes", "classpathDependencyScopeExclude",
@@ -37,8 +38,7 @@ final class ExecutorConfigurationSemantics {
             "systemPropertyVariables",
             "promoteUserPropertiesToSystemProperties");
 
-    private static final Set<String> COMMON_PRESERVED = Set.of(
-            "skip", "skipTests", "useModulePath");
+    private static final Set<String> COMMON_PRESERVED = Set.of("skip", "skipTests");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
             "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",

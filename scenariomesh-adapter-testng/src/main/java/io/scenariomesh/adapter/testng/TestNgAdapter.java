@@ -26,8 +26,6 @@ import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -38,18 +36,27 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+/**
+ * TestNG adapter.
+ *
+ * <p>ScenarioMesh only splits TestNG tests into independent method work units when that split is
+ * provably semantics preserving. Advanced TestNG features are deliberately delegated to TestNG
+ * itself in one runtime materializer scope, then converted into concrete ScenarioMesh results.
+ * This keeps TestNG as the source of truth for factories, data providers, dependency ordering,
+ * repeated invocations, parameter injection and lifecycle callbacks.</p>
+ */
 public final class TestNgAdapter implements ScenarioAdapter {
     public static final String ID = "testng";
     private static final String SUITE_XML_FILES_PROPERTY = "scenariomesh.testng.suiteXmlFiles";
-    private static final Set<String> UNSAFE_CONFIGURATION_ANNOTATIONS = Set.of(
-            "org.testng.annotations.BeforeSuite",
-            "org.testng.annotations.AfterSuite",
-            "org.testng.annotations.BeforeTest",
-            "org.testng.annotations.AfterTest",
-            "org.testng.annotations.BeforeClass",
-            "org.testng.annotations.AfterClass",
-            "org.testng.annotations.BeforeGroups",
-            "org.testng.annotations.AfterGroups");
+    private static final String CLASS_NAMES = "testngClassNames";
+    private static final String MATERIALIZER_KIND = "testngMaterializerKind";
+    private static final String MATERIALIZER_SUITE = "suite";
+    private static final String MATERIALIZER_NATIVE_SCOPE = "native-scope";
+    private static final Set<String> CONTEXT_LIFECYCLE_ANNOTATIONS = Set.of(
+            "org.testng.annotations.BeforeSuite", "org.testng.annotations.AfterSuite",
+            "org.testng.annotations.BeforeTest", "org.testng.annotations.AfterTest",
+            "org.testng.annotations.BeforeClass", "org.testng.annotations.AfterClass",
+            "org.testng.annotations.BeforeGroups", "org.testng.annotations.AfterGroups");
 
     @Override public String id() { return ID; }
     @Override public String framework() { return "testng"; }
@@ -69,157 +76,123 @@ public final class TestNgAdapter implements ScenarioAdapter {
         String suiteFiles = context.properties().get(SUITE_XML_FILES_PROPERTY);
         if (suiteFiles != null && !suiteFiles.isBlank()) {
             return Stream.of(suiteFiles.split("\\R"))
-                    .map(String::trim)
-                    .filter(value -> !value.isEmpty())
-                    .distinct()
-                    .map(this::suiteTask)
-                    .toList();
+                    .map(String::trim).filter(value -> !value.isEmpty()).distinct()
+                    .map(this::suiteTask).toList();
         }
-        List<ScenarioTask> tasks = new ArrayList<>();
-        List<String> inspectionFailures = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
 
+        List<Class<?>> candidates = new ArrayList<>();
+        List<String> inspectionFailures = new ArrayList<>();
         for (String className : SelectedTestClasses.scan(context.testRoots(), context.discoverySelection())) {
             if (className.contains("$")) continue;
             try {
                 Class<?> candidate = Class.forName(className, false, context.classLoader());
-                if (hasTestNgTests(candidate)) {
-                    discoverMethods(candidate, tasks, seen, GroupSelection.from(context.properties()));
-                }
-            } catch (IllegalArgumentException exception) {
-                if (exception.getMessage() != null && exception.getMessage().contains("Cannot parse Surefire group")) {
-                    throw exception;
-                }
-                inspectionFailures.add(className + " -> " + message(exception));
+                if (hasTestNgTests(candidate)) candidates.add(candidate);
             } catch (LinkageError | ClassNotFoundException | RuntimeException exception) {
                 inspectionFailures.add(className + " -> " + message(exception));
             }
         }
-
         if (!inspectionFailures.isEmpty()) {
-            throw new IllegalStateException(
-                    "TestNG discovery could not safely inspect selected candidate class(es): "
-                            + String.join("; ", inspectionFailures));
+            throw new IllegalStateException("TestNG discovery could not safely inspect selected candidate class(es): "
+                    + String.join("; ", inspectionFailures));
         }
+        if (candidates.isEmpty()) return List.of();
+
+        GroupSelection groupSelection = GroupSelection.from(context.properties());
+        if (candidates.stream().anyMatch(this::requiresNativeScope)) {
+            return List.of(nativeScopeTask(candidates));
+        }
+
+        List<ScenarioTask> tasks = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Class<?> candidate : candidates) discoverIndependentMethods(candidate, tasks, seen, groupSelection);
         return List.copyOf(tasks);
     }
 
     private boolean hasTestNgTests(Class<?> candidate) {
         if (candidate.isAnnotationPresent(Test.class)) return true;
         for (Method method : candidate.getDeclaredMethods()) {
-            if (method.isAnnotationPresent(Test.class)) return true;
+            if (method.isAnnotationPresent(Test.class) || method.isAnnotationPresent(Factory.class)) return true;
+        }
+        for (Constructor<?> constructor : candidate.getDeclaredConstructors()) {
+            if (constructor.isAnnotationPresent(Factory.class)) return true;
         }
         return false;
     }
 
-    private ScenarioTask suiteTask(String suiteXmlFile) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("suiteXmlFile", suiteXmlFile);
-        metadata.put(TaskMetadata.RUNTIME_MATERIALIZER, "true");
-        metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-suite:" + suiteXmlFile);
-        metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
-        return new ScenarioTask(ScenarioIds.from(ID, "suite:" + suiteXmlFile),
-                "TestNG suite " + suiteXmlFile, ID, framework(), null, null,
-                "suite:" + suiteXmlFile, Set.of(), Map.copyOf(metadata));
+    private boolean requiresNativeScope(Class<?> candidate) {
+        if (candidate.isAnnotationPresent(Test.class)) return true;
+        for (Class<?> type = candidate; type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Constructor<?> constructor : type.getDeclaredConstructors()) {
+                if (constructor.isAnnotationPresent(Factory.class) || constructor.isAnnotationPresent(Parameters.class)) return true;
+            }
+            for (Method method : type.getDeclaredMethods()) {
+                if (method.isAnnotationPresent(Factory.class) || method.isAnnotationPresent(Parameters.class)) return true;
+                if (hasContextLifecycle(method)) return true;
+                Test test = method.getAnnotation(Test.class);
+                if (test == null) continue;
+                if (!test.dataProvider().isBlank() || test.invocationCount() != 1
+                        || test.dependsOnMethods().length > 0 || test.dependsOnGroups().length > 0) return true;
+            }
+        }
+        return false;
     }
 
-    private void discoverMethods(Class<?> candidate, List<ScenarioTask> tasks, Set<String> seen,
-                                 GroupSelection groupSelection) {
-        rejectUnsupportedClassSemantics(candidate);
-
-        Test classAnnotation = candidate.getAnnotation(Test.class);
-        if (classAnnotation != null) {
-            throw new IllegalStateException(
-                    "TestNG class-level @Test is not yet supported safely for isolated method execution: "
-                            + candidate.getName());
+    private boolean hasContextLifecycle(Method method) {
+        for (Annotation annotation : method.getDeclaredAnnotations()) {
+            if (CONTEXT_LIFECYCLE_ANNOTATIONS.contains(annotation.annotationType().getName())) return true;
         }
+        return false;
+    }
 
+    private void discoverIndependentMethods(Class<?> candidate, List<ScenarioTask> tasks, Set<String> seen,
+                                            GroupSelection groupSelection) {
         for (Method method : candidate.getDeclaredMethods()) {
             Test annotation = method.getAnnotation(Test.class);
-            if (annotation == null) continue;
-
-            rejectUnsupportedMultiplicity(candidate, method, annotation);
-            if (annotation.dependsOnMethods().length > 0 || annotation.dependsOnGroups().length > 0) {
-                throw new IllegalStateException(
-                        "TestNG dependency ordering is not yet supported safely for isolated method execution: "
-                                + candidate.getName() + "." + method.getName());
-            }
-            if (!groupSelection.includes(annotation.groups())) continue;
-
+            if (annotation == null || !groupSelection.includes(annotation.groups())) continue;
             String selector = candidate.getName() + "#" + method.toGenericString();
             if (!seen.add(selector)) continue;
-
             Map<String, String> metadata = new LinkedHashMap<>();
             metadata.put("className", candidate.getName());
             metadata.put("methodName", method.getName());
             metadata.put("enabled", Boolean.toString(annotation.enabled()));
             metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-class:" + candidate.getName());
             metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-class");
-            tasks.add(new ScenarioTask(
-                    ScenarioIds.from(ID, selector), candidate.getName() + "." + method.getName(),
+            tasks.add(new ScenarioTask(ScenarioIds.from(ID, selector), candidate.getName() + "." + method.getName(),
                     ID, framework(), null, null, selector, Set.of(annotation.groups()), Map.copyOf(metadata)));
         }
     }
 
-    private void rejectUnsupportedClassSemantics(Class<?> candidate) {
-        for (Class<?> type = candidate; type != null && type != Object.class; type = type.getSuperclass()) {
-            for (Constructor<?> constructor : type.getDeclaredConstructors()) {
-                if (constructor.isAnnotationPresent(Factory.class)) {
-                    throw new IllegalStateException(
-                            "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
-                                    + candidate.getName());
-                }
-            }
-            for (Method method : type.getDeclaredMethods()) {
-                if (method.isAnnotationPresent(Factory.class)) {
-                    throw new IllegalStateException(
-                            "TestNG @Factory instance multiplicity is not yet supported safely for isolated execution: "
-                                    + candidate.getName() + "." + method.getName());
-                }
-                String unsafeLifecycle = unsafeConfigurationAnnotation(method);
-                if (unsafeLifecycle != null) {
-                    throw new IllegalStateException(
-                            "TestNG " + unsafeLifecycle
-                                    + " lifecycle is not yet supported safely for isolated method execution: "
-                                    + candidate.getName() + "." + method.getName());
-                }
-            }
-        }
+    private ScenarioTask suiteTask(String suiteXmlFile) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("suiteXmlFile", suiteXmlFile);
+        metadata.put(MATERIALIZER_KIND, MATERIALIZER_SUITE);
+        metadata.put(TaskMetadata.RUNTIME_MATERIALIZER, "true");
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-suite:" + suiteXmlFile);
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
+        return new ScenarioTask(ScenarioIds.from(ID, "suite:" + suiteXmlFile), "TestNG suite " + suiteXmlFile,
+                ID, framework(), null, null, "suite:" + suiteXmlFile, Set.of(), Map.copyOf(metadata));
     }
 
-    private String unsafeConfigurationAnnotation(Method method) {
-        for (Annotation annotation : method.getDeclaredAnnotations()) {
-            String name = annotation.annotationType().getName();
-            if (UNSAFE_CONFIGURATION_ANNOTATIONS.contains(name)) {
-                return annotation.annotationType().getSimpleName();
-            }
-        }
-        return null;
-    }
-
-    private void rejectUnsupportedMultiplicity(Class<?> candidate, Method method, Test annotation) {
-        String owner = candidate.getName() + "." + method.getName();
-        if (!annotation.dataProvider().isBlank()) {
-            throw new IllegalStateException(
-                    "TestNG data-provider multiplicity is not yet supported safely for isolated execution: " + owner);
-        }
-        if (annotation.invocationCount() != 1) {
-            throw new IllegalStateException(
-                    "TestNG invocationCount=" + annotation.invocationCount()
-                            + " is not yet supported safely for isolated execution: " + owner);
-        }
-        if (method.isAnnotationPresent(Parameters.class)) {
-            throw new IllegalStateException(
-                    "TestNG @Parameters requires suite/context semantics that are not yet reproduced safely: " + owner);
-        }
+    private ScenarioTask nativeScopeTask(List<Class<?>> classes) {
+        List<String> names = classes.stream().map(Class::getName).distinct().sorted().toList();
+        String identity = String.join("\n", names);
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put(CLASS_NAMES, identity);
+        metadata.put(MATERIALIZER_KIND, MATERIALIZER_NATIVE_SCOPE);
+        metadata.put(TaskMetadata.RUNTIME_MATERIALIZER, "true");
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, "testng-native:" + Integer.toUnsignedString(identity.hashCode(), 36));
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-native");
+        return new ScenarioTask(ScenarioIds.from(ID, "native:" + identity),
+                "TestNG native execution scope (" + names.size() + " classes)", ID, framework(), null, null,
+                "native:" + Integer.toUnsignedString(identity.hashCode(), 36), Set.of(), Map.copyOf(metadata));
     }
 
     @Override
     public ExecutionResult execute(ScenarioTask task, ExecutionContext context) throws Exception {
-        if (isSuiteMaterializer(task)) {
-            WorkUnitExecution execution = executeSuite(task, context);
+        if (isRuntimeMaterializer(task)) {
+            WorkUnitExecution execution = executeMaterializer(task, context);
             if (execution.results().size() != 1) {
-                throw new IllegalStateException("TestNG suite materializers must be executed through executeWorkUnit");
+                throw new IllegalStateException("TestNG runtime materializers must be executed through executeWorkUnit");
             }
             return execution.results().get(0);
         }
@@ -227,20 +200,15 @@ public final class TestNgAdapter implements ScenarioAdapter {
         if ("false".equalsIgnoreCase(task.metadata().get("enabled"))) {
             Instant finished = Instant.now();
             return new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED,
-                    Duration.between(started, finished), context.workerId(), context.attempt(),
-                    started, finished, "TestNG test is disabled", "TestNGDisabled");
+                    Duration.between(started, finished), context.workerId(), context.attempt(), started, finished,
+                    "TestNG test is disabled", "TestNGDisabled");
         }
 
         String className = task.metadata().get("className");
         String generic = task.selector().substring(task.selector().indexOf('#') + 1);
         Class<?> clazz = Class.forName(className, false, context.classLoader());
-        TestNG testNg = new TestNG(false);
-        testNg.setUseDefaultListeners(false);
-        testNg.setVerbose(0);
+        TestNG testNg = baseTestNg();
         testNg.setTestClasses(new Class<?>[]{clazz});
-        // Maven/Surefire group selection is already applied during discovery using Surefire's own
-        // expression grammar. Passing that expression to TestNG here would reinterpret it as
-        // TestNG CLI group syntax and could change the selected logical test.
         testNg.setMethodInterceptor(new ExactMethodInterceptor(generic));
         CapturingListener listener = new CapturingListener();
         testNg.addListener((ITestListener) listener);
@@ -252,23 +220,49 @@ public final class TestNgAdapter implements ScenarioAdapter {
 
     @Override
     public WorkUnitExecution executeWorkUnit(List<ScenarioTask> tasks, ExecutionContext context) throws Exception {
-        if (tasks.size() == 1 && isSuiteMaterializer(tasks.get(0))) {
-            return executeSuite(tasks.get(0), context);
-        }
+        if (tasks.size() == 1 && isRuntimeMaterializer(tasks.get(0))) return executeMaterializer(tasks.get(0), context);
         return ScenarioAdapter.super.executeWorkUnit(tasks, context);
     }
 
-    private boolean isSuiteMaterializer(ScenarioTask task) {
+    private boolean isRuntimeMaterializer(ScenarioTask task) {
         return Boolean.parseBoolean(task.metadata().getOrDefault(TaskMetadata.RUNTIME_MATERIALIZER, "false"));
     }
 
+    private WorkUnitExecution executeMaterializer(ScenarioTask parent, ExecutionContext context) throws Exception {
+        return MATERIALIZER_SUITE.equals(parent.metadata().get(MATERIALIZER_KIND))
+                ? executeSuite(parent, context) : executeNativeScope(parent, context);
+    }
+
     private WorkUnitExecution executeSuite(ScenarioTask parent, ExecutionContext context) {
-        String suiteXmlFile = parent.metadata().get("suiteXmlFile");
+        TestNG testNg = baseTestNg();
+        testNg.setTestSuites(List.of(parent.metadata().get("suiteXmlFile")));
+        applyTestNgSuiteGroupSelection(testNg, context.properties());
+        return runAndMaterialize(parent, context, testNg, "testng-suite");
+    }
+
+    private WorkUnitExecution executeNativeScope(ScenarioTask parent, ExecutionContext context) throws Exception {
+        List<Class<?>> classes = new ArrayList<>();
+        for (String name : parent.metadata().getOrDefault(CLASS_NAMES, "").split("\\R")) {
+            if (!name.isBlank()) classes.add(Class.forName(name.trim(), false, context.classLoader()));
+        }
+        if (classes.isEmpty()) throw new IllegalStateException("TestNG native materializer has no selected classes");
+        TestNG testNg = baseTestNg();
+        testNg.setTestClasses(classes.toArray(Class<?>[]::new));
+        // Once advanced semantics are present, TestNG itself must own group filtering so dependency,
+        // factory, lifecycle and group-before/after behavior is computed from one native graph.
+        applyTestNgSuiteGroupSelection(testNg, context.properties());
+        return runAndMaterialize(parent, context, testNg, "testng-native");
+    }
+
+    private TestNG baseTestNg() {
         TestNG testNg = new TestNG(false);
         testNg.setUseDefaultListeners(false);
         testNg.setVerbose(0);
-        testNg.setTestSuites(List.of(suiteXmlFile));
-        applyTestNgSuiteGroupSelection(testNg, context.properties());
+        return testNg;
+    }
+
+    private WorkUnitExecution runAndMaterialize(ScenarioTask parent, ExecutionContext context, TestNG testNg,
+                                                String scopeKind) {
         SuiteCapturingListener listener = new SuiteCapturingListener();
         testNg.addListener((ITestListener) listener);
         testNg.addListener((IConfigurationListener) listener);
@@ -278,74 +272,66 @@ public final class TestNgAdapter implements ScenarioAdapter {
         List<ExecutionResult> concreteResults = new ArrayList<>();
         int index = 0;
         for (ITestResult outcome : listener.outcomes) {
-            String className = outcome.getTestClass() == null
-                    ? "unknown" : outcome.getTestClass().getName();
-            String methodName = outcome.getMethod() == null
-                    ? "unknown" : outcome.getMethod().getMethodName();
+            String className = outcome.getTestClass() == null ? "unknown" : outcome.getTestClass().getName();
+            String methodName = outcome.getMethod() == null ? "unknown" : outcome.getMethod().getMethodName();
             String selector = parent.selector() + "/" + className + "/" + methodName + "/" + index++;
-            Map<String, String> metadata = new LinkedHashMap<>();
+            Map<String, String> metadata = childMetadata(parent, scopeKind);
             metadata.put("className", className);
             metadata.put("methodName", methodName);
-            metadata.put(TaskMetadata.PARENT_MATERIALIZER_ID, parent.id().value());
-            metadata.put(TaskMetadata.PARENT_MATERIALIZER_SELECTOR, parent.selector());
-            metadata.put(TaskMetadata.EXECUTION_SCOPE_ID,
-                    parent.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID));
-            metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
-            ScenarioTask concrete = new ScenarioTask(ScenarioIds.from(ID, selector),
-                    className + "." + methodName, ID, framework(), null, null,
-                    selector, Set.of(outcome.getMethod() == null ? new String[0] : outcome.getMethod().getGroups()),
+            Object instance = outcome.getInstance();
+            if (instance != null) metadata.put("testngInstanceIdentity", Integer.toHexString(System.identityHashCode(instance)));
+            metadata.put("testngInvocationIndex", Integer.toString(index - 1));
+            ScenarioTask concrete = new ScenarioTask(ScenarioIds.from(ID, selector), className + "." + methodName,
+                    ID, framework(), null, null, selector,
+                    Set.of(outcome.getMethod() == null ? new String[0] : outcome.getMethod().getGroups()),
                     Map.copyOf(metadata));
             concreteTasks.add(concrete);
             concreteResults.add(suiteResult(concrete, outcome, context));
         }
-        for (ITestResult configurationFailure : listener.configurationFailures) {
-            String methodName = configurationFailure.getMethod() == null
-                    ? "configuration" : configurationFailure.getMethod().getMethodName();
+        for (ITestResult failure : listener.configurationFailures) {
+            String methodName = failure.getMethod() == null ? "configuration" : failure.getMethod().getMethodName();
             String selector = parent.selector() + "/configuration/" + methodName + "/" + index++;
-            Map<String, String> metadata = new LinkedHashMap<>();
-            metadata.put(TaskMetadata.PARENT_MATERIALIZER_ID, parent.id().value());
-            metadata.put(TaskMetadata.PARENT_MATERIALIZER_SELECTOR, parent.selector());
-            metadata.put(TaskMetadata.EXECUTION_SCOPE_ID,
-                    parent.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID));
-            metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, "testng-suite");
-            ScenarioTask concrete = new ScenarioTask(ScenarioIds.from(ID, selector),
-                    "TestNG configuration " + methodName, ID, framework(), null, null,
-                    selector, Set.of(), Map.copyOf(metadata));
-            Throwable failure = configurationFailure.getThrowable();
-            Instant started = Instant.ofEpochMilli(Math.max(0L, configurationFailure.getStartMillis()));
-            Instant finished = Instant.ofEpochMilli(Math.max(
-                    configurationFailure.getStartMillis(), configurationFailure.getEndMillis()));
+            ScenarioTask concrete = new ScenarioTask(ScenarioIds.from(ID, selector), "TestNG configuration " + methodName,
+                    ID, framework(), null, null, selector, Set.of(), Map.copyOf(childMetadata(parent, scopeKind)));
+            Throwable throwable = failure.getThrowable();
+            Instant started = Instant.ofEpochMilli(Math.max(0L, failure.getStartMillis()));
+            Instant finished = Instant.ofEpochMilli(Math.max(failure.getStartMillis(), failure.getEndMillis()));
             concreteTasks.add(concrete);
-            concreteResults.add(new ExecutionResult(concrete.id(), concrete.displayName(),
-                    ResultStatus.TEST_FAILURE, Duration.between(started, finished),
-                    context.workerId(), context.attempt(), started, finished,
-                    failure == null ? "TestNG suite configuration failed" : message(failure),
-                    failure == null ? "TestNGConfigurationFailure" : failure.getClass().getName()));
+            concreteResults.add(new ExecutionResult(concrete.id(), concrete.displayName(), ResultStatus.TEST_FAILURE,
+                    Duration.between(started, finished), context.workerId(), context.attempt(), started, finished,
+                    throwable == null ? "TestNG configuration failed" : message(throwable),
+                    throwable == null ? "TestNGConfigurationFailure" : throwable.getClass().getName()));
         }
-
         if (concreteTasks.isEmpty()) {
             Instant now = Instant.now();
             String detail = listener.configurationFailures.isEmpty()
-                    ? "TestNG suite produced no test outcomes: " + suiteXmlFile
-                    : "TestNG suite configuration failed: " + message(listener.configurationFailures.get(0).getThrowable());
-            ExecutionResult failure = new ExecutionResult(parent.id(), parent.displayName(),
-                    ResultStatus.INFRASTRUCTURE_FAILURE, Duration.ZERO, context.workerId(), context.attempt(),
-                    now, now, detail, "TestNgSuiteExecutionFailure");
-            return new WorkUnitExecution(List.of(parent), List.of(failure));
+                    ? "TestNG execution scope produced no test outcomes"
+                    : "TestNG configuration failed: " + message(listener.configurationFailures.get(0).getThrowable());
+            return new WorkUnitExecution(List.of(parent), List.of(new ExecutionResult(parent.id(), parent.displayName(),
+                    ResultStatus.INFRASTRUCTURE_FAILURE, Duration.ZERO, context.workerId(), context.attempt(), now, now,
+                    detail, "TestNgMaterializerExecutionFailure")));
         }
         return new WorkUnitExecution(concreteTasks, concreteResults);
+    }
+
+    private Map<String, String> childMetadata(ScenarioTask parent, String scopeKind) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put(TaskMetadata.PARENT_MATERIALIZER_ID, parent.id().value());
+        metadata.put(TaskMetadata.PARENT_MATERIALIZER_SELECTOR, parent.selector());
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_ID, parent.metadata().get(TaskMetadata.EXECUTION_SCOPE_ID));
+        metadata.put(TaskMetadata.EXECUTION_SCOPE_KIND, scopeKind);
+        return metadata;
     }
 
     private ExecutionResult suiteResult(ScenarioTask task, ITestResult outcome, ExecutionContext context) {
         Instant started = Instant.ofEpochMilli(Math.max(0L, outcome.getStartMillis()));
         Instant finished = Instant.ofEpochMilli(Math.max(outcome.getStartMillis(), outcome.getEndMillis()));
+        Throwable failure = outcome.getThrowable();
         ResultStatus status;
         String detail = null;
         String type = null;
-        Throwable failure = outcome.getThrowable();
-        if (outcome.getStatus() == ITestResult.SUCCESS) {
-            status = ResultStatus.PASSED;
-        } else if (outcome.getStatus() == ITestResult.SKIP) {
+        if (outcome.getStatus() == ITestResult.SUCCESS) status = ResultStatus.PASSED;
+        else if (outcome.getStatus() == ITestResult.SKIP) {
             status = ResultStatus.SKIPPED;
             detail = failure == null ? "TestNG skipped the selected test" : message(failure);
             type = failure == null ? "TestNGSkipped" : failure.getClass().getName();
@@ -354,63 +340,48 @@ public final class TestNgAdapter implements ScenarioAdapter {
             detail = failure == null ? "TestNG test failed" : message(failure);
             type = failure == null ? null : failure.getClass().getName();
         }
-        return new ExecutionResult(task.id(), task.displayName(), status,
-                Duration.between(started, finished), context.workerId(), context.attempt(),
-                started, finished, detail, type);
+        return new ExecutionResult(task.id(), task.displayName(), status, Duration.between(started, finished),
+                context.workerId(), context.attempt(), started, finished, detail, type);
     }
 
-    private ExecutionResult classify(ScenarioTask task, ExecutionContext context,
-                                     Instant started, Instant finished, CapturingListener listener) {
+    private ExecutionResult classify(ScenarioTask task, ExecutionContext context, Instant started, Instant finished,
+                                     CapturingListener listener) {
         Duration duration = Duration.between(started, finished);
-        if (listener.configurationFailure != null) {
-            return testFailure(task, context, started, finished, duration,
-                    listener.configurationFailure, "TestNG configuration failed");
-        }
-        if (listener.failures > 0) {
-            return testFailure(task, context, started, finished, duration,
-                    listener.failure, "TestNG test failed");
-        }
+        if (listener.configurationFailure != null) return testFailure(task, context, started, finished, duration,
+                listener.configurationFailure, "TestNG configuration failed");
+        if (listener.failures > 0) return testFailure(task, context, started, finished, duration,
+                listener.failure, "TestNG test failed");
         if (listener.skipped > 0) {
-            String detail = listener.skipCause == null
-                    ? "TestNG skipped the selected test"
+            String detail = listener.skipCause == null ? "TestNG skipped the selected test"
                     : "TestNG skipped the selected test: " + message(listener.skipCause);
             return new ExecutionResult(task.id(), task.displayName(), ResultStatus.SKIPPED, duration,
-                    context.workerId(), context.attempt(), started, finished,
-                    detail, listener.skipCause == null ? "TestNGSkipped" : listener.skipCause.getClass().getName());
+                    context.workerId(), context.attempt(), started, finished, detail,
+                    listener.skipCause == null ? "TestNGSkipped" : listener.skipCause.getClass().getName());
         }
-        if (listener.successes == 1) {
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED, duration,
-                    context.workerId(), context.attempt(), started, finished, null, null);
-        }
-        if (listener.successes > 1) {
-            return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE, duration,
-                    context.workerId(), context.attempt(), started, finished,
-                    "TestNG selected method produced " + listener.successes
-                            + " successful invocations; ScenarioMesh requires exactly one terminal execution per task",
-                    "SelectionMultiplicityFailure");
-        }
+        if (listener.successes == 1) return new ExecutionResult(task.id(), task.displayName(), ResultStatus.PASSED,
+                duration, context.workerId(), context.attempt(), started, finished, null, null);
+        if (listener.successes > 1) return new ExecutionResult(task.id(), task.displayName(),
+                ResultStatus.INFRASTRUCTURE_FAILURE, duration, context.workerId(), context.attempt(), started, finished,
+                "TestNG selected method produced " + listener.successes + " successful invocations", "SelectionMultiplicityFailure");
         return new ExecutionResult(task.id(), task.displayName(), ResultStatus.INFRASTRUCTURE_FAILURE, duration,
                 context.workerId(), context.attempt(), started, finished,
                 "TestNG did not execute selected method " + task.displayName(), "SelectionFailure");
     }
 
-    private ExecutionResult testFailure(ScenarioTask task, ExecutionContext context,
-                                        Instant started, Instant finished, Duration duration,
-                                        Throwable failure, String defaultMessage) {
+    private ExecutionResult testFailure(ScenarioTask task, ExecutionContext context, Instant started, Instant finished,
+                                        Duration duration, Throwable failure, String defaultMessage) {
         return new ExecutionResult(task.id(), task.displayName(), ResultStatus.TEST_FAILURE, duration,
                 context.workerId(), context.attempt(), started, finished,
-                failure == null ? defaultMessage : message(failure),
-                failure == null ? null : failure.getClass().getName());
+                failure == null ? defaultMessage : message(failure), failure == null ? null : failure.getClass().getName());
     }
 
     private static String message(Throwable throwable) {
+        if (throwable == null) return "unknown failure";
         String detail = throwable.getMessage();
         return detail == null || detail.isBlank() ? throwable.getClass().getName() : detail;
     }
 
     private static void applyTestNgSuiteGroupSelection(TestNG testNg, Map<String, String> properties) {
-        // Current Surefire forwards these provider settings even with suite XML.
-        // TestNG remains responsible for applying the suite and group semantics.
         String groups = properties.get("groups");
         String excludedGroups = properties.get("excludedGroups");
         if (groups != null && !groups.isEmpty()) testNg.setGroups(groups);
@@ -422,17 +393,13 @@ public final class TestNgAdapter implements ScenarioAdapter {
             return new GroupSelection(SurefireGroupSelection.fromExpressions(
                     properties.get("groups"), properties.get("excludedGroups")));
         }
-
-        private boolean includes(String[] groups) {
-            return selection.matches(groups);
-        }
+        private boolean includes(String[] groups) { return selection.matches(groups); }
     }
 
     private static final class ExactMethodInterceptor implements IMethodInterceptor {
         private final String generic;
         private ExactMethodInterceptor(String generic) { this.generic = generic; }
-        @Override
-        public List<IMethodInstance> intercept(List<IMethodInstance> methods, ITestContext context) {
+        @Override public List<IMethodInstance> intercept(List<IMethodInstance> methods, ITestContext context) {
             return methods.stream().filter(instance -> {
                 Method method = instance.getMethod().getConstructorOrMethod().getMethod();
                 return method != null && method.toGenericString().equals(generic);
@@ -448,15 +415,9 @@ public final class TestNgAdapter implements ScenarioAdapter {
         private Throwable skipCause;
         private Throwable configurationFailure;
         @Override public void onTestSuccess(ITestResult result) { successes++; }
-        @Override public void onTestFailure(ITestResult result) {
-            failures++; if (failure == null) failure = result.getThrowable();
-        }
-        @Override public void onTestSkipped(ITestResult result) {
-            skipped++; if (skipCause == null) skipCause = result.getThrowable();
-        }
-        @Override public void onConfigurationFailure(ITestResult result) {
-            if (configurationFailure == null) configurationFailure = result.getThrowable();
-        }
+        @Override public void onTestFailure(ITestResult result) { failures++; if (failure == null) failure = result.getThrowable(); }
+        @Override public void onTestSkipped(ITestResult result) { skipped++; if (skipCause == null) skipCause = result.getThrowable(); }
+        @Override public void onConfigurationFailure(ITestResult result) { if (configurationFailure == null) configurationFailure = result.getThrowable(); }
     }
 
     private static final class SuiteCapturingListener implements ITestListener, IConfigurationListener {

@@ -12,6 +12,7 @@ import java.util.List;
 
 /** Target-owned execution realm with control-plane parent isolation. */
 public final class TargetRuntimeClassLoader extends URLClassLoader {
+    public static final String MODULE_PATH_PROPERTY = "scenariomesh.target.modulePath";
     private static final String JUNIT_ENGINE_SERVICE = "META-INF/services/org.junit.platform.engine.TestEngine";
     private static final List<String> PARENT_FIRST_PREFIXES = List.of(
             "java.", "javax.", "jdk.", "sun.", "org.w3c.dom.", "org.xml.sax.",
@@ -26,6 +27,14 @@ public final class TargetRuntimeClassLoader extends URLClassLoader {
 
     public static TargetRuntimeClassLoader fromClasspath(List<Path> classpath, ClassLoader parent) {
         if (parent == null) throw new IllegalArgumentException("target runtime parent classloader is required");
+        if (Boolean.getBoolean(MODULE_PATH_PROPERTY)) {
+            // The target graph has already been resolved by the JVM via --module-path/--patch-module.
+            // An empty child realm delegates target loading to the application loader and therefore
+            // cannot bypass JPMS exports/opens/reads by loading the same bytes from URLs again.
+            ClassLoader applicationLoader = ClassLoader.getSystemClassLoader();
+            if (applicationLoader == null) throw new IllegalStateException("JPMS target execution requires an application class loader");
+            return new TargetRuntimeClassLoader(new URL[0], applicationLoader);
+        }
         if (classpath == null || classpath.isEmpty()) throw new IllegalArgumentException("target runtime classpath must not be empty");
         List<URL> urls = new ArrayList<>();
         for (Path entry : classpath) {
