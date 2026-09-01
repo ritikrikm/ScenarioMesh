@@ -139,7 +139,7 @@ public final class RunMojo extends AbstractMojo {
                     classpathDependencyScopeExclude);
 
             ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
-                    project, session, normalizedExecutor(), classpaths.targetClasspath());
+                    project, session, normalizedExecutor(), classpaths.targetModulePath());
             if (moduleLaunch.modulePath()) {
                 List<String> moduleAwareArgs = new ArrayList<>(effectiveExecutorJvmArgs);
                 moduleAwareArgs.addAll(moduleLaunch.jvmArgs());

@@ -139,7 +139,7 @@ public final class PreflightMojo extends AbstractMojo {
                 plan.executorJvmArgs(), executorArgLine, project, session));
 
         ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
-                project, session, normalizedExecutor(), classpaths.targetClasspath());
+                project, session, normalizedExecutor(), classpaths.targetModulePath());
         if (moduleLaunch.modulePath()) {
             jvmArgs.addAll(moduleLaunch.jvmArgs());
             properties.put(ModulePathCompatibility.TARGET_MODULE_PATH_PROPERTY, "true");

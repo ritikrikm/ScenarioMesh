@@ -69,6 +69,15 @@ final class ModulePathCompatibility {
             args.add("--add-modules");
             args.add("ALL-MODULE-PATH");
         }
+        if (containsModule(modulePath, "org.junit.platform.commons")) {
+            // Surefire opens these JUnit Platform utility packages to its unnamed provider module.
+            // ScenarioMesh's adapter is likewise a classpath control artifact, so preserve the same
+            // narrowly-scoped access instead of opening arbitrary target modules.
+            args.add("--add-opens");
+            args.add("org.junit.platform.commons/org.junit.platform.commons.util=ALL-UNNAMED");
+            args.add("--add-opens");
+            args.add("org.junit.platform.commons/org.junit.platform.commons.logging=ALL-UNNAMED");
+        }
         return new LaunchPlan(true, List.copyOf(args));
     }
 
@@ -120,6 +129,15 @@ final class ModulePathCompatibility {
             return modules.iterator().next().descriptor().name();
         } catch (RuntimeException exception) {
             throw new IllegalStateException("cannot determine JPMS module name from " + output + ": "
+                    + message(exception), exception);
+        }
+    }
+
+    private boolean containsModule(List<Path> modulePath, String name) {
+        try {
+            return ModuleFinder.of(modulePath.toArray(Path[]::new)).find(name).isPresent();
+        } catch (RuntimeException exception) {
+            throw new IllegalStateException("cannot inspect JPMS module path for " + name + ": "
                     + message(exception), exception);
         }
     }
