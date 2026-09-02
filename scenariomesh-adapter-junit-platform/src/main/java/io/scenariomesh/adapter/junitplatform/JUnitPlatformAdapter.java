@@ -12,7 +12,9 @@ import io.scenariomesh.core.ScenarioIds;
 import io.scenariomesh.core.SelectedTestClasses;
 import io.scenariomesh.core.TaskMetadata;
 import org.junit.platform.engine.DiscoverySelector;
+import org.junit.platform.engine.FilterResult;
 import org.junit.platform.engine.TestEngine;
+import org.junit.platform.engine.TestDescriptor;
 import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.engine.TestSource;
 import org.junit.platform.engine.TestTag;
@@ -20,6 +22,7 @@ import org.junit.platform.engine.UniqueId;
 import org.junit.platform.engine.support.descriptor.ClassSource;
 import org.junit.platform.launcher.Launcher;
 import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.PostDiscoveryFilter;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.TestPlan;
@@ -178,14 +181,35 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     private ScopeExecution executeScope(List<ScenarioTask> tasks, Map<String, String> properties) {
         ScopedResultListener listener = new ScopedResultListener();
-        List<DiscoverySelector> selectors = tasks.stream()
-                .map(task -> (DiscoverySelector) selectUniqueId(task.selector())).toList();
-        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request().selectors(selectors);
+        // Select the lifecycle scope exactly once. Newer Jupiter engines may materialize a separate
+        // class descriptor for every leaf UniqueId selector, causing BeforeAll/AfterAll and all
+        // selected methods to execute repeatedly. Filtering one scope preserves Maven's selected
+        // leaves without multiplying their enclosing lifecycle.
+        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
+                .selectors(selectUniqueId(scopeSelector(tasks.get(0))))
+                .filters(new ScopeSelectionFilter(tasks));
         LauncherDiscoveryRequest request = JUnitEngineSelection.apply(builder, properties).build();
         Launcher launcher = LauncherFactory.create();
         launcher.registerTestExecutionListeners(listener);
         launcher.execute(request);
         return new ScopeExecution(listener.identifiers(), listener.outcomes());
+    }
+
+    private static final class ScopeSelectionFilter implements PostDiscoveryFilter {
+        private final Set<String> selected;
+
+        private ScopeSelectionFilter(List<ScenarioTask> tasks) {
+            selected = tasks.stream().map(ScenarioTask::selector).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
+
+        @Override
+        public FilterResult apply(TestDescriptor descriptor) {
+            if (!descriptor.getType().isTest()) return FilterResult.included("lifecycle container");
+            String id = descriptor.getUniqueId().toString();
+            boolean included = selected.stream().anyMatch(value -> id.equals(value) || id.startsWith(value + "/"));
+            return included ? FilterResult.included("selected ScenarioMesh leaf")
+                    : FilterResult.excluded("not selected by the Maven execution plan");
+        }
     }
 
     private ScenarioTask taskFor(TestIdentifier identifier, ExecutionScope scope, ScenarioTask parentMaterializer) {

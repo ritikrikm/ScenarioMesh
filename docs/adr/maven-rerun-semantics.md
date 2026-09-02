@@ -20,4 +20,6 @@ This mirrors the externally documented Surefire/Failsafe contract and leaves roo
 
 The Maven compatibility gate must remain fail-closed until execution, reporting and build-result semantics consume this model end to end. Parsing `rerunFailingTestsCount` alone is not sufficient to claim compatibility.
 
-Future support for `skipAfterFailureCount` and `failOnFlakeCount` must operate on logical executions. Failures occurring during a rerun phase must not increment skip-after-failure accounting.
+`failOnFlakeCount` operates on logical executions and is implemented end to end. Future support for
+`skipAfterFailureCount` must use the same logical-execution model: failures occurring during a rerun
+phase must not increment skip-after-failure accounting.

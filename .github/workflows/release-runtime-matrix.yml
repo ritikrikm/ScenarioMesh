@@ -45,7 +45,7 @@ jobs:
       - name: Verify exact Maven line
         run: mvn -version | grep -Fq 'Apache Maven 3.9.16'
       - name: Build ScenarioMesh on GA Maven
-        run: mvn -B clean install
+        run: ./mvnw -B clean install
       - name: Native-vs-ScenarioMesh target smoke
         working-directory: examples/junit5-example
         run: |
@@ -114,3 +114,30 @@ jobs:
             grep -Fq '"junit-platform"' target/scenariomesh/summary.json
             test ! -e target/surefire-reports/TEST-example.LegacyJUnit4Test.xml
           )
+
+  maven-3-next-preview:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        java: ['17', '21', '25']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Install Apache Maven 3.10.0-rc-1 preview
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/maven3-next.tgz" \
+            https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.10.0-rc-1/apache-maven-3.10.0-rc-1-bin.tar.gz
+          tar -xzf "$RUNNER_TEMP/maven3-next.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.10.0-rc-1/bin" >> "$GITHUB_PATH"
+      - name: Verify preview version
+        run: mvn -version | grep -Fq 'Apache Maven 3.10.0-rc-1'
+      - name: Build ScenarioMesh on Maven 3 next preview
+        run: mvn -B clean install
+      - name: Prove current JUnit target takeover
+        run: |
+          bash scripts/compat/maven-equivalence.sh examples/maven-equivalence-example \
+            -Dsurefire.version=3.6.0-M1 -Djunit.version=6.1.3 \
+            '-Dtest=AlphaContractTest#alphaOne+alphaTwo' -Dcontract.value=maven-3-next

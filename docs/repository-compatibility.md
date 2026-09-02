@@ -170,11 +170,11 @@ systemPropertyVariables
 testFailureIgnore
  -> affects test-failure build semantics, not infrastructure failures
 
-rerunFailingTestsCount = 0
- -> safe/no retry
+rerunFailingTestsCount
+ -> modeled as logical Maven reruns, independently from infrastructure retries
 
-positive rerunFailingTestsCount
- -> not silently emulated until exact retry semantics are implemented
+failOnFlakeCount
+ -> evaluated against the logical flaky-test count and reflected in Maven build/report semantics
 ```
 
 This prevents ScenarioMesh from accidentally running scenarios twice or changing Maven behavior merely to increase compatibility coverage.
