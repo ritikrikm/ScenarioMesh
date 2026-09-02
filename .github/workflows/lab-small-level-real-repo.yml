@@ -1,0 +1,46 @@
+name: lab-small-level-real-repo
+
+on:
+  push:
+    branches:
+      - agent/lab-small-level-validation
+  workflow_dispatch:
+
+jobs:
+  cucumber-current:
+    name: Small - official Cucumber Maven starter
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Environment
+        run: |
+          java -version
+          mvn -version
+          git --version
+          python3 --version
+
+      - name: Run native-vs-ScenarioMesh small-level lab
+        env:
+          TARGET_URL: https://github.com/cucumber/cucumber-jvm-starter-maven-java.git
+          TARGET_BRANCH: main
+          SCENARIOMESH_ROOT: ${{ github.workspace }}
+          SCENARIOMESH_WORKERS: '4'
+          LAB_OUT: ${{ runner.temp }}/scenariomesh-small-lab
+        run: python3 tools/scenariomesh-test-lab/small_level_runner.py
+
+      - name: Preserve lab logs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenariomesh-small-cucumber-lab
+          path: ${{ runner.temp }}/scenariomesh-small-lab
+          if-no-files-found: warn
+          retention-days: 14
