@@ -25,6 +25,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
+import org.eclipse.aether.RepositorySystem;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -43,6 +44,7 @@ public final class RunMojo extends AbstractMojo {
     @Parameter(defaultValue = "${session}", readonly = true, required = true) private MavenSession session;
     @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true) private List<Artifact> pluginArtifacts;
     @Component private ToolchainManager toolchainManager;
+    @Component private RepositorySystem repositorySystem;
 
     @Parameter private String invocationId;
     @Parameter(defaultValue = "false") private boolean deferFailureUntilVerify;
@@ -136,7 +138,8 @@ public final class RunMojo extends AbstractMojo {
                     project, pluginArtifacts,
                     additionalClasspathElements == null ? List.of() : additionalClasspathElements,
                     classpathDependencyExcludes == null ? List.of() : classpathDependencyExcludes,
-                    classpathDependencyScopeExclude);
+                    classpathDependencyScopeExclude,
+                    new MavenTargetJUnitPlatformClasspath(repositorySystem).resolve(project, session));
 
             ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
                     project, session, normalizedExecutor(), classpaths.targetModulePath());

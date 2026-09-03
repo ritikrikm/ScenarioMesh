@@ -14,6 +14,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
+import org.eclipse.aether.RepositorySystem;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -30,6 +31,7 @@ public final class WorkerMojo extends AbstractMojo {
     @Parameter(defaultValue = "${session}", readonly = true, required = true) private MavenSession session;
     @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true) private List<Artifact> pluginArtifacts;
     @Component private ToolchainManager toolchainManager;
+    @Component private RepositorySystem repositorySystem;
 
     @Parameter(property = "scenariomesh.worker.host", required = true) private String host;
     @Parameter(property = "scenariomesh.worker.port", required = true) private Integer port;
@@ -53,7 +55,8 @@ public final class WorkerMojo extends AbstractMojo {
             }
             Path java = new TestJvmResolver().resolve(project, session, toolchainManager, "surefire", null);
             RuntimeClasspathResolver.RuntimeClasspaths classpaths =
-                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts);
+                    new RuntimeClasspathResolver().resolveSplit(project, pluginArtifacts, List.of(), List.of(), null,
+                            new MavenTargetJUnitPlatformClasspath(repositorySystem).resolve(project, session));
             String id = effectiveWorkerId();
 
             List<String> command = new ArrayList<>();

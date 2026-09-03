@@ -13,6 +13,7 @@ ScenarioMesh is not a Selenium framework, WebDriver proxy, Gherkin parser, repla
 | Repository style | Status |
 |---|---|
 | Maven + JUnit 5 / JUnit Platform | Supported |
+| Maven + JUnit 6 / JUnit Platform | Supported; launcher is aligned to the target Maven dependency graph |
 | Maven + Cucumber JUnit Platform engine | Supported through the JUnit Platform adapter |
 | Maven + Cucumber JUnit 4 runner | Supported |
 | Generated Cucumber JUnit 4 runners exposing executable leaves | Supported |
@@ -292,6 +293,8 @@ See [`docs/configuration.md`](docs/configuration.md) and [`scenariomesh.example.
 - Java 17 and 21 are primary compatibility gates.
 - Java 25 LTS is covered by the release smoke matrix.
 - Maven 3.9.x is the production support line and the release matrix pins Maven 3.9.16.
+- `./mvnw` pins Maven 3.9.16 and verifies the downloaded distribution checksum.
+- Maven 3.10.0-rc-1 is a blocking preview gate; it is not a production support claim before GA qualification.
 - Maven 4.0.0-rc-6 is a blocking preview gate on Java 17, 21, and 25 with representative takeover, hostile-classpath, Failsafe, framework, and native pass-through tests. Maven 4 remains a preview claim until its upstream GA line is pinned and qualified.
 - Snapshot builds are not production releases.
 

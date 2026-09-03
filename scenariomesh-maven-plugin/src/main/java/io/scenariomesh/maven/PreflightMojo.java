@@ -18,6 +18,7 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.toolchain.ToolchainManager;
+import org.eclipse.aether.RepositorySystem;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.io.File;
@@ -52,6 +53,7 @@ public final class PreflightMojo extends AbstractMojo {
     @Parameter(defaultValue = "${session}", readonly = true, required = true) private MavenSession session;
     @Parameter(defaultValue = "${plugin.artifacts}", readonly = true, required = true) private List<Artifact> pluginArtifacts;
     @Component private ToolchainManager toolchainManager;
+    @Component private RepositorySystem repositorySystem;
     @Parameter(defaultValue = "surefire") private String takeoverExecutor;
     @Parameter(defaultValue = "false") private boolean knownModelFramework;
     @Parameter private List<String> takeoverExecutionIds;
@@ -126,7 +128,8 @@ public final class PreflightMojo extends AbstractMojo {
     private PreflightProbeMain.ProbeResult provePlan(ProbePlan plan, Path javaExecutable) throws Exception {
         RuntimeClasspathResolver.RuntimeClasspaths classpaths = new RuntimeClasspathResolver().resolveSplit(
                 project, pluginArtifacts, plan.additionalClasspathElements(), plan.classpathDependencyExcludes(),
-                plan.classpathDependencyScopeExclude());
+                plan.classpathDependencyScopeExclude(),
+                new MavenTargetJUnitPlatformClasspath(repositorySystem).resolve(project, session));
         List<Path> testRoots = new TestRootResolver().resolve(project, plan.dependencyTestScanPatterns());
 
         Map<String, String> properties = new LinkedHashMap<>(plan.executorSystemProperties());

@@ -6,6 +6,8 @@
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
+    <junit.version>5.10.5</junit.version>
+    <failsafe.version>3.5.2</failsafe.version>
     <fixture.language>EN</fixture.language>
   </properties>
 
@@ -13,7 +15,7 @@
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>5.10.5</version>
+      <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -23,7 +25,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
-        <version>3.5.2</version>
+        <version>${failsafe.version}</version>
         <configuration>
           <argLine>-Dscenariomesh.fixture.argline=true</argLine>
           <systemPropertyVariables>

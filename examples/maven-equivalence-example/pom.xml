@@ -5,13 +5,15 @@
   <version>1.0-SNAPSHOT</version>
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
+    <junit.version>5.10.5</junit.version>
+    <surefire.version>3.5.2</surefire.version>
     <contract.value>pom-default</contract.value>
   </properties>
   <dependencies>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>5.10.5</version>
+      <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -20,7 +22,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.5.2</version>
+        <version>${surefire.version}</version>
         <configuration>
           <useModulePath>false</useModulePath>
           <includes>
