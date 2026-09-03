@@ -58,7 +58,12 @@ public final class JUnitPlatformBackendProbe {
             List<org.junit.platform.engine.DiscoverySelector> selectors = new ArrayList<>(SelectedTestClasses
                     .scan(testRoots, selection).stream()
                     .map(className -> (org.junit.platform.engine.DiscoverySelector) selectClass(className)).toList());
-            if (engines.stream().anyMatch(engine -> "cucumber".equals(engine.getId()))) {
+            // Do not fabricate classpath:/features merely because the Cucumber engine is present.
+            // Direct-engine repositories that actually expose that conventional resource keep the
+            // existing discovery path; suite/package-selected repositories are discovered through
+            // their Maven-selected test classes and native JUnit Platform suite selectors.
+            if (engines.stream().anyMatch(engine -> "cucumber".equals(engine.getId()))
+                    && hasClasspathResource(testRoots, "features")) {
                 selectors.add(selectClasspathResource("features"));
             }
             LauncherDiscoveryRequestBuilder request = LauncherDiscoveryRequestBuilder.request().selectors(selectors);
@@ -113,6 +118,10 @@ public final class JUnitPlatformBackendProbe {
         } finally {
             Thread.currentThread().setContextClassLoader(previous);
         }
+    }
+
+    private static boolean hasClasspathResource(List<Path> testRoots, String resource) {
+        return testRoots.stream().anyMatch(root -> java.nio.file.Files.exists(root.resolve(resource)));
     }
 
     private static List<TestEngine> loadEngines(ClassLoader classLoader) {

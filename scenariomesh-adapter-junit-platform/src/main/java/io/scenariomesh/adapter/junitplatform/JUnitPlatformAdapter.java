@@ -113,8 +113,20 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         List<DiscoverySelector> selectors = new ArrayList<>(SelectedTestClasses
                 .scan(context.testRoots(), context.discoverySelection()).stream()
                 .map(className -> (DiscoverySelector) selectClass(className)).toList());
-        if (cucumberEngineAvailable(context.classLoader())) selectors.add(selectClasspathResource("features"));
+        // Direct Cucumber-engine projects commonly use classpath:/features, but it is not a
+        // framework requirement. Only contribute that selector when the Maven test classpath
+        // actually contains the resource. Suite/package-selected Cucumber projects are then
+        // discovered through their native JUnit Platform suite selectors instead of failing on
+        // a fabricated resource root.
+        if (cucumberEngineAvailable(context.classLoader()) && hasClasspathResource(context, "features")) {
+            selectors.add(selectClasspathResource("features"));
+        }
         return List.copyOf(selectors);
+    }
+
+    private boolean hasClasspathResource(AdapterContext context, String resource) {
+        return context.testRoots().stream()
+                .anyMatch(root -> java.nio.file.Files.exists(root.resolve(resource)));
     }
 
     private boolean cucumberEngineAvailable(ClassLoader classLoader) {
@@ -181,18 +193,33 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     private ScopeExecution executeScope(List<ScenarioTask> tasks, Map<String, String> properties) {
         ScopedResultListener listener = new ScopedResultListener();
-        // Select the lifecycle scope exactly once. Newer Jupiter engines may materialize a separate
-        // class descriptor for every leaf UniqueId selector, causing BeforeAll/AfterAll and all
-        // selected methods to execute repeatedly. Filtering one scope preserves Maven's selected
-        // leaves without multiplying their enclosing lifecycle.
-        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
-                .selectors(selectUniqueId(scopeSelector(tasks.get(0))))
-                .filters(new ScopeSelectionFilter(tasks));
+        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request();
+        if (isDirectCucumberScope(tasks)) {
+            // The Cucumber engine explicitly supports UniqueIdSelector. Replay every selected
+            // scenario in one Launcher execution so Cucumber reconstructs the feature/scenario
+            // hierarchy and runs its global lifecycle exactly once. Selecting only [engine:cucumber]
+            // loses the feature URI/line information needed to resolve the selected scenarios.
+            List<DiscoverySelector> selectors = tasks.stream()
+                    .map(task -> (DiscoverySelector) selectUniqueId(task.selector()))
+                    .toList();
+            builder.selectors(selectors);
+        } else {
+            // Select the lifecycle scope exactly once. Newer Jupiter engines may materialize a
+            // separate class descriptor for every leaf UniqueId selector, causing BeforeAll/AfterAll
+            // and all selected methods to execute repeatedly. Filtering one scope preserves Maven's
+            // selected leaves without multiplying their enclosing lifecycle.
+            builder.selectors(selectUniqueId(scopeSelector(tasks.get(0))))
+                    .filters(new ScopeSelectionFilter(tasks));
+        }
         LauncherDiscoveryRequest request = JUnitEngineSelection.apply(builder, properties).build();
         Launcher launcher = LauncherFactory.create();
         launcher.registerTestExecutionListeners(listener);
         launcher.execute(request);
         return new ScopeExecution(listener.identifiers(), listener.outcomes());
+    }
+
+    private boolean isDirectCucumberScope(List<ScenarioTask> tasks) {
+        return "cucumber".equals(requiredEngineId(tasks.get(0).selector()));
     }
 
     private static final class ScopeSelectionFilter implements PostDiscoveryFilter {
