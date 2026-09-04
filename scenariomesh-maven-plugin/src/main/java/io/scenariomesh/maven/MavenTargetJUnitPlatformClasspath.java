@@ -13,7 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Builds the adapter's runtime against the JUnit Platform version Maven resolved for the target. */
+/** Builds the adapter runtime from the JUnit Platform graph Maven resolved for the target. */
 final class MavenTargetJUnitPlatformClasspath {
     private static final String PLATFORM_GROUP = "org.junit.platform";
     private static final String PLATFORM_ENGINE = "junit-platform-engine";
@@ -32,23 +32,42 @@ final class MavenTargetJUnitPlatformClasspath {
         if (engineVersions.size() != 1) {
             throw new IllegalStateException("Maven resolved multiple JUnit Platform engine versions " + engineVersions);
         }
-        String version = engineVersions.iterator().next();
+        String engineVersion = engineVersions.iterator().next();
         Set<String> launcherVersions = versions(project, PLATFORM_LAUNCHER);
-        if (!launcherVersions.isEmpty() && !launcherVersions.equals(Set.of(version))) {
-            throw new IllegalStateException("target JUnit Platform engine " + version
-                    + " is not aligned with launcher " + launcherVersions);
-        }
+        String launcherVersion = targetLauncherVersion(engineVersion, launcherVersions);
 
         ArtifactRequest request = new ArtifactRequest();
         request.setArtifact(new DefaultArtifact(
-                PLATFORM_GROUP, PLATFORM_LAUNCHER, "jar", version));
+                PLATFORM_GROUP, PLATFORM_LAUNCHER, "jar", launcherVersion));
         request.setRepositories(project.getRemoteProjectRepositories());
         ArtifactResult result = repositorySystem.resolveArtifact(session.getRepositorySession(), request);
         File file = result.getArtifact() == null ? null : result.getArtifact().getFile();
         if (file == null || !file.isFile()) {
-            throw new IllegalStateException("aligned JUnit Platform launcher " + version + " has no resolved file");
+            throw new IllegalStateException("target JUnit Platform launcher " + launcherVersion + " has no resolved file");
         }
         return List.of(file.getAbsoluteFile().toPath().normalize().toString());
+    }
+
+    /**
+     * Preserve Maven's resolved launcher when the project already has one. The target realm is the
+     * semantic authority: ScenarioMesh must execute against the same mixed-but-resolved Platform
+     * graph that native Surefire/Failsafe would see rather than rewriting it to artificial exact
+     * version equality. Runtime preflight still has to load that graph and prove discovery and
+     * execution capabilities before ownership is granted.
+     *
+     * <p>If the project has no launcher dependency, ScenarioMesh supplies the launcher that matches
+     * the single resolved Platform engine API. This covers projects where the native Maven provider
+     * normally contributes the launcher outside the project test realm.</p>
+     */
+    static String targetLauncherVersion(String engineVersion, Set<String> launcherVersions) {
+        if (engineVersion == null || engineVersion.isBlank()) {
+            throw new IllegalArgumentException("engineVersion is required");
+        }
+        if (launcherVersions == null || launcherVersions.isEmpty()) return engineVersion;
+        if (launcherVersions.size() != 1) {
+            throw new IllegalStateException("Maven resolved multiple JUnit Platform launcher versions " + launcherVersions);
+        }
+        return launcherVersions.iterator().next();
     }
 
     private Set<String> versions(MavenProject project, String artifactId) {
