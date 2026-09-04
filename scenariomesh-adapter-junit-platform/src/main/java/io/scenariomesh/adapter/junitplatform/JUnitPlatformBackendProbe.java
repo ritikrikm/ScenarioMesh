@@ -88,7 +88,10 @@ public final class JUnitPlatformBackendProbe {
 
                 TestEngine engine = enginesById.get(engineId);
                 String implementationClass = engine == null ? "unknown" : engine.getClass().getName();
-                String version = engine == null ? "unknown" : engine.getVersion().orElse("unknown");
+                JUnitPlatformEngineVersion.VersionEvidence versionEvidence = engine == null
+                        ? new JUnitPlatformEngineVersion.VersionEvidence("unknown", "unresolved", "unknown")
+                        : JUnitPlatformEngineVersion.resolve(engine);
+                String version = versionEvidence.version();
                 Set<String> nestedEngineIds = nestedEngineIds(plan, root);
                 JUnitPlatformExecutionContracts.Decision decision = JUnitPlatformExecutionContracts.prove(
                         new JUnitPlatformExecutionContracts.Evidence(
@@ -108,10 +111,10 @@ public final class JUnitPlatformBackendProbe {
                 if (executableLeaves > 0) {
                     if (decision.ownable()) {
                         hasOwnableExecutable = true;
-                        proofProfiles.add(engineId + "@" + version + "=" + decision.profile());
+                        proofProfiles.add(engineId + "@" + versionEvidence.diagnostic() + "=" + decision.profile());
                     } else {
                         hasUnownedExecutable = true;
-                        rejectionReasons.add(engineId + "@" + version + ": " + decision.reason());
+                        rejectionReasons.add(engineId + "@" + versionEvidence.diagnostic() + ": " + decision.reason());
                     }
                 }
             }
@@ -139,10 +142,10 @@ public final class JUnitPlatformBackendProbe {
     private static Set<String> provenEngineIdentities(List<TestEngine> engines, Set<String> adapterDeclared) {
         Set<String> proven = new LinkedHashSet<>();
         for (TestEngine engine : engines) {
-            String version = engine.getVersion().orElse("unknown");
+            JUnitPlatformEngineVersion.VersionEvidence versionEvidence = JUnitPlatformEngineVersion.resolve(engine);
             if (adapterDeclared.contains(engine.getId())
                     && JUnitPlatformExecutionContracts.identitySupported(
-                            engine.getId(), engine.getClass().getName(), version)) {
+                            engine.getId(), engine.getClass().getName(), versionEvidence.version())) {
                 proven.add(engine.getId());
             }
         }
