@@ -216,6 +216,10 @@ jobs:
           echo '===== current v9 worker log ====='
           cat current-v9-worker.log || true
           echo "coordinator_status=$coordinator_status worker_status=$worker_status"
+          if test -d "$bridge_target/target/scenariomesh"; then
+            rm -rf target/scenariomesh
+            cp -a "$bridge_target/target/scenariomesh" target/scenariomesh
+          fi
           if test -f target/scenariomesh/summary.json; then
             echo '===== summary.json ====='
             cat target/scenariomesh/summary.json
