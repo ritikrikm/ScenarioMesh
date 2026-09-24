@@ -1,6 +1,6 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
-  <parent><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-parent</artifactId><version>0.1.0</version></parent>
+  <parent><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-parent</artifactId><version>0.1.1-SNAPSHOT</version></parent>
   <artifactId>scenariomesh-maven-selection</artifactId>
   <dependencies>
     <dependency><groupId>org.apache.maven.surefire</groupId><artifactId>surefire-api</artifactId></dependency>
