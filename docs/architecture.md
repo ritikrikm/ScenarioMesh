@@ -14,7 +14,7 @@ The JUnit Platform adapter uses the public Launcher/TestPlan/UniqueId APIs. Cucu
 
 ## Isolation and scheduling
 
-Each execution worker is a separate JVM. A worker executes one ScenarioTask at a time. Four workers are created by default for one Maven run. A thread-safe FIFO strategy owns the queue; coordinator worker loops ask the strategy for the next task whenever their current task completes. This makes the assignment dynamic rather than pre-sharding the test list.
+Each execution worker is a separate JVM. A worker executes one ScenarioTask at a time. Four local workers are created by default for one Maven run. The default scheduler is history-aware longest-processing-time-first with deterministic FIFO behavior for cold tasks; strict FIFO is also available. Lifecycle affinity and worker capability still constrain eligibility. Coordinator worker loops request the next eligible work dynamically rather than pre-sharding the test list.
 
 ## Worker protocol
 
@@ -24,7 +24,7 @@ Worker stdout/stderr is redirected to per-worker logs. The control protocol ther
 
 ## Maven lifecycle
 
-A Maven Core Extension is installed once through `.mvn/extensions.xml`. During `afterProjectsRead`, it injects the ScenarioMesh Maven plugin into non-POM projects for the `test` phase and sets Maven's normal test execution to skip for that project while ScenarioMesh is enabled. The ScenarioMesh goal still runs because it does not use Surefire's skip flag.
+A Maven Core Extension is installed once through `.mvn/extensions.xml`. During project/lifecycle inspection it identifies participating Surefire/Failsafe executions and marks only compatible executions as takeover candidates. Runtime preflight runs after test compilation in the target test classloader and proves framework/engine ownership before native execution is suppressed. If that proof fails, ScenarioMesh leaves the Maven execution native; if it succeeds, only the proven Surefire/Failsafe execution is replaced.
 
 Compatibility is evaluated against the requested lifecycle, not merely against plugin presence. For example, a normal Failsafe execution bound to `integration-test`/`verify` does not block a plain `mvn test`, because those phases are not reached. A compatible Failsafe execution is owned for `mvn verify`, including deferred verification behavior. A custom Failsafe execution bound unusually to `test`, multiple/ambiguous executions, or an execution whose phase cannot be established remains native Maven pass-through. Unknown behavior is conservative by design.
 

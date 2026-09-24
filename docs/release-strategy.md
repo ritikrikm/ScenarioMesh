@@ -55,10 +55,16 @@ The current-framework gate proves native Maven equivalence and positive Scenario
 - Failsafe 3.5.2 and 3.6.0-M1 with those same JUnit lines;
 - Cucumber 7.34.7 and TestNG 7.10.2 on the Surefire 3.5 and 3.6 execution architectures.
 
-The JUnit Platform launcher is resolved at execution time to the exact Platform engine version in
-the target project's Maven test graph. ScenarioMesh's minimum compile-time launcher is excluded
-from that target realm whenever a target Platform is present. This avoids maintaining a brittle
-framework-version lookup table and fails closed if Maven cannot produce one coherent runtime.
+A separate small-level real-repository gate pins the official Cucumber Maven starter at upstream
+revision `3d900db164a29f4ccb5e4aa6eaddf62d3312b3bc` (Cucumber 7.34.9 with JUnit 6.1.3). It compares
+native Maven testcase totals and pass/skip/fail outcomes with ScenarioMesh ownership and results.
+Cucumber 8.x is outside the current proven ownership contract and therefore remains native Maven.
+
+The target project's Maven-resolved JUnit Platform graph is the runtime authority. If Maven resolves
+exactly one launcher dependency, ScenarioMesh preserves that launcher even when its patch version
+differs from the engine artifact. If the target does not provide a launcher, ScenarioMesh supplies
+one aligned to the resolved engine API version. Multiple surviving launcher versions or an
+unprovable runtime fail closed to native Maven.
 
 ## Release gate
 
@@ -75,6 +81,7 @@ A release candidate should not be published as production-ready unless the requi
 - reporting integrations and downstream report compatibility
 - CLI/product tests
 - external target smoke
+- pinned native-vs-ScenarioMesh real-repository lab
 - current LTS / Maven GA runtime matrix
 - current Surefire/Failsafe and framework-version equivalence matrix
 

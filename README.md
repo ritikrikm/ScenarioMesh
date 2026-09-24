@@ -14,7 +14,7 @@ ScenarioMesh is not a Selenium framework, WebDriver proxy, Gherkin parser, repla
 |---|---|
 | Maven + JUnit 5 / JUnit Platform | Supported |
 | Maven + JUnit 6 / JUnit Platform | Supported; launcher is aligned to the target Maven dependency graph |
-| Maven + Cucumber JUnit Platform engine | Supported through the JUnit Platform adapter |
+| Maven + Cucumber JUnit Platform 7.x engine | Supported through the JUnit Platform adapter; unqualified future major lines pass through |
 | Maven + Cucumber JUnit 4 runner | Supported |
 | Generated Cucumber JUnit 4 runners exposing executable leaves | Supported |
 | Compatible Maven Surefire `test` execution | Supported |
@@ -24,6 +24,8 @@ ScenarioMesh is not a Selenium framework, WebDriver proxy, Gherkin parser, repla
 | TestNG `suiteXmlFiles` | Supported as atomic TestNG lifecycle scopes; individual outcomes are materialized after native TestNG execution |
 | Factory-heavy TestNG discovered without a suite XML | Pass-through when ScenarioMesh cannot prove equivalent isolated semantics |
 | Gradle | Not supported yet |
+
+The current proven Cucumber JUnit Platform ownership contract is the Cucumber 7.x line. Cucumber 8.x is not claimed yet and remains native Maven until separately qualified.
 
 Target-project libraries such as Selenium, REST Assured, Jackson, listeners, resources, and internal libraries are loaded from Maven's resolved test runtime classpath rather than hard-coded into ScenarioMesh.
 
