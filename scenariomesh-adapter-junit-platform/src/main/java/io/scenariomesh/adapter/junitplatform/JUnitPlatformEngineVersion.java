@@ -33,7 +33,7 @@ final class JUnitPlatformEngineVersion {
         if (engine == null) return unknown("unknown");
 
         Class<?> implementation = engine.getClass();
-        String reportedVersion = normalize(engine.getVersion().orElse(null));
+        String reportedVersion = reportedVersion(engine);
         Coordinates coordinates = ENGINE_COORDINATES.get(engine.getId());
 
         if (coordinates != null) {
@@ -123,6 +123,17 @@ final class JUnitPlatformEngineVersion {
             return implementation.getModule().getDescriptor().rawVersion().map(JUnitPlatformEngineVersion::normalize)
                     .orElse("unknown");
         } catch (RuntimeException ignored) {
+            return "unknown";
+        }
+    }
+
+    private static String reportedVersion(TestEngine engine) {
+        try {
+            return normalize(engine.getVersion().orElse(null));
+        } catch (RuntimeException | LinkageError ignored) {
+            // A target can legitimately contain Maven-resolved JUnit Platform artifacts from
+            // different patch/minor lines. TestEngine#getVersion is diagnostic evidence only;
+            // exact artifact metadata below remains the ownership authority.
             return "unknown";
         }
     }

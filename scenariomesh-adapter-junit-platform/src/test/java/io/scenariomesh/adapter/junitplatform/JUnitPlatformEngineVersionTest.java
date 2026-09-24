@@ -1,7 +1,17 @@
 package io.scenariomesh.adapter.junitplatform;
 
 import org.junit.jupiter.api.Test;
+import org.junit.platform.engine.EngineDiscoveryRequest;
+import org.junit.platform.engine.ExecutionRequest;
+import org.junit.platform.engine.TestDescriptor;
+import org.junit.platform.engine.TestEngine;
+import org.junit.platform.engine.UniqueId;
+import org.junit.platform.engine.support.descriptor.EngineDescriptor;
 
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,5 +32,35 @@ class JUnitPlatformEngineVersionTest {
         assertFalse(JUnitPlatformEngineVersion.isSemanticVersion(""));
         assertFalse(JUnitPlatformEngineVersion.isSemanticVersion(null));
         assertFalse(JUnitPlatformEngineVersion.isSemanticVersion("v7.34.7"));
+    }
+
+    @Test
+    void toleratesLinkageFailureFromEngineReportedVersion() {
+        TestEngine engine = new TestEngine() {
+            @Override
+            public String getId() {
+                return "linkage-fixture";
+            }
+
+            @Override
+            public Optional<String> getVersion() {
+                throw new NoSuchMethodError("mixed JUnit Platform graph");
+            }
+
+            @Override
+            public TestDescriptor discover(EngineDiscoveryRequest request, UniqueId uniqueId) {
+                return new EngineDescriptor(uniqueId, "linkage fixture");
+            }
+
+            @Override
+            public void execute(ExecutionRequest request) {
+                // Not needed for version evidence.
+            }
+        };
+
+        JUnitPlatformEngineVersion.VersionEvidence evidence =
+                assertDoesNotThrow(() -> JUnitPlatformEngineVersion.resolve(engine));
+
+        assertEquals("unknown", evidence.reportedVersion());
     }
 }
