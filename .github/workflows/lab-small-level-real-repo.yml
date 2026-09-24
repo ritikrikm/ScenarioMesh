@@ -30,7 +30,8 @@ jobs:
       - name: Run native-vs-ScenarioMesh small-level lab
         env:
           TARGET_URL: https://github.com/cucumber/cucumber-jvm-starter-maven-java.git
-          TARGET_BRANCH: main
+          # Last official starter revision on the currently proven Cucumber 7.x support line.
+          TARGET_REF: 3d900db164a29f4ccb5e4aa6eaddf62d3312b3bc
           SCENARIOMESH_ROOT: ${{ github.workspace }}
           SCENARIOMESH_WORKERS: '4'
           LAB_OUT: ${{ runner.temp }}/scenariomesh-small-lab

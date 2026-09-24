@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 TARGET_URL = os.environ.get("TARGET_URL", "https://github.com/cucumber/cucumber-jvm-starter-maven-java.git")
-TARGET_BRANCH = os.environ.get("TARGET_BRANCH", "main")
+TARGET_REF = os.environ.get("TARGET_REF", "main")
 SM_ROOT = Path(os.environ.get("SCENARIOMESH_ROOT", Path.cwd())).resolve()
 OUT = Path(os.environ.get("LAB_OUT", "/tmp/scenariomesh-small-lab")).resolve()
 WORKERS = int(os.environ.get("SCENARIOMESH_WORKERS", "4"))
@@ -52,7 +52,17 @@ def clone(dest: Path) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", TARGET_BRANCH, TARGET_URL, str(dest)],
+        ["git", "clone", "--depth", "1", TARGET_URL, str(dest)],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "fetch", "--depth", "1", "origin", TARGET_REF],
+        cwd=str(dest),
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "--detach", "FETCH_HEAD"],
+        cwd=str(dest),
         check=True,
     )
     if not (dest / "pom.xml").is_file():
@@ -99,7 +109,7 @@ def main() -> int:
     OUT.mkdir(parents=True)
 
     print("=== Small-level ScenarioMesh real-repository lab ===")
-    print(f"Target: {TARGET_URL} @ {TARGET_BRANCH}")
+    print(f"Target: {TARGET_URL} @ {TARGET_REF}")
     print(f"ScenarioMesh: {SM_ROOT}")
 
     native = OUT / "native"
@@ -142,7 +152,7 @@ def main() -> int:
 
     result = {
         "target": TARGET_URL,
-        "branch": TARGET_BRANCH,
+        "ref": TARGET_REF,
         "native_exit": native_rc,
         "native_testcases": native_count,
         "scenariomesh_exit": scenario_rc,
