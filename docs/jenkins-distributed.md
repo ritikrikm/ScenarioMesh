@@ -27,7 +27,7 @@ withCredentials([
   string(credentialsId: 'scenariomesh-agent-truststore-password', variable: 'SCENARIOMESH_DISTRIBUTED_TLS_TRUST_STORE_PASSWORD')
 ]) {
   sh '''
-    mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+    mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
       -Dscenariomesh.worker.host=scenariomesh-coordinator.internal \
       -Dscenariomesh.worker.port=43117
   '''

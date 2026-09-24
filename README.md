@@ -207,7 +207,7 @@ A target Maven repository activates the core extension in `.mvn/extensions.xml`:
   <extension>
     <groupId>io.scenariomesh</groupId>
     <artifactId>scenariomesh-maven-extension</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
   </extension>
 </extensions>
 ```
@@ -223,19 +223,19 @@ mvn clean install
 The CLI can initialize the required files idempotently:
 
 ```bash
-java -jar scenariomesh-cli-0.1.0-SNAPSHOT.jar init --project /path/to/project
+java -jar scenariomesh-cli-0.1.0.jar init --project /path/to/project
 ```
 
 It can also run compatibility diagnostics without taking ownership:
 
 ```bash
-java -jar scenariomesh-cli-0.1.0-SNAPSHOT.jar doctor --deep --root /path/to/project
+java -jar scenariomesh-cli-0.1.0.jar doctor --deep --root /path/to/project
 ```
 
 or explicitly delegate a run to the production Maven runtime:
 
 ```bash
-java -jar scenariomesh-cli-0.1.0-SNAPSHOT.jar run --root /path/to/project
+java -jar scenariomesh-cli-0.1.0.jar run --root /path/to/project
 ```
 
 ## Configuration
