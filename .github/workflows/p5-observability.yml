@@ -38,7 +38,7 @@ jobs:
           grep -Fq '"taskId":' "$run_dir/events.jsonl"
           grep -Fq '"durationMillis":' "$run_dir/events.jsonl"
           grep -Fq '"queueDepth":' "$run_dir/events.jsonl"
-          java -jar ../../scenariomesh-cli/target/scenariomesh-cli-0.1.0-SNAPSHOT.jar diagnostics --root .
+          java -jar ../../scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar diagnostics --root .
           test -f target/scenariomesh-diagnostics.zip
           unzip -l target/scenariomesh-diagnostics.zip | grep -Fq 'diagnostics/manifest.json'
           unzip -l target/scenariomesh-diagnostics.zip | grep -Fq 'run/events.jsonl'

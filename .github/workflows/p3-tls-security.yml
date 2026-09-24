@@ -57,7 +57,7 @@ jobs:
           set +e
           SCENARIOMESH_DISTRIBUTED_TLS_KEY_STORE="$tls/server.p12" \
           SCENARIOMESH_DISTRIBUTED_TLS_TRUST_STORE="$tls/server-trust.p12" \
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=1 \
             -Dscenariomesh.workers.minimumReady=1 \
@@ -75,7 +75,7 @@ jobs:
           grep -Fq 'transport=tls' tls-coordinator.log
           SCENARIOMESH_DISTRIBUTED_TLS_KEY_STORE="$tls/client.p12" \
           SCENARIOMESH_DISTRIBUTED_TLS_TRUST_STORE="$tls/client-trust.p12" \
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
             -Dscenariomesh.worker.host=localhost \
             -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.worker.id=tls-worker \

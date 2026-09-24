@@ -31,7 +31,7 @@ import java.util.UUID;
 public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecycleParticipant {
     private static final String GROUP_ID = "io.scenariomesh";
     private static final String PLUGIN_ARTIFACT_ID = "scenariomesh-maven-plugin";
-    private static final String VERSION = "0.1.0-SNAPSHOT";
+    private static final String VERSION = "0.1.0";
     private static final String PREFLIGHT_EXECUTION_ID = "scenariomesh-preflight";
     private static final String RUN_EXECUTION_ID = "scenariomesh-run";
     private static final String VERIFY_EXECUTION_ID = "scenariomesh-verify";

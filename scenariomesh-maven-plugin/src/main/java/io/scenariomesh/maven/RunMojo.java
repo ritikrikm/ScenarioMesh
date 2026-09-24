@@ -309,7 +309,7 @@ public final class RunMojo extends AbstractMojo {
     private void logConfiguration(ScenarioMeshConfig config, ConfigResolution resolution, Path testJava,
                                   RetryPolicy retryPolicy) {
         getLog().info("---------------- ScenarioMesh runtime ----------------");
-        getLog().info("ScenarioMesh version       : 0.1.0-SNAPSHOT");
+        getLog().info("ScenarioMesh version       : 0.1.0");
         getLog().info("Project                    : " + project.getArtifactId());
         getLog().info("Requested Maven goals      : " + String.join(" ", session.getRequest().getGoals()));
         getLog().info("Maven executor takeover    : " + takeoverExecutor);

@@ -70,7 +70,7 @@ jobs:
           port=$((43000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=2 \
             -Dscenariomesh.workers.minimumReady=2 \
@@ -87,12 +87,12 @@ jobs:
             sleep 1
           done
           grep -Fq 'Remote worker coordinator listening on' coordinator.log
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=remote-a \
             > worker-a.log 2>&1 &
           worker_a=$!
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=remote-b \
             > worker-b.log 2>&1 &
@@ -119,7 +119,7 @@ jobs:
           port=$((44000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=1 \
             -Dscenariomesh.workers.minimumReady=1 \
@@ -136,11 +136,17 @@ jobs:
             sleep 1
           done
           grep -Fq 'Remote worker coordinator listening on' v9-coordinator-v8-worker.log
-          mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
-            io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
-            -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
-            -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker \
-            > bridge-v8-worker.log 2>&1 &
+          bridge_target="$RUNNER_TEMP/scenariomesh-bridge-target-worker-${{ matrix.java }}"
+          rm -rf "$bridge_target"
+          cp -a "$GITHUB_WORKSPACE/examples/testng-example" "$bridge_target"
+          rm -f "$bridge_target/.mvn/extensions.xml"
+          (
+            cd "$GITHUB_WORKSPACE/bridge-v8"
+            mvn -B -f "$bridge_target/pom.xml" -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
+              io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+              -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
+              -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker
+          ) > bridge-v8-worker.log 2>&1 &
           worker_pid=$!
           set +e
           wait "$coordinator_pid"; coordinator_status=$?
@@ -172,16 +178,22 @@ jobs:
           port=$((45000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
-            io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
-            -Dscenariomesh.workers.mode=remote \
-            -Dscenariomesh.workers.count=1 \
-            -Dscenariomesh.workers.minimumReady=1 \
-            -Dscenariomesh.distributed.bindHost=127.0.0.1 \
-            -Dscenariomesh.distributed.bindPort="$port" \
-            -Dscenariomesh.distributed.token="$token" \
-            -Dscenariomesh.distributed.registrationTimeout=PT45S \
-            > v8-coordinator-v9-worker.log 2>&1 &
+          bridge_target="$RUNNER_TEMP/scenariomesh-bridge-target-coordinator-${{ matrix.java }}"
+          rm -rf "$bridge_target"
+          cp -a "$GITHUB_WORKSPACE/examples/testng-example" "$bridge_target"
+          rm -f "$bridge_target/.mvn/extensions.xml"
+          (
+            cd "$GITHUB_WORKSPACE/bridge-v8"
+            mvn -B -f "$bridge_target/pom.xml" -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
+              io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+              -Dscenariomesh.workers.mode=remote \
+              -Dscenariomesh.workers.count=1 \
+              -Dscenariomesh.workers.minimumReady=1 \
+              -Dscenariomesh.distributed.bindHost=127.0.0.1 \
+              -Dscenariomesh.distributed.bindPort="$port" \
+              -Dscenariomesh.distributed.token="$token" \
+              -Dscenariomesh.distributed.registrationTimeout=PT45S
+          ) > v8-coordinator-v9-worker.log 2>&1 &
           coordinator_pid=$!
           set -e
           for i in $(seq 1 90); do
@@ -190,7 +202,7 @@ jobs:
             sleep 1
           done
           grep -Fq 'Remote worker coordinator listening on' v8-coordinator-v9-worker.log
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=current-v9-worker \
             > current-v9-worker.log 2>&1 &
@@ -204,6 +216,10 @@ jobs:
           echo '===== current v9 worker log ====='
           cat current-v9-worker.log || true
           echo "coordinator_status=$coordinator_status worker_status=$worker_status"
+          if test -d "$bridge_target/target/scenariomesh"; then
+            rm -rf target/scenariomesh
+            cp -a "$bridge_target/target/scenariomesh" target/scenariomesh
+          fi
           if test -f target/scenariomesh/summary.json; then
             echo '===== summary.json ====='
             cat target/scenariomesh/summary.json
