@@ -16,7 +16,7 @@
     <dependency>
       <groupId>io.scenariomesh</groupId>
       <artifactId>scenariomesh-core</artifactId>
-      <version>0.1.0-SNAPSHOT</version>
+      <version>0.1.0</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
