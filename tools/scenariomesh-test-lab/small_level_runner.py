@@ -69,15 +69,20 @@ def clone(dest: Path) -> None:
         raise RuntimeError(f"Target has no root pom.xml: {dest}")
 
 
-def count_surefire_testcases(root: Path) -> int:
+def surefire_counts(root: Path) -> dict[str, int]:
     files = sorted((root / "target" / "surefire-reports").glob("TEST-*.xml"))
-    if not files:
-        return 0
-    total = 0
+    counts = {"total": 0, "passed": 0, "skipped": 0, "failed": 0}
     for file in files:
         tree = ET.parse(file)
-        total += len(tree.findall(".//testcase"))
-    return total
+        for testcase in tree.findall(".//testcase"):
+            counts["total"] += 1
+            if testcase.find("skipped") is not None:
+                counts["skipped"] += 1
+            elif testcase.find("failure") is not None or testcase.find("error") is not None:
+                counts["failed"] += 1
+            else:
+                counts["passed"] += 1
+    return counts
 
 
 def find_cli_jar(root: Path) -> Path:
@@ -116,8 +121,13 @@ def main() -> int:
     clone(native)
     native_log = OUT / "native-maven.log"
     native_rc = run(["mvn", "-B", "-Dstyle.color=never", "test"], native, native_log)
-    native_count = count_surefire_testcases(native)
-    print(f"NATIVE_RESULT exit={native_rc} testcases={native_count}")
+    native_counts = surefire_counts(native)
+    native_count = native_counts["total"]
+    print(
+        "NATIVE_RESULT "
+        f"exit={native_rc} testcases={native_count} "
+        f"passed={native_counts['passed']} skipped={native_counts['skipped']} failed={native_counts['failed']}"
+    )
     if native_rc != 0:
         raise RuntimeError("Native Maven baseline failed; ScenarioMesh comparison is invalid")
     if native_count <= 0:
@@ -155,6 +165,9 @@ def main() -> int:
         "ref": TARGET_REF,
         "native_exit": native_rc,
         "native_testcases": native_count,
+        "native_passed": native_counts["passed"],
+        "native_skipped": native_counts["skipped"],
+        "native_failed": native_counts["failed"],
         "scenariomesh_exit": scenario_rc,
         "takeover": "ScenarioMesh: takeover enabled" in log,
         "pass_through": "pass-through" in log.lower(),
@@ -198,16 +211,22 @@ def main() -> int:
     if not match:
         errors.append("ScenarioMesh result summary line was not found")
     else:
-        if result["failed"] != 0:
-            errors.append(f"ScenarioMesh reported {result['failed']} failed logical tests")
-        if result["skipped"] != 0:
-            errors.append(f"ScenarioMesh reported {result['skipped']} skipped logical tests")
         if result["discovered"] != native_count:
             errors.append(f"Discovery mismatch: native={native_count}, ScenarioMesh={result['discovered']}")
         if result["logical"] != native_count:
             errors.append(f"Logical execution mismatch/duplication: native={native_count}, ScenarioMesh={result['logical']}")
-        if result["passed"] != native_count:
-            errors.append(f"Pass-count mismatch: native={native_count}, ScenarioMesh={result['passed']}")
+        if result["passed"] != native_counts["passed"]:
+            errors.append(
+                f"Pass-count mismatch: native={native_counts['passed']}, ScenarioMesh={result['passed']}"
+            )
+        if result["skipped"] != native_counts["skipped"]:
+            errors.append(
+                f"Skip-count mismatch: native={native_counts['skipped']}, ScenarioMesh={result['skipped']}"
+            )
+        if result["failed"] != native_counts["failed"]:
+            errors.append(
+                f"Failure-count mismatch: native={native_counts['failed']}, ScenarioMesh={result['failed']}"
+            )
 
     if not summary_path:
         errors.append("ScenarioMesh summary.json was not generated")
