@@ -1,1 +1,1 @@
-<extensions><extension><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-maven-extension</artifactId><version>0.1.0</version></extension></extensions>
+<extensions><extension><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-maven-extension</artifactId><version>0.1.1-SNAPSHOT</version></extension></extensions>

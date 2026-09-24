@@ -23,7 +23,7 @@ jobs:
           git clone --depth 1 --branch main \
             https://github.com/ritikrikm/scenariomesh-target-fixture.git \
             "$RUNNER_TEMP/scenariomesh-target-fixture"
-          sed -i 's/0.1.0-SNAPSHOT/0.1.0/g' \
+          sed -i 's/0.1.0-SNAPSHOT/0.1.1-SNAPSHOT/g' \
             "$RUNNER_TEMP/scenariomesh-target-fixture/.mvn/extensions.xml"
 
       - name: Run exact seven-scenario external contract

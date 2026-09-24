@@ -70,7 +70,7 @@ jobs:
           port=$((43000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:run \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.1-SNAPSHOT:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=2 \
             -Dscenariomesh.workers.minimumReady=2 \
@@ -87,12 +87,12 @@ jobs:
             sleep 1
           done
           grep -Fq 'Remote worker coordinator listening on' coordinator.log
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.1-SNAPSHOT:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=remote-a \
             > worker-a.log 2>&1 &
           worker_a=$!
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.1-SNAPSHOT:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=remote-b \
             > worker-b.log 2>&1 &
@@ -119,7 +119,7 @@ jobs:
           port=$((44000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:run \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.1-SNAPSHOT:run \
             -Dscenariomesh.workers.mode=remote \
             -Dscenariomesh.workers.count=1 \
             -Dscenariomesh.workers.minimumReady=1 \
@@ -202,7 +202,7 @@ jobs:
             sleep 1
           done
           grep -Fq 'Remote worker coordinator listening on' v8-coordinator-v9-worker.log
-          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.0:worker \
+          mvn -B io.scenariomesh:scenariomesh-maven-plugin:0.1.1-SNAPSHOT:worker \
             -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
             -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=current-v9-worker \
             > current-v9-worker.log 2>&1 &

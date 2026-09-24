@@ -1,6 +1,6 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
-  <parent><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-parent</artifactId><version>0.1.0</version></parent>
+  <parent><groupId>io.scenariomesh</groupId><artifactId>scenariomesh-parent</artifactId><version>0.1.1-SNAPSHOT</version></parent>
   <artifactId>scenariomesh-control-json</artifactId>
   <name>ScenarioMesh Isolated Control JSON</name>
   <dependencies>
