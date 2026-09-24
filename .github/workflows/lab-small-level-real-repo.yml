@@ -1,9 +1,12 @@
 name: lab-small-level-real-repo
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
-      - agent/stabilize-main
+      - main
   workflow_dispatch:
 
 jobs:
