@@ -22,11 +22,11 @@ jobs:
         run: mvn -B clean install
       - name: CLI version and self-contained packaging
         run: |
-          cli="scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar"
-          java -jar "$cli" version | grep -Fxq '0.1.0'
+          cli="scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar"
+          java -jar "$cli" version | grep -Fxq '0.1.1-SNAPSHOT'
       - name: Doctor and deep compatibility are non-destructive
         run: |
-          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar"
+          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar"
           java -jar "$cli" doctor --root examples/junit5-example
           java -jar "$cli" compatibility --root examples/junit5-example > compatibility.log
           grep -Fq 'Ownership decision' compatibility.log
@@ -35,7 +35,7 @@ jobs:
           grep -Fq 'ScenarioMesh preflight: ownership proven' explain.log
       - name: Explicit CLI run delegates to production Maven runtime
         run: |
-          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar"
+          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar"
           rm -rf examples/junit5-example/target/scenariomesh-yaml
           java -jar "$cli" run --root examples/junit5-example
           test -f examples/junit5-example/target/scenariomesh-yaml/summary.json
@@ -43,7 +43,7 @@ jobs:
           grep -Fq '"skipped" : 2' examples/junit5-example/target/scenariomesh-yaml/summary.json
       - name: Diagnostics packages only generated ScenarioMesh evidence
         run: |
-          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar"
+          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar"
           java -jar "$cli" diagnostics --root examples/junit5-example
           archive="examples/junit5-example/target/scenariomesh-diagnostics.zip"
           test -f "$archive"
@@ -56,7 +56,7 @@ jobs:
           fi
       - name: Init remains idempotent and dry-run safe
         run: |
-          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar"
+          cli="$PWD/scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar"
           project="$RUNNER_TEMP/scenariomesh-p7-init"
           mkdir -p "$project"
           printf '%s\n' '<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>fixture</artifactId><version>1</version></project>' > "$project/pom.xml"

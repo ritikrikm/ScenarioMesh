@@ -18,9 +18,9 @@ jobs:
         run: mvn -B clean install
       - name: ScenarioMesh init packaged CLI is safe and idempotent
         run: |
-          cli="scenariomesh-cli/target/scenariomesh-cli-0.1.0.jar"
+          cli="scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar"
           test -f "$cli"
-          java -jar "$cli" version | grep -Fxq '0.1.0'
+          java -jar "$cli" version | grep -Fxq '0.1.1-SNAPSHOT'
           project="$RUNNER_TEMP/scenariomesh init fixture"
           mkdir -p "$project"
           printf '%s\n' '<project><modelVersion>4.0.0</modelVersion><groupId>example</groupId><artifactId>fixture</artifactId><version>1</version></project>' > "$project/pom.xml"
@@ -28,7 +28,7 @@ jobs:
           test -f "$project/.mvn/extensions.xml"
           test -f "$project/scenariomesh.yml"
           grep -Fq '<artifactId>scenariomesh-maven-extension</artifactId>' "$project/.mvn/extensions.xml"
-          grep -Fq '<version>0.1.0</version>' "$project/.mvn/extensions.xml"
+          grep -Fq '<version>0.1.1-SNAPSHOT</version>' "$project/.mvn/extensions.xml"
           grep -Fq 'configVersion: 1' "$project/scenariomesh.yml"
           before_extensions="$(sha256sum "$project/.mvn/extensions.xml")"
           before_config="$(sha256sum "$project/scenariomesh.yml")"
