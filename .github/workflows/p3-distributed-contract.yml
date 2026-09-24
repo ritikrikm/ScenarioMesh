@@ -136,11 +136,14 @@ jobs:
             sleep 1
           done
           grep -Fq 'Remote worker coordinator listening on' v9-coordinator-v8-worker.log
-          mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
-            io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
-            -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
-            -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker \
-            > bridge-v8-worker.log 2>&1 &
+          current_example="$GITHUB_WORKSPACE/examples/testng-example"
+          (
+            cd "$GITHUB_WORKSPACE/bridge-v8"
+            mvn -B -f "$current_example/pom.xml" -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
+              io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:worker \
+              -Dscenariomesh.worker.host=127.0.0.1 -Dscenariomesh.worker.port="$port" \
+              -Dscenariomesh.distributed.token="$token" -Dscenariomesh.worker.id=bridge-v8-worker
+          ) > bridge-v8-worker.log 2>&1 &
           worker_pid=$!
           set +e
           wait "$coordinator_pid"; coordinator_status=$?
@@ -172,16 +175,19 @@ jobs:
           port=$((45000 + ${{ matrix.java }}))
           rm -rf target/scenariomesh
           set +e
-          mvn -B -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
-            io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
-            -Dscenariomesh.workers.mode=remote \
-            -Dscenariomesh.workers.count=1 \
-            -Dscenariomesh.workers.minimumReady=1 \
-            -Dscenariomesh.distributed.bindHost=127.0.0.1 \
-            -Dscenariomesh.distributed.bindPort="$port" \
-            -Dscenariomesh.distributed.token="$token" \
-            -Dscenariomesh.distributed.registrationTimeout=PT45S \
-            > v8-coordinator-v9-worker.log 2>&1 &
+          current_example="$GITHUB_WORKSPACE/examples/testng-example"
+          (
+            cd "$GITHUB_WORKSPACE/bridge-v8"
+            mvn -B -f "$current_example/pom.xml" -Dmaven.repo.local="$GITHUB_WORKSPACE/.m2-v8" \
+              io.scenariomesh:scenariomesh-maven-plugin:0.1.0-SNAPSHOT:run \
+              -Dscenariomesh.workers.mode=remote \
+              -Dscenariomesh.workers.count=1 \
+              -Dscenariomesh.workers.minimumReady=1 \
+              -Dscenariomesh.distributed.bindHost=127.0.0.1 \
+              -Dscenariomesh.distributed.bindPort="$port" \
+              -Dscenariomesh.distributed.token="$token" \
+              -Dscenariomesh.distributed.registrationTimeout=PT45S
+          ) > v8-coordinator-v9-worker.log 2>&1 &
           coordinator_pid=$!
           set -e
           for i in $(seq 1 90); do
