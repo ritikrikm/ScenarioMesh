@@ -40,6 +40,7 @@ jobs:
         run: |
           curl -fsSLo "$RUNNER_TEMP/maven.tgz" \
             https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.tar.gz
+          echo '831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6  '"$RUNNER_TEMP/maven.tgz" | sha512sum -c -
           tar -xzf "$RUNNER_TEMP/maven.tgz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
       - name: Verify exact Maven line
@@ -69,6 +70,7 @@ jobs:
         run: |
           curl -fsSLo "$RUNNER_TEMP/maven4.tgz" \
             https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/4.0.0-rc-6/apache-maven-4.0.0-rc-6-bin.tar.gz
+          echo 'aeee861bcd63633562488f8d6f7116f08d5166e08522073774fe58ccd83ee35f6e97daf8f7a330ae96ebd9ba22c7789a428ce3966010d5d3e6861d25b2f69545  '"$RUNNER_TEMP/maven4.tgz" | sha512sum -c -
           tar -xzf "$RUNNER_TEMP/maven4.tgz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/apache-maven-4.0.0-rc-6/bin" >> "$GITHUB_PATH"
       - name: Verify preview version
@@ -130,6 +132,7 @@ jobs:
         run: |
           curl -fsSLo "$RUNNER_TEMP/maven3-next.tgz" \
             https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.10.0-rc-1/apache-maven-3.10.0-rc-1-bin.tar.gz
+          echo '97ee4410a92589c300ac55ae84cfed4972093d2dc9f5488baf857123e2f7b9301f7e5c568e4fc839628787665d0fb33278236459496ed9c3b79d30c7c81ac402  '"$RUNNER_TEMP/maven3-next.tgz" | sha512sum -c -
           tar -xzf "$RUNNER_TEMP/maven3-next.tgz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/apache-maven-3.10.0-rc-1/bin" >> "$GITHUB_PATH"
       - name: Verify preview version
