@@ -70,7 +70,11 @@ jobs:
         run: |
           curl -fsSLo "$RUNNER_TEMP/maven4.tgz" \
             https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/4.0.0-rc-6/apache-maven-4.0.0-rc-6-bin.tar.gz
-          echo 'aeee861bcd63633562488f8d6f7116f08d5166e08522073774fe58ccd83ee35f6e97daf8f7a330ae96ebd9ba22c7789a428ce3966010d5d3e6861d25b2f69545  '"$RUNNER_TEMP/maven4.tgz" | sha512sum -c -
+          curl -fsSLo "$RUNNER_TEMP/maven4.tgz.sha512" \
+            https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/4.0.0-rc-6/apache-maven-4.0.0-rc-6-bin.tar.gz.sha512
+          expected_sha512="$(tr -d '[:space:]' < "$RUNNER_TEMP/maven4.tgz.sha512")"
+          actual_sha512="$(sha512sum "$RUNNER_TEMP/maven4.tgz" | awk '{print $1}')"
+          test "$expected_sha512" = "$actual_sha512"
           tar -xzf "$RUNNER_TEMP/maven4.tgz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/apache-maven-4.0.0-rc-6/bin" >> "$GITHUB_PATH"
       - name: Verify preview version
