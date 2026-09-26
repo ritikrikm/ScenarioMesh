@@ -47,6 +47,11 @@ jobs:
         run: mvn -version | grep -Fq 'Apache Maven 3.9.16'
       - name: Build ScenarioMesh on GA Maven
         run: ./mvnw -B clean install
+      - name: Fresh local repository bootstrap
+        if: matrix.java == '17'
+        run: |
+          rm -rf "$RUNNER_TEMP/scenariomesh-fresh-m2"
+          ./mvnw -B -Dmaven.repo.local="$RUNNER_TEMP/scenariomesh-fresh-m2" clean install
       - name: Native-vs-ScenarioMesh target smoke
         working-directory: examples/junit5-example
         run: |
