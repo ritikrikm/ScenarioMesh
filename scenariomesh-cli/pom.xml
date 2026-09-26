@@ -17,7 +17,7 @@
         <configuration><archive><manifest><mainClass>io.scenariomesh.cli.Main</mainClass></manifest></archive></configuration>
       </plugin>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.1</version>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId><version>3.6.2</version>
         <executions><execution><phase>package</phase><goals><goal>shade</goal></goals><configuration>
           <createDependencyReducedPom>false</createDependencyReducedPom>
           <shadedArtifactAttached>false</shadedArtifactAttached>
