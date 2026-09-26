@@ -4,7 +4,7 @@
 
 ScenarioMesh runtime requires Java 17 or newer. The release gate covers Java 17, Java 21, and the current Java 25 LTS smoke lane.
 
-The production Maven support line is Maven 3.9.x. The release matrix pins the current GA Maven 3.9.16 for an exact-version gate in addition to the GitHub runner Maven used by the broader workflows.
+The production Maven support line is Maven 3.9.x. The plugin and extension compile against Maven 3.9.9 as the explicit Maven API compatibility baseline (`maven.api.version`), while the release matrix pins the current GA Maven 3.9.16 as the runtime/release validation version. Keeping those roles separate avoids treating the runtime pin as the compile-time API floor.
 
 The checked-in Maven Wrapper uses the official `only-script` distribution and pins Maven 3.9.16
 with SHA-256 verification. Contributors and release automation can therefore run `./mvnw` without
