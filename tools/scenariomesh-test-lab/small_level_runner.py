@@ -12,6 +12,8 @@ from pathlib import Path
 
 TARGET_URL = os.environ.get("TARGET_URL", "https://github.com/cucumber/cucumber-jvm-starter-maven-java.git")
 TARGET_REF = os.environ.get("TARGET_REF", "main")
+TARGET_NAME = os.environ.get("TARGET_NAME", "external-target")
+TARGET_PROJECT_DIR = os.environ.get("TARGET_PROJECT_DIR", ".").strip() or "."
 SM_ROOT = Path(os.environ.get("SCENARIOMESH_ROOT", Path.cwd())).resolve()
 OUT = Path(os.environ.get("LAB_OUT", "/tmp/scenariomesh-small-lab")).resolve()
 WORKERS = int(os.environ.get("SCENARIOMESH_WORKERS", "4"))
@@ -48,7 +50,20 @@ def run(cmd: list[str], cwd: Path, log_path: Path) -> int:
         return process.wait()
 
 
-def clone(dest: Path) -> None:
+def target_project_root(clone_root: Path) -> Path:
+    relative = Path(TARGET_PROJECT_DIR)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError(f"Unsafe TARGET_PROJECT_DIR: {TARGET_PROJECT_DIR}")
+    root = clone_root.resolve()
+    project = (root / relative).resolve()
+    if project != root and root not in project.parents:
+        raise RuntimeError(f"TARGET_PROJECT_DIR escapes clone root: {TARGET_PROJECT_DIR}")
+    if not (project / "pom.xml").is_file():
+        raise RuntimeError(f"Target project has no pom.xml: {project}")
+    return project
+
+
+def clone(dest: Path) -> Path:
     if dest.exists():
         shutil.rmtree(dest)
     subprocess.run(
@@ -65,8 +80,7 @@ def clone(dest: Path) -> None:
         cwd=str(dest),
         check=True,
     )
-    if not (dest / "pom.xml").is_file():
-        raise RuntimeError(f"Target has no root pom.xml: {dest}")
+    return target_project_root(dest)
 
 
 def surefire_counts(root: Path) -> dict[str, int]:
@@ -114,11 +128,11 @@ def main() -> int:
     OUT.mkdir(parents=True)
 
     print("=== Small-level ScenarioMesh real-repository lab ===")
-    print(f"Target: {TARGET_URL} @ {TARGET_REF}")
+    print(f"Target: {TARGET_NAME} — {TARGET_URL} @ {TARGET_REF}")
+    print(f"Project dir: {TARGET_PROJECT_DIR}")
     print(f"ScenarioMesh: {SM_ROOT}")
 
-    native = OUT / "native"
-    clone(native)
+    native = clone(OUT / "native")
     native_log = OUT / "native-maven.log"
     native_rc = run(["mvn", "-B", "-Dstyle.color=never", "test"], native, native_log)
     native_counts = surefire_counts(native)
@@ -138,8 +152,7 @@ def main() -> int:
     if build_rc != 0:
         raise RuntimeError("ScenarioMesh build/install failed")
 
-    target = OUT / "scenariomesh"
-    clone(target)
+    target = clone(OUT / "scenariomesh")
     cli = find_cli_jar(SM_ROOT)
     init_log = OUT / "scenariomesh-init.log"
     init_rc = run(["java", "-jar", str(cli), "init", "--project", str(target)], target, init_log)
@@ -161,8 +174,10 @@ def main() -> int:
     log = clean(scenario_log.read_text(encoding="utf-8", errors="replace"))
 
     result = {
+        "name": TARGET_NAME,
         "target": TARGET_URL,
         "ref": TARGET_REF,
+        "project_dir": TARGET_PROJECT_DIR,
         "native_exit": native_rc,
         "native_testcases": native_count,
         "native_passed": native_counts["passed"],

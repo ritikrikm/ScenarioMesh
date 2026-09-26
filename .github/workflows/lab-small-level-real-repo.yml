@@ -10,10 +10,27 @@ on:
   workflow_dispatch:
 
 jobs:
-  cucumber-current:
-    name: Small - official Cucumber Maven starter
+  real-repository:
+    name: Real repo - ${{ matrix.target }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: cucumber-official
+            url: https://github.com/cucumber/cucumber-jvm-starter-maven-java.git
+            ref: 3d900db164a29f4ccb5e4aa6eaddf62d3312b3bc
+            project_dir: .
+          - target: junit-official-maven
+            url: https://github.com/junit-team/junit-examples.git
+            ref: bb7eb03dc51dc8ea9ddebe8022e4362d0d427174
+            project_dir: junit-jupiter-starter-maven
+          - target: spring-petclinic
+            url: https://github.com/spring-projects/spring-petclinic.git
+            ref: 818c4136ea971c21674525f9053de0d9c7ad8cfe
+            project_dir: .
+
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -30,21 +47,22 @@ jobs:
           git --version
           python3 --version
 
-      - name: Run native-vs-ScenarioMesh small-level lab
+      - name: Run native-vs-ScenarioMesh real-repository lab
         env:
-          TARGET_URL: https://github.com/cucumber/cucumber-jvm-starter-maven-java.git
-          # Last official starter revision on the currently proven Cucumber 7.x support line.
-          TARGET_REF: 3d900db164a29f4ccb5e4aa6eaddf62d3312b3bc
+          TARGET_NAME: ${{ matrix.target }}
+          TARGET_URL: ${{ matrix.url }}
+          TARGET_REF: ${{ matrix.ref }}
+          TARGET_PROJECT_DIR: ${{ matrix.project_dir }}
           SCENARIOMESH_ROOT: ${{ github.workspace }}
           SCENARIOMESH_WORKERS: '4'
-          LAB_OUT: ${{ runner.temp }}/scenariomesh-small-lab
+          LAB_OUT: ${{ runner.temp }}/scenariomesh-real-lab/${{ matrix.target }}
         run: python3 tools/scenariomesh-test-lab/small_level_runner.py
 
       - name: Preserve lab logs and reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: scenariomesh-small-cucumber-lab
-          path: ${{ runner.temp }}/scenariomesh-small-lab
+          name: scenariomesh-real-lab-${{ matrix.target }}
+          path: ${{ runner.temp }}/scenariomesh-real-lab/${{ matrix.target }}
           if-no-files-found: warn
           retention-days: 14
