@@ -91,6 +91,18 @@ class MavenAdvancedExecutionSemanticsTest {
     }
 
     @Test
+    void classifiesLegacyJUnit47ProviderAsTheProvenVintageOwnershipPath() {
+        Plugin plugin = new Plugin();
+        plugin.setDependencies(List.of(dependency(
+                "org.apache.maven.surefire", "surefire-junit47", "2.19.1")));
+        MavenProviderDependencyCompatibility.Analysis analysis =
+                new MavenProviderDependencyCompatibility().analyze(plugin);
+        assertTrue(analysis.supported(), analysis.reason());
+        assertTrue(analysis.engineDependencies().isEmpty());
+        assertEquals(Set.of("junit4-vintage"), analysis.providerIntents());
+    }
+
+    @Test
     void rejectsUnknownCustomProviderDependency() {
         Plugin plugin = new Plugin();
         plugin.setDependencies(List.of(dependency("com.acme", "custom-surefire-provider", "1.0")));

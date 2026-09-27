@@ -157,6 +157,10 @@ final class SurefireCompatibility {
             effectiveSystemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
         }
         effectiveSystemProperties.putAll(settings.providerProperties);
+        if (settings.useSystemClassLoader != null) {
+            effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_USE_SYSTEM_CLASSLOADER,
+                    Boolean.toString(settings.useSystemClassLoader));
+        }
         if (!settings.forked) {
             reasons.add("maven-surefire-plugin forkCount=0 executes tests inside the Maven JVM; "
                     + "ScenarioMesh isolated-worker takeover cannot reproduce that process context");
@@ -226,6 +230,10 @@ final class SurefireCompatibility {
             case "reuseForks" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (value != null) settings.reuseForks = value;
+            }
+            case "useSystemClassLoader" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null) settings.useSystemClassLoader = value;
             }
             case "testFailureIgnore" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
@@ -635,6 +643,7 @@ final class SurefireCompatibility {
     private static final class EffectiveSettings {
         private boolean forked = true;
         private boolean reuseForks = true;
+        private Boolean useSystemClassLoader;
         private final Set<String> includes = new LinkedHashSet<>();
         private final Set<String> excludes = new LinkedHashSet<>();
         private final Set<String> includeJUnit5Engines = new LinkedHashSet<>();

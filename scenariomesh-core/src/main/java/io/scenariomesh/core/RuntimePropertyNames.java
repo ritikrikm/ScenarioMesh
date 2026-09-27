@@ -35,6 +35,13 @@ public final class RuntimePropertyNames {
     public static final String MAVEN_FRESH_JVM_PER_TEST_CLASS =
             INTERNAL_PREFIX + "maven.freshJvmPerTestClass";
 
+    /**
+     * When true, the selected Surefire execution requires target tests to be visible from the
+     * application/system classloader rather than ScenarioMesh's normal isolated target loader.
+     */
+    public static final String MAVEN_USE_SYSTEM_CLASSLOADER =
+            INTERNAL_PREFIX + "maven.useSystemClassLoader";
+
     /** Internal Maven class-run-order contract consumed only by the coordinator. */
     public static final String MAVEN_RUN_ORDER =
             INTERNAL_PREFIX + "maven.runOrder";

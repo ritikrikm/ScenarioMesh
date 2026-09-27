@@ -26,7 +26,9 @@ final class MavenProviderDependencyCompatibility {
 
     private static final Map<String, String> SUPPORTED_PROVIDER_SELECTORS = Map.of(
             "org.apache.maven.surefire:surefire-junit-platform", "junit-platform",
-            "org.apache.maven.surefire:surefire-testng", "testng");
+            "org.apache.maven.surefire:surefire-testng", "testng",
+            "org.apache.maven.surefire:surefire-junit47", "junit4-vintage",
+            "org.apache.maven.surefire:surefire-junit4", "junit4-vintage");
 
     Analysis analyze(Plugin plugin) {
         if (plugin == null || plugin.getDependencies() == null || plugin.getDependencies().isEmpty()) {
@@ -54,10 +56,8 @@ final class MavenProviderDependencyCompatibility {
                 }
                 continue;
             }
-            if ("org.apache.maven.surefire:surefire-junit47".equals(coordinate)
-                    || "org.apache.maven.surefire:surefire-junit4".equals(coordinate)
-                    || "org.junit.vintage:junit-vintage-engine".equals(coordinate)) {
-                unsupported.add(coordinate + " requires the dedicated JUnit 4/Vintage equivalence gate");
+            if ("org.junit.vintage:junit-vintage-engine".equals(coordinate)) {
+                unsupported.add(coordinate + " requires the dedicated JUnit 4/Vintage engine-dependency equivalence gate");
             } else {
                 unsupported.add(coordinate + " is an unregistered provider/plugin extension and may alter executor semantics");
             }

@@ -34,6 +34,13 @@ public final class PreflightProbeMain {
                 ? currentClasspath() : TargetClasspathDescriptor.decodeInline(encoded);
         Thread thread = Thread.currentThread();
         ClassLoader previous = thread.getContextClassLoader();
+        if (parsed.useSystemClassLoader) {
+            requireSystemClasspathContains(targetClasspath);
+            thread.setContextClassLoader(controlLoader);
+            try { run(parsed, controlLoader); }
+            finally { thread.setContextClassLoader(previous); }
+            return;
+        }
         try (TargetRuntimeClassLoader loader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
             thread.setContextClassLoader(loader); run(parsed, loader);
         } finally { thread.setContextClassLoader(previous); }
@@ -143,6 +150,20 @@ public final class PreflightProbeMain {
                 "TestNG adapter discovered Maven-selected executable methods with a proven execution-scope contract");
     }
 
+    private static void requireSystemClasspathContains(List<Path> targetClasspath) {
+        Set<Path> application = currentClasspath().stream()
+                .map(path -> path.toAbsolutePath().normalize())
+                .collect(java.util.stream.Collectors.toSet());
+        List<Path> missing = targetClasspath.stream()
+                .map(path -> path.toAbsolutePath().normalize())
+                .filter(path -> !application.contains(path))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("System-classloader preflight was requested but the probe application classpath "
+                    + "is missing target entries: " + missing);
+        }
+    }
+
     private static List<Path> currentClasspath() {
         String raw = System.getProperty("java.class.path", "");
         if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath was supplied");
@@ -167,13 +188,18 @@ public final class PreflightProbeMain {
 
     private static final class Arguments {
         private final Path output; private final List<Path> testRoots; private final List<String> includes; private final List<String> excludes;
-        private Arguments(Path output, List<Path> testRoots, List<String> includes, List<String> excludes) {
+        private final boolean useSystemClassLoader;
+        private Arguments(Path output, List<Path> testRoots, List<String> includes, List<String> excludes,
+                          boolean useSystemClassLoader) {
             this.output = output; this.testRoots = testRoots; this.includes = includes; this.excludes = excludes;
+            this.useSystemClassLoader = useSystemClassLoader;
         }
         private static Arguments parse(String[] args) {
             Path output = null; List<Path> roots = new ArrayList<>(); List<String> includes = new ArrayList<>(); List<String> excludes = new ArrayList<>();
+            boolean useSystemClassLoader = false;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
+                    case "--use-system-class-loader" -> useSystemClassLoader = true;
                     case "--output" -> output = Path.of(require(args, ++i, "--output"));
                     case "--test-root" -> roots.add(Path.of(require(args, ++i, "--test-root")));
                     case "--include-class-regex" -> includes.add(require(args, ++i, "--include-class-regex"));
@@ -182,7 +208,8 @@ public final class PreflightProbeMain {
                 }
             }
             if (output == null) throw new IllegalArgumentException("--output is required");
-            return new Arguments(output, List.copyOf(roots), List.copyOf(includes), List.copyOf(excludes));
+            return new Arguments(output, List.copyOf(roots), List.copyOf(includes), List.copyOf(excludes),
+                    useSystemClassLoader);
         }
         private static String require(String[] args, int index, String name) {
             if (index >= args.length) throw new IllegalArgumentException(name + " requires a value");

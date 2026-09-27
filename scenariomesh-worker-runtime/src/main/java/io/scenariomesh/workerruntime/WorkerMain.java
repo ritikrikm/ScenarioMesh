@@ -55,6 +55,17 @@ public final class WorkerMain {
         // fingerprint used by Maven preflight, including workers bootstrapped from a descriptor file.
         System.setProperty(TargetClasspathDescriptor.SYSTEM_PROPERTY,
                 TargetClasspathDescriptor.encodeInline(targetClasspath));
+        if (parsed.useSystemClassLoader) {
+            requireSystemClasspathContains(targetClasspath);
+            ClassLoader previous = thread.getContextClassLoader();
+            thread.setContextClassLoader(controlLoader);
+            try {
+                run(parsed, controlLoader);
+            } finally {
+                thread.setContextClassLoader(previous);
+            }
+            return;
+        }
         try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
             ClassLoader previous = thread.getContextClassLoader();
             thread.setContextClassLoader(targetLoader);
@@ -316,6 +327,20 @@ public final class WorkerMain {
         return Set.copyOf(ids);
     }
 
+    private static void requireSystemClasspathContains(List<Path> targetClasspath) {
+        Set<Path> application = currentClasspath().stream()
+                .map(path -> path.toAbsolutePath().normalize())
+                .collect(Collectors.toSet());
+        List<Path> missing = targetClasspath.stream()
+                .map(path -> path.toAbsolutePath().normalize())
+                .filter(path -> !application.contains(path))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("System-classloader takeover was requested but the worker application classpath "
+                    + "is missing target entries: " + missing);
+        }
+    }
+
     private static List<Path> currentClasspath() {
         String raw = System.getProperty("java.class.path", "");
         if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath descriptor was supplied");
@@ -463,13 +488,19 @@ public final class WorkerMain {
     }
 
     private record Arguments(String host, int port, String workerId, Path targetClasspathFile,
-                             String authenticationToken, Path forkedJvmLaunchFile) {
+                             String authenticationToken, Path forkedJvmLaunchFile,
+                             boolean useSystemClassLoader) {
         private static Arguments parse(String[] args) {
             String host = null, workerId = null, authenticationToken = null;
             Integer port = null;
             Path targetClasspathFile = null, forkedJvmLaunchFile = null;
+            boolean useSystemClassLoader = false;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
+                if ("--use-system-class-loader".equals(key)) {
+                    useSystemClassLoader = true;
+                    continue;
+                }
                 if (i + 1 >= args.length) throw new IllegalArgumentException(key + " requires a value");
                 String value = args[++i];
                 switch (key) {
@@ -485,7 +516,8 @@ public final class WorkerMain {
             if (host == null || port == null || workerId == null) {
                 throw new IllegalArgumentException("--host, --port and --worker-id are required; remote authentication is supplied through environment variables");
             }
-            return new Arguments(host, port, workerId, targetClasspathFile, authenticationToken, forkedJvmLaunchFile);
+            return new Arguments(host, port, workerId, targetClasspathFile, authenticationToken,
+                    forkedJvmLaunchFile, useSystemClassLoader);
         }
     }
 }

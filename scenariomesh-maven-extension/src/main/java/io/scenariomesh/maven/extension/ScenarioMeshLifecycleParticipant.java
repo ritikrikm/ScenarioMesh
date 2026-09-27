@@ -112,6 +112,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
             if (!providerAnalysis.providerIntents().isEmpty()
+                    && !decision.frameworks().isEmpty()
                     && !providerAnalysis.providerIntents().equals(decision.frameworks())) {
                 String reason = "explicit Maven provider selection " + providerAnalysis.providerIntents()
                         + " does not exactly match the modeled framework ownership " + decision.frameworks()

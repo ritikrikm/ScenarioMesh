@@ -41,7 +41,7 @@ final class ExecutorConfigurationSemantics {
     private static final Set<String> COMMON_PRESERVED = Set.of("skip", "skipTests");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
-            "reuseForks",
+            "reuseForks", "useSystemClassLoader",
             "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",

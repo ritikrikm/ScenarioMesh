@@ -359,11 +359,17 @@ final class WorkerPool implements TaskExecutionPool {
             args.add("--forked-jvm-launch-file");
             args.add(forkedJvmLaunchFile.toString());
         }
+        if (request.useSystemClassLoader()) {
+            args.add("--use-system-class-loader");
+        }
         List<String> workerJvmArgs = request.freshJvmPerTestClass()
                 ? request.controlJvmArgs()
                 : request.effectiveJvmArgs();
+        List<Path> workerClasspath = request.useSystemClassLoader()
+                ? request.targetRuntimeClasspath()
+                : request.runtimeClasspath();
         List<String> command = JavaProcessSupport.command(
-                request.runtimeClasspath(), workerJvmArgs, request.effectiveSystemProperties(),
+                workerClasspath, workerJvmArgs, request.effectiveSystemProperties(),
                 WorkerMain.class.getName(), args);
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile()).redirectErrorStream(true);

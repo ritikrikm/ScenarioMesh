@@ -139,9 +139,15 @@ public record RunRequest(Path projectDirectory,
                 RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "false"));
     }
 
+    boolean useSystemClassLoader() {
+        return Boolean.parseBoolean(executorSystemProperties.getOrDefault(
+                RuntimePropertyNames.MAVEN_USE_SYSTEM_CLASSLOADER, "false"));
+    }
+
     Map<String,String> effectiveSystemProperties(){
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
         result.remove(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS);
+        result.remove(RuntimePropertyNames.MAVEN_USE_SYSTEM_CLASSLOADER);
         result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER);
         result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED);
         result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_STATISTICS_FILE);

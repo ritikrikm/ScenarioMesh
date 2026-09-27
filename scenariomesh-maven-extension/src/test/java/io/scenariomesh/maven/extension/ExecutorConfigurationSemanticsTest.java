@@ -33,6 +33,12 @@ class ExecutorConfigurationSemanticsTest {
     }
 
     @Test
+    void systemClassLoaderTopologyIsPreservedForSurefire() {
+        assertEquals(ExecutorConfigurationSemantics.Kind.PRESERVED,
+                ExecutorConfigurationSemantics.forSurefire("useSystemClassLoader").kind());
+    }
+
+    @Test
     void dependencyTestScanningIsPreservedForScenarioMeshOwnership() {
         var scan = ExecutorConfigurationSemantics.forSurefire("dependenciesToScan");
         assertEquals(ExecutorConfigurationSemantics.Kind.PRESERVED, scan.kind());
