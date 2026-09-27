@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ForkedJvmLaunchTest {
     @TempDir Path directory;
@@ -24,5 +25,15 @@ class ForkedJvmLaunchTest {
         ForkedJvmLaunch.write(file, expected);
 
         assertEquals(expected, ForkedJvmLaunch.read(file));
+    }
+
+    @Test
+    void freshTargetJvmApplicationClasspathIncludesTargetEntries() {
+        Path targetClasses = directory.resolve("target-test-classes").toAbsolutePath().normalize();
+
+        String classpath = WorkerMain.forkedProcessClasspath(List.of(targetClasses));
+
+        assertTrue(java.util.Arrays.asList(classpath.split(
+                java.util.regex.Pattern.quote(java.io.File.pathSeparator))).contains(targetClasses.toString()));
     }
 }
