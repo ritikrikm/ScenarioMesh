@@ -31,6 +31,10 @@ public final class RuntimePropertyNames {
     public static final String MAVEN_PROMOTE_USER_PROPERTIES =
             INTERNAL_PREFIX + "maven.promoteUserPropertiesToSystemProperties";
 
+    /** When true, Maven reuseForks=false requires a fresh worker JVM for every class-scoped work unit. */
+    public static final String MAVEN_FRESH_JVM_PER_TEST_CLASS =
+            INTERNAL_PREFIX + "maven.freshJvmPerTestClass";
+
     /** Internal Maven class-run-order contract consumed only by the coordinator. */
     public static final String MAVEN_RUN_ORDER =
             INTERNAL_PREFIX + "maven.runOrder";
