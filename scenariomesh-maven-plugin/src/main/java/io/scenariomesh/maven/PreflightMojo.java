@@ -379,6 +379,7 @@ public final class PreflightMojo extends AbstractMojo {
         properties.remove(RuntimePropertyNames.MAVEN_FAIL_IF_NO_TESTS);
         properties.remove(RuntimePropertyNames.MAVEN_FAIL_IF_NO_SPECIFIED_TESTS);
         properties.remove(RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION);
+        properties.remove(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS);
         properties.remove(RuntimePropertyNames.MAVEN_RUN_ORDER);
         properties.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED);
         properties.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_STATISTICS_FILE);
