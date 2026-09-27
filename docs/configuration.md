@@ -272,3 +272,22 @@ Unknown configuration keys are rejected. This is deliberate: a typo such as `wor
 ## Why there are no Selenium/browser/company-library switches here
 
 ScenarioMesh operates above the test-framework layer. Selenium, REST Assured, Jackson, internal company libraries and other project dependencies are supplied through Maven's resolved test runtime classpath. They should not require ScenarioMesh-specific configuration unless they affect Maven/test execution semantics.
+
+
+## Diagnostic trace mode
+
+ScenarioMesh has an opt-in coded diagnostic trace for compatibility investigations. It is disabled by default and does not change ownership decisions.
+
+Enable it for a Maven invocation:
+
+```bash
+mvn test -Dscenariomesh.debug=true
+```
+
+or with the environment:
+
+```bash
+SCENARIOMESH_DEBUG=true mvn test
+```
+
+Trace records use stable short codes such as `SMDBG-PREFLIGHT-001`, `SMDBG-PROBE-002`, and `SMDBG-CP-003`. These codes are intended to make CI logs easy to search and to provide compact diagnostic context to humans or AI tooling. The trace reports decision metadata and counts; it must not emit secret values, authentication tokens, or complete environment/property maps.
