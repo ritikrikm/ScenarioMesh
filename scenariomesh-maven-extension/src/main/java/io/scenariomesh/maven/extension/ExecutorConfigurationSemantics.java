@@ -68,6 +68,8 @@ final class ExecutorConfigurationSemantics {
     }
 
     static Classification forFailsafe(String name) {
+        // Failsafe lifecycle handling is unchanged by the Surefire reuseForks guard.
+        if ("reuseForks".equals(name)) return Classification.replaced();
         if (SCENARIOMESH_OWNED.contains(name) || EFFECTIVE_SYSTEM_PROPERTY_SOURCES.contains(name)) {
             return Classification.replaced();
         }
