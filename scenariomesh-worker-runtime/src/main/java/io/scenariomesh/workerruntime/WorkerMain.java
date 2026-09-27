@@ -22,7 +22,7 @@ import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
+import java.nio.file.Files;\nimport java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -66,6 +66,9 @@ public final class WorkerMain {
     }
 
     private static void run(Arguments parsed, ClassLoader classLoader) throws Exception {
+        ForkedJvmLaunch forkedJvmLaunch = parsed.forkedJvmLaunchFile == null
+                ? null
+                : ForkedJvmLaunch.read(parsed.forkedJvmLaunchFile);
         Map<String, String> environment = System.getenv();
         boolean localBootstrap = parsed.authenticationToken != null;
         String token = localBootstrap
@@ -182,12 +185,18 @@ public final class WorkerMain {
                             heartbeatEnvelope -> write(writer, heartbeatEnvelope, sessionProtocol))) {
                         trace("LEASE_HEARTBEAT_STARTED worker=" + parsed.workerId
                                 + " workUnit=" + value(envelope.workUnitId()) + " lease=" + value(envelope.leaseId()));
-                        execution = executeWorkUnit(adapters, dispatched, context);
+                        if (forkedJvmLaunch != null) {
+                            execution = executeForkedWorkUnit(
+                                    forkedJvmLaunch, dispatched, parsed.workerId, envelope.attempt());
+                            cleaned = execution.results();
+                        } else {
+                            execution = executeWorkUnit(adapters, dispatched, context);
+                            cleaned = runCleanupHooks(cleanupHooks, execution.tasks(), context, execution.results());
+                        }
                         trace("ADAPTER_EXECUTION_DONE worker=" + parsed.workerId
                                 + " workUnit=" + value(envelope.workUnitId())
                                 + " materializedTasks=" + execution.tasks().size()
                                 + " rawResults=" + execution.results().size());
-                        cleaned = runCleanupHooks(cleanupHooks, execution.tasks(), context, execution.results());
                         heartbeat.throwIfFailed();
                     }
                     long failed = cleaned.stream().filter(result -> !result.buildSuccessful()).count();
@@ -208,6 +217,50 @@ public final class WorkerMain {
             throw exception;
         } finally {
             trace("EXIT worker=" + parsed.workerId);
+        }
+    }
+
+    private static WorkUnitExecution executeForkedWorkUnit(
+            ForkedJvmLaunch launch, List<ScenarioTask> tasks, String workerId, int attempt) throws Exception {
+        Path requestFile = Files.createTempFile("scenariomesh-work-", ".request");
+        Path responseFile = Files.createTempFile("scenariomesh-work-", ".response");
+        Files.deleteIfExists(responseFile);
+        try {
+            ForkedWorkUnitMain.writeRequest(
+                    requestFile, new ForkedWorkUnitMain.Request(tasks, workerId, attempt));
+
+            List<String> command = new ArrayList<>();
+            command.add(launch.javaExecutable());
+            command.add("-ea");
+            command.addAll(launch.jvmArgs());
+            launch.systemProperties().entrySet().stream()
+                    .filter(entry -> !entry.getKey().startsWith("scenariomesh.internal."))
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> command.add("-D" + entry.getKey() + "=" + entry.getValue()));
+            List<Path> targetClasspath = launch.targetClasspath().stream().map(Path::of).toList();
+            command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "="
+                    + TargetClasspathDescriptor.encodeInline(targetClasspath));
+            command.add("-cp");
+            command.add(System.getProperty("java.class.path", ""));
+            command.add(ForkedWorkUnitMain.class.getName());
+            command.add(requestFile.toString());
+            command.add(responseFile.toString());
+
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            process.getInputStream().transferTo(System.out);
+            int exit = process.waitFor();
+            if (exit != 0 || !Files.isRegularFile(responseFile)) {
+                return new WorkUnitExecution(tasks, failures(tasks,
+                        new ExecutionContext(Thread.currentThread().getContextClassLoader(),
+                                new WorkerId(workerId), attempt, Map.of()),
+                        "Fresh target JVM exited with code " + exit + " before returning results",
+                        "ForkedTargetJvmFailure"));
+            }
+            ForkedWorkUnitMain.Response response = ForkedWorkUnitMain.readResponse(responseFile);
+            return new WorkUnitExecution(response.tasks(), response.results());
+        } finally {
+            Files.deleteIfExists(requestFile);
+            Files.deleteIfExists(responseFile);
         }
     }
 
@@ -393,11 +446,12 @@ public final class WorkerMain {
         System.err.println(TRACE_PREFIX + " " + Instant.now() + " thread=" + Thread.currentThread().getName() + " " + message);
     }
 
-    private record Arguments(String host, int port, String workerId, Path targetClasspathFile, String authenticationToken) {
+    private record Arguments(String host, int port, String workerId, Path targetClasspathFile,
+                             String authenticationToken, Path forkedJvmLaunchFile) {
         private static Arguments parse(String[] args) {
             String host = null, workerId = null, authenticationToken = null;
             Integer port = null;
-            Path targetClasspathFile = null;
+            Path targetClasspathFile = null, forkedJvmLaunchFile = null;
             for (int i = 0; i < args.length; i++) {
                 String key = args[i];
                 if (i + 1 >= args.length) throw new IllegalArgumentException(key + " requires a value");
@@ -408,13 +462,14 @@ public final class WorkerMain {
                     case "--worker-id" -> workerId = value;
                     case "--target-classpath-file" -> targetClasspathFile = Path.of(value).toAbsolutePath().normalize();
                     case "--auth-token" -> authenticationToken = value;
+                    case "--forked-jvm-launch-file" -> forkedJvmLaunchFile = Path.of(value).toAbsolutePath().normalize();
                     default -> throw new IllegalArgumentException("Unknown worker argument: " + key);
                 }
             }
             if (host == null || port == null || workerId == null) {
                 throw new IllegalArgumentException("--host, --port and --worker-id are required; remote authentication is supplied through environment variables");
             }
-            return new Arguments(host, port, workerId, targetClasspathFile, authenticationToken);
+            return new Arguments(host, port, workerId, targetClasspathFile, authenticationToken, forkedJvmLaunchFile);
         }
     }
 }
