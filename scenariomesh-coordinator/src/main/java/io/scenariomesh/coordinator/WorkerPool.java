@@ -18,7 +18,7 @@ import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 import io.scenariomesh.protocol.ProtocolFrameReader;
 import io.scenariomesh.scheduler.FifoSchedulingStrategy;
-import io.scenariomesh.workerruntime.JsonCodec;
+import io.scenariomesh.workerruntime.ForkedJvmLaunch;\nimport io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.WorkerMain;
 
 import java.io.BufferedWriter;
@@ -256,9 +256,6 @@ final class WorkerPool implements TaskExecutionPool {
     }
 
     private String recycleReason(int tasksOnWorker, WorkerTelemetry telemetry) {
-        if (request.freshJvmPerTestClass()) {
-            return "Maven reuseForks=false fresh-JVM-per-test-class semantics";
-        }
         if (request.config().taskCountRecyclingEnabled()
                 && tasksOnWorker >= request.config().maxTasksPerWorker()) {
             return "task-count recycling after " + tasksOnWorker + " task(s)";
@@ -336,13 +333,34 @@ final class WorkerPool implements TaskExecutionPool {
     private Path logsDirectory() { return dir.resolve("logs"); }
     private void prepareLogsDirectory() throws Exception { if (request.config().workerLogFiles()) Files.createDirectories(logsDirectory()); }
 
+    private Path prepareForkedJvmLaunch() throws Exception {
+        Files.createDirectories(dir);
+        Path file = dir.resolve("forked-target-jvm.bin");
+        Map<String, String> targetProperties = new LinkedHashMap<>(request.effectiveSystemProperties());
+        targetProperties.remove(RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY);
+        ForkedJvmLaunch.write(file, new ForkedJvmLaunch(
+                request.javaExecutable().toString(),
+                request.effectiveJvmArgs(),
+                targetProperties,
+                request.targetRuntimeClasspath().stream().map(Path::toString).toList()));
+        return file;
+    }
+
     private void launchWorker(String id) throws Exception {
         prepareLogsDirectory();
         String host = InetAddress.getLoopbackAddress().getHostAddress();
         int port = server.getLocalPort();
-        List<String> args = List.of("--host", host, "--port", Integer.toString(port), "--worker-id", id, "--auth-token", token);
+        List<String> args = new ArrayList<>(List.of(
+                "--host", host, "--port", Integer.toString(port), "--worker-id", id, "--auth-token", token));
+        if (forkedJvmLaunchFile != null) {
+            args.add("--forked-jvm-launch-file");
+            args.add(forkedJvmLaunchFile.toString());
+        }
+        List<String> workerJvmArgs = request.freshJvmPerTestClass()
+                ? request.controlJvmArgs()
+                : request.effectiveJvmArgs();
         List<String> command = JavaProcessSupport.command(
-                request.runtimeClasspath(), request.effectiveJvmArgs(), request.effectiveSystemProperties(),
+                request.runtimeClasspath(), workerJvmArgs, request.effectiveSystemProperties(),
                 WorkerMain.class.getName(), args);
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile()).redirectErrorStream(true);
