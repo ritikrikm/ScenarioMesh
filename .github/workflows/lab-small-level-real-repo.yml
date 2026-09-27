@@ -22,18 +22,26 @@ jobs:
             url: https://github.com/cucumber/cucumber-jvm-starter-maven-java.git
             ref: 3d900db164a29f4ccb5e4aa6eaddf62d3312b3bc
             project_dir: .
+            expected_mode: takeover
+            maven_args: ''
           - target: junit-official-maven
             url: https://github.com/junit-team/junit-examples.git
             ref: bb7eb03dc51dc8ea9ddebe8022e4362d0d427174
             project_dir: junit-jupiter-starter-maven
+            expected_mode: takeover
+            maven_args: ''
           - target: spring-petclinic
             url: https://github.com/spring-projects/spring-petclinic.git
             ref: 818c4136ea971c21674525f9053de0d9c7ad8cfe
             project_dir: .
+            expected_mode: takeover
+            maven_args: ''
           - target: apache-commons-lang
             url: https://github.com/apache/commons-lang.git
             ref: 29624cdb50ecd794207d561345b2fc9ca3a9d326
             project_dir: .
+            expected_mode: pass-through
+            maven_args: '-Drat.skip=true'
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -57,6 +65,8 @@ jobs:
           TARGET_URL: ${{ matrix.url }}
           TARGET_REF: ${{ matrix.ref }}
           TARGET_PROJECT_DIR: ${{ matrix.project_dir }}
+          TARGET_EXPECTED_MODE: ${{ matrix.expected_mode }}
+          TARGET_MAVEN_ARGS: ${{ matrix.maven_args }}
           SCENARIOMESH_ROOT: ${{ github.workspace }}
           SCENARIOMESH_WORKERS: '4'
           LAB_OUT: ${{ runner.temp }}/scenariomesh-real-lab/${{ matrix.target }}
