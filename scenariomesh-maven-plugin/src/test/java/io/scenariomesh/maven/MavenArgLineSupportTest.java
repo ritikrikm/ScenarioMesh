@@ -32,6 +32,23 @@ class MavenArgLineSupportTest {
     }
 
     @Test
+    void normalizesWhitespaceAndTokenizesQuotedValuesLikeSurefire() {
+        List<String> args = MavenArgLineSupport.merge(
+                List.of(),
+                "-Done=1\t-Dtwo=\"hello world\"\n-Xmx256m",
+                new Properties(), new Properties(), new Properties());
+
+        assertEquals(List.of("-Done=1", "-Dtwo=hello world", "-Xmx256m"), args);
+    }
+
+    @Test
+    void preservesSurefireSharedUtilsBackslashQuoteSemantics() {
+        assertEquals(
+                List.of("-Dvalue=\\\\\"hello\\\\\""),
+                MavenArgLineSupport.tokenizeLikeSurefire("-Dvalue=\\\\\"hello\\\\\""));
+    }
+
+    @Test
     void malformedArgLineFailsClosedInsteadOfGuessingTokenization() {
         assertThrows(IllegalArgumentException.class, () -> MavenArgLineSupport.merge(
                 List.of(), "-Dvalue=\"unterminated", new Properties(), new Properties(), new Properties()));
