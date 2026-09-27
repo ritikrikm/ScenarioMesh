@@ -90,6 +90,12 @@ public final class PreflightMojo extends AbstractMojo {
                 passThrough("no ScenarioMesh execution plan is available for runtime ownership proof");
                 return;
             }
+            if (config.distributed().remote() && plans.stream().anyMatch(plan ->
+                    Boolean.parseBoolean(plan.executorSystemProperties().getOrDefault(
+                            RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "false")))) {
+                passThrough("reuseForks=false requires a fresh JVM per test class; remote prepared-worker replacement is not yet preflight-proven");
+                return;
+            }
 
             List<PlanProof> proofs = new ArrayList<>();
             for (ProbePlan plan : plans) proofs.add(new PlanProof(plan, provePlan(plan, javaExecutable)));
