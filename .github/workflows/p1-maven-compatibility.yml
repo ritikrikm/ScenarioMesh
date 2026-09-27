@@ -45,7 +45,7 @@ jobs:
           test -f target/scenariomesh/summary.json
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' target/scenariomesh/summary.json
-          maven_java_home="$(mvn -v 2>&1 | sed -n 's/^Java home: //p' | head -n1)"
+          maven_java_home="$("$JAVA_HOME/bin/java" -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.home = //p' | head -n1)"
           test -n "$maven_java_home"
           grep -Fq "Test JVM                   : $maven_java_home/bin/java" unset-jvm-run.log
       - name: Surefire jdkToolchain selection is preserved
