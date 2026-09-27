@@ -1,7 +1,7 @@
 package io.scenariomesh.coordinator;
 
 import io.scenariomesh.config.ScenarioMeshConfig;
-import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.DiscoverySelection;\nimport io.scenariomesh.core.RuntimePropertyNames;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -24,6 +24,30 @@ class RunRequestForkLaunchTest {
         List<String> args = request.effectiveJvmArgs();
         assertTrue(args.contains("-da"));
         assertFalse(request.enableAssertions());
+    }
+
+    @Test
+    void freshClassJvmKeepsMavenArgLineOutOfSupervisor() {
+        RunRequest request = new RunRequest(
+                directory,
+                List.of(directory),
+                List.of(directory),
+                List.of(directory),
+                Map.of(),
+                ScenarioMeshConfig.defaults(directory.resolve("target")),
+                DiscoverySelection.all(),
+                List.of("-Xmx25M", "-Dtarget.flag=true"),
+                Map.of(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "true"),
+                Path.of(System.getProperty("java.home"), "bin", "java"),
+                true,
+                Map.of(),
+                Set.of(),
+                directory.resolve("work"));
+
+        assertTrue(request.effectiveJvmArgs().contains("-Xmx25M"));
+        assertTrue(request.effectiveJvmArgs().contains("-Dtarget.flag=true"));
+        assertFalse(request.controlJvmArgs().contains("-Xmx25M"));
+        assertFalse(request.controlJvmArgs().contains("-Dtarget.flag=true"));
     }
 
     @Test
