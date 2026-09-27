@@ -15,15 +15,15 @@ class TestJvmResolverTest {
     }
 
     @Test
-    void userThenSystemThenProjectPropertyPrecedenceMatchesMaven() {
+    void systemThenUserThenProjectPropertyPrecedenceMatchesMavenPluginEvaluation() {
         Properties project = properties("test.jvm", "project-java");
         Properties system = properties("test.jvm", "system-java");
         Properties user = properties("test.jvm", "user-java");
 
-        assertEquals("user-java", TestJvmResolver.resolveProperty("test.jvm", project, system, user));
-        user.clear();
         assertEquals("system-java", TestJvmResolver.resolveProperty("test.jvm", project, system, user));
         system.clear();
+        assertEquals("user-java", TestJvmResolver.resolveProperty("test.jvm", project, system, user));
+        user.clear();
         assertEquals("project-java", TestJvmResolver.resolveProperty("test.jvm", project, system, user));
     }
 
