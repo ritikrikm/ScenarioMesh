@@ -124,8 +124,24 @@ public record RunRequest(Path projectDirectory,
         return List.copyOf(result);
     }
 
+    /**
+     * JVM arguments for the ScenarioMesh supervisor when Maven requires a fresh target JVM per
+     * test class. Maven executor argLine belongs to the target child, not to the control plane.
+     */
+    List<String> controlJvmArgs() {
+        List<String> result = new ArrayList<>(config.workerJvmArgs());
+        if (!enableAssertions) result.add("-da");
+        return List.copyOf(result);
+    }
+
+    boolean freshJvmPerTestClass() {
+        return Boolean.parseBoolean(executorSystemProperties.getOrDefault(
+                RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "false"));
+    }
+
     Map<String,String> effectiveSystemProperties(){
         Map<String,String> result=new LinkedHashMap<>(executorSystemProperties);
+        result.remove(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS);
         result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER);
         result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED);
         result.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_STATISTICS_FILE);

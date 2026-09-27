@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -17,6 +18,10 @@ TARGET_PROJECT_DIR = os.environ.get("TARGET_PROJECT_DIR", ".").strip() or "."
 SM_ROOT = Path(os.environ.get("SCENARIOMESH_ROOT", Path.cwd())).resolve()
 OUT = Path(os.environ.get("LAB_OUT", "/tmp/scenariomesh-small-lab")).resolve()
 WORKERS = int(os.environ.get("SCENARIOMESH_WORKERS", "4"))
+EXPECTED_MODE = os.environ.get("TARGET_EXPECTED_MODE", "takeover").strip().lower()
+MAVEN_ARGS = shlex.split(os.environ.get("TARGET_MAVEN_ARGS", ""))
+if EXPECTED_MODE not in {"takeover", "pass-through", "either"}:
+    raise RuntimeError(f"Unsupported TARGET_EXPECTED_MODE: {EXPECTED_MODE}")
 
 ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 RESULT_RE = re.compile(
@@ -130,11 +135,14 @@ def main() -> int:
     print("=== Small-level ScenarioMesh real-repository lab ===")
     print(f"Target: {TARGET_NAME} — {TARGET_URL} @ {TARGET_REF}")
     print(f"Project dir: {TARGET_PROJECT_DIR}")
+    print(f"Expected mode: {EXPECTED_MODE}")
+    print(f"Additional Maven args: {MAVEN_ARGS}")
     print(f"ScenarioMesh: {SM_ROOT}")
 
     native = clone(OUT / "native")
     native_log = OUT / "native-maven.log"
-    native_rc = run(["mvn", "-B", "-Dstyle.color=never", "test"], native, native_log)
+    native_cmd = ["mvn", "-B", "-Dstyle.color=never", *MAVEN_ARGS, "test"]
+    native_rc = run(native_cmd, native, native_log)
     native_counts = surefire_counts(native)
     native_count = native_counts["total"]
     print(
@@ -161,7 +169,7 @@ def main() -> int:
 
     scenario_log = OUT / "scenariomesh-maven.log"
     scenario_cmd = [
-        "mvn", "-B", "-Dstyle.color=never", "test",
+        "mvn", "-B", "-Dstyle.color=never", *MAVEN_ARGS, "test",
         "-Dscenariomesh.enabled=true",
         f"-Dscenariomesh.workers.count={WORKERS}",
         "-Dscenariomesh.execution.adapter=auto",
@@ -187,7 +195,16 @@ def main() -> int:
         "takeover": "ScenarioMesh: takeover enabled" in log,
         "pass_through": "pass-through" in log.lower(),
         "junit_platform_seen": "junit-platform" in log.lower(),
+        "expected_mode": EXPECTED_MODE,
     }
+
+    scenario_native_counts = surefire_counts(target)
+    result.update({
+        "scenario_native_testcases": scenario_native_counts["total"],
+        "scenario_native_passed": scenario_native_counts["passed"],
+        "scenario_native_skipped": scenario_native_counts["skipped"],
+        "scenario_native_failed": scenario_native_counts["failed"],
+    })
 
     match = RESULT_RE.search(log)
     if match:
@@ -217,34 +234,71 @@ def main() -> int:
     errors: list[str] = []
     if scenario_rc != 0:
         errors.append(f"ScenarioMesh Maven exit was {scenario_rc}")
-    if not result["takeover"]:
-        errors.append("ScenarioMesh did not prove takeover ownership")
-    if result["pass_through"]:
-        errors.append("ScenarioMesh selected/passaged through to native Maven instead of owning this supported small target")
-    if not result["junit_platform_seen"]:
-        errors.append("JUnit Platform adapter was not observed")
-    if not match:
-        errors.append("ScenarioMesh result summary line was not found")
-    else:
-        if result["discovered"] <= 0:
-            errors.append("ScenarioMesh reported zero discovery work units")
-        if result["logical"] != native_count:
-            errors.append(f"Logical execution mismatch/duplication: native={native_count}, ScenarioMesh={result['logical']}")
-        if result["passed"] != native_counts["passed"]:
-            errors.append(
-                f"Pass-count mismatch: native={native_counts['passed']}, ScenarioMesh={result['passed']}"
-            )
-        if result["skipped"] != native_counts["skipped"]:
-            errors.append(
-                f"Skip-count mismatch: native={native_counts['skipped']}, ScenarioMesh={result['skipped']}"
-            )
-        if result["failed"] != native_counts["failed"]:
-            errors.append(
-                f"Failure-count mismatch: native={native_counts['failed']}, ScenarioMesh={result['failed']}"
-            )
 
-    if not summary_path:
-        errors.append("ScenarioMesh summary.json was not generated")
+    if EXPECTED_MODE == "takeover":
+        if not result["takeover"]:
+            errors.append("ScenarioMesh did not prove takeover ownership")
+        if result["pass_through"]:
+            errors.append("ScenarioMesh selected pass-through instead of owning this takeover target")
+        if not result["junit_platform_seen"]:
+            errors.append("JUnit Platform adapter was not observed")
+        if not match:
+            errors.append("ScenarioMesh result summary line was not found")
+        else:
+            if result["discovered"] <= 0:
+                errors.append("ScenarioMesh reported zero discovery work units")
+            if result["logical"] != native_count:
+                errors.append(f"Logical execution mismatch/duplication: native={native_count}, ScenarioMesh={result['logical']}")
+            if result["passed"] != native_counts["passed"]:
+                errors.append(
+                    f"Pass-count mismatch: native={native_counts['passed']}, ScenarioMesh={result['passed']}"
+                )
+            if result["skipped"] != native_counts["skipped"]:
+                errors.append(
+                    f"Skip-count mismatch: native={native_counts['skipped']}, ScenarioMesh={result['skipped']}"
+                )
+            if result["failed"] != native_counts["failed"]:
+                errors.append(
+                    f"Failure-count mismatch: native={native_counts['failed']}, ScenarioMesh={result['failed']}"
+                )
+        if not summary_path:
+            errors.append("ScenarioMesh summary.json was not generated")
+
+    elif EXPECTED_MODE == "pass-through":
+        if result["takeover"]:
+            errors.append("ScenarioMesh unexpectedly took ownership of a pass-through target")
+        if not result["pass_through"]:
+            errors.append("ScenarioMesh did not report pass-through for the expected pass-through target")
+        for key in ("total", "passed", "skipped", "failed"):
+            scenario_key = {
+                "total": "scenario_native_testcases",
+                "passed": "scenario_native_passed",
+                "skipped": "scenario_native_skipped",
+                "failed": "scenario_native_failed",
+            }[key]
+            if result[scenario_key] != native_counts[key]:
+                errors.append(
+                    f"Pass-through {key} mismatch: native={native_counts[key]}, ScenarioMesh-run={result[scenario_key]}"
+                )
+
+    else:
+        if result["takeover"] and match:
+            if result["logical"] != native_count:
+                errors.append(f"Logical execution mismatch/duplication: native={native_count}, ScenarioMesh={result['logical']}")
+        elif result["pass_through"]:
+            for key in ("total", "passed", "skipped", "failed"):
+                scenario_key = {
+                    "total": "scenario_native_testcases",
+                    "passed": "scenario_native_passed",
+                    "skipped": "scenario_native_skipped",
+                    "failed": "scenario_native_failed",
+                }[key]
+                if result[scenario_key] != native_counts[key]:
+                    errors.append(
+                        f"Pass-through {key} mismatch: native={native_counts[key]}, ScenarioMesh-run={result[scenario_key]}"
+                    )
+        else:
+            errors.append("ScenarioMesh neither proved takeover nor reported pass-through")
 
     if errors:
         print("\nSMALL_LEVEL_GATE=FAIL")

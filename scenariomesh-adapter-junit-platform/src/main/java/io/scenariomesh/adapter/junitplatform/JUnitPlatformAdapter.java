@@ -155,7 +155,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         for (ScenarioTask task : tasks) {
             if (!isMaterializer(task)) {
                 concreteTasks.add(task);
-                concreteResults.add(resultFor(task, execution.outcomes().get(task.selector()), context));
+                concreteResults.add(resultFor(task, outcomeFor(task.selector(), execution), context));
                 continue;
             }
 
@@ -167,13 +167,13 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
                     .toList();
             if (children.isEmpty()) {
                 concreteTasks.add(task);
-                concreteResults.add(resultFor(task, null, context));
+                concreteResults.add(resultFor(task, outcomeFor(task.selector(), execution), context));
                 continue;
             }
             for (TestIdentifier child : children) {
                 ScenarioTask materialized = materializedTask(task, child);
                 concreteTasks.add(materialized);
-                concreteResults.add(resultFor(materialized, execution.outcomes().get(child.getUniqueId()), context));
+                concreteResults.add(resultFor(materialized, outcomeFor(child.getUniqueId(), execution), context));
             }
         }
         return new WorkUnitExecution(concreteTasks, concreteResults);
@@ -215,7 +215,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         Launcher launcher = LauncherFactory.create();
         launcher.registerTestExecutionListeners(listener);
         launcher.execute(request);
-        return new ScopeExecution(listener.identifiers(), listener.outcomes());
+        return new ScopeExecution(listener.identifiers(), listener.outcomes(), listener.skippedContainers());
     }
 
     private boolean isDirectCucumberScope(List<ScenarioTask> tasks) {
@@ -283,6 +283,16 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         return taskFor(child, scope, parent);
     }
 
+    private CachedOutcome outcomeFor(String selector, ScopeExecution execution) {
+        CachedOutcome direct = execution.outcomes().get(selector);
+        if (direct != null) return direct;
+        return execution.skippedContainers().entrySet().stream()
+                .filter(entry -> selector.startsWith(entry.getKey() + "/"))
+                .max(Comparator.comparingInt(entry -> entry.getKey().length()))
+                .map(Map.Entry::getValue)
+                .orElse(null);
+    }
+
     private ExecutionResult resultFor(ScenarioTask task, CachedOutcome outcome, ExecutionContext context) {
         if (outcome == null) {
             Instant now = Instant.now();
@@ -343,6 +353,7 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         private final Map<String, Instant> starts = new HashMap<>();
         private final Map<String, TestIdentifier> identifiers = new LinkedHashMap<>();
         private final Map<String, CachedOutcome> outcomes = new LinkedHashMap<>();
+        private final Map<String, CachedOutcome> skippedContainers = new LinkedHashMap<>();
 
         @Override public void dynamicTestRegistered(TestIdentifier identifier) { identifiers.put(identifier.getUniqueId(), identifier); }
         @Override public void executionStarted(TestIdentifier identifier) {
@@ -351,10 +362,11 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         }
         @Override public void executionSkipped(TestIdentifier identifier, String reason) {
             identifiers.put(identifier.getUniqueId(), identifier);
-            if (!identifier.isTest()) return;
             Instant now = Instant.now();
-            outcomes.put(identifier.getUniqueId(), new CachedOutcome(ResultStatus.SKIPPED, now, now,
-                    reason == null || reason.isBlank() ? "JUnit Platform skipped the selected test" : reason, "JUnitSkipped"));
+            CachedOutcome skipped = new CachedOutcome(ResultStatus.SKIPPED, now, now,
+                    reason == null || reason.isBlank() ? "JUnit Platform skipped the selected test" : reason, "JUnitSkipped");
+            if (identifier.isTest()) outcomes.put(identifier.getUniqueId(), skipped);
+            else skippedContainers.put(identifier.getUniqueId(), skipped);
         }
         @Override public void executionFinished(TestIdentifier identifier, TestExecutionResult executionResult) {
             identifiers.put(identifier.getUniqueId(), identifier);
@@ -376,9 +388,13 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
         }
         Map<String, TestIdentifier> identifiers() { return Map.copyOf(identifiers); }
         Map<String, CachedOutcome> outcomes() { return Map.copyOf(outcomes); }
+        Map<String, CachedOutcome> skippedContainers() { return Map.copyOf(skippedContainers); }
     }
 
-    private record ScopeExecution(Map<String, TestIdentifier> identifiers, Map<String, CachedOutcome> outcomes) {}
+    private record ScopeExecution(
+            Map<String, TestIdentifier> identifiers,
+            Map<String, CachedOutcome> outcomes,
+            Map<String, CachedOutcome> skippedContainers) {}
     private record ExecutionScope(String id, String selector, String kind) {}
     private record CachedOutcome(ResultStatus status, Instant started, Instant finished, String failureMessage, String failureType) {
         ExecutionResult toResult(ScenarioTask task, ExecutionContext context) {

@@ -1,5 +1,6 @@
 package io.scenariomesh.maven;
 
+import io.scenariomesh.core.DebugTrace;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.artifact.resolver.filter.ArtifactFilter;
 import org.apache.maven.artifact.resolver.filter.ScopeArtifactFilter;
@@ -33,6 +34,11 @@ final class RuntimeClasspathResolver {
                                    List<String> classpathDependencyExcludes,
                                    String classpathDependencyScopeExclude,
                                    List<String> targetFrameworkClasspathElements) throws Exception {
+        DebugTrace.log("SMDBG-CP-001", "resolve artifact=" + project.getArtifactId()
+                + " pluginArtifacts=" + (pluginArtifacts == null ? 0 : pluginArtifacts.size())
+                + " extraElements=" + (additionalClasspathElements == null ? 0 : additionalClasspathElements.size())
+                + " dependencyExcludes=" + (classpathDependencyExcludes == null ? 0 : classpathDependencyExcludes.size())
+                + " scopeExclude=" + (classpathDependencyScopeExclude == null ? "none" : classpathDependencyScopeExclude));
         boolean targetOwnsJUnitPlatform = targetFrameworkClasspathElements != null
                 && !targetFrameworkClasspathElements.isEmpty();
         Set<Path> plugin = pluginClasspath(pluginArtifacts, targetOwnsJUnitPlatform);
@@ -62,6 +68,10 @@ final class RuntimeClasspathResolver {
             if (file != null) excludedArtifacts.add(file.toPath().toAbsolutePath().normalize());
         }
         target.removeAll(excludedArtifacts);
+        DebugTrace.log("SMDBG-CP-002", "artifact=" + project.getArtifactId()
+                + " nativeArtifacts=" + allArtifacts.size()
+                + " excludedArtifacts=" + excludedArtifacts.size()
+                + " targetAfterExcludes=" + target.size());
 
         if (additionalClasspathElements != null) {
             for (String element : additionalClasspathElements) {
@@ -82,6 +92,11 @@ final class RuntimeClasspathResolver {
         // The worker control plane is launched on -classpath.  It must not also be placed on a
         // target JPMS module path: control jars can carry service metadata that is not a valid
         // automatic module, and Maven does not make plugin implementation artifacts test modules.
+        DebugTrace.log("SMDBG-CP-003", "artifact=" + project.getArtifactId()
+                + " controlCp=" + plugin.size()
+                + " targetCp=" + target.size()
+                + " modulePath=" + modulePath.size()
+                + " targetOwnsJUnitPlatform=" + targetOwnsJUnitPlatform);
         return new RuntimeClasspaths(List.copyOf(plugin), List.copyOf(target), modulePath);
     }
 

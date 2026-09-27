@@ -16,6 +16,18 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
+      - name: Packaged plugin preserves non-empty argLine outside the reactor
+        run: |
+          isolated="$RUNNER_TEMP/scenariomesh-argline-isolated"
+          rm -rf "$isolated"
+          cp -R examples/failsafe-junit5-example "$isolated"
+          cd "$isolated"
+          mvn -B clean verify | tee argline-isolated.log
+          grep -Fq 'MAVEN_OWNERSHIP owner=SCENARIOMESH' argline-isolated.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 3' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 3' target/scenariomesh/summary.json
+          test -f target/scenariomesh/deferred-verification.properties
       - name: Target Jackson cannot break ScenarioMesh preflight
         working-directory: examples/junit5-conflicting-jackson-example
         run: |
@@ -33,6 +45,21 @@ jobs:
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' target/scenariomesh/summary.json
           grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" target-run.log
+      - name: Unresolved optional Surefire JVM property falls back exactly like Maven
+        working-directory: examples/junit5-explicit-jvm-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test
+          test -f target/surefire-reports/TEST-example.ExplicitJvmTest.xml
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+          mvn -B clean test | tee unset-jvm-run.log
+          grep -Fq 'MAVEN_OWNERSHIP owner=SCENARIOMESH' unset-jvm-run.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          maven_java_home="$("$JAVA_HOME/bin/java" -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.home = //p' | head -n1)"
+          test -n "$maven_java_home"
+          grep -Fq "Test JVM                   : $maven_java_home/bin/java" unset-jvm-run.log
       - name: Surefire jdkToolchain selection is preserved
         working-directory: examples/junit5-toolchain-example
         run: |

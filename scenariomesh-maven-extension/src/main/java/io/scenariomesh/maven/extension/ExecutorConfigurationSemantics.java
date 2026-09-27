@@ -17,7 +17,7 @@ final class ExecutorConfigurationSemantics {
     }
 
     private static final Set<String> SCENARIOMESH_OWNED = Set.of(
-            "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
+            "forkCount", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
             "jvm", "jdkToolchain",
@@ -41,6 +41,7 @@ final class ExecutorConfigurationSemantics {
     private static final Set<String> COMMON_PRESERVED = Set.of("skip", "skipTests");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
+            "reuseForks",
             "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
@@ -67,6 +68,8 @@ final class ExecutorConfigurationSemantics {
     }
 
     static Classification forFailsafe(String name) {
+        // Failsafe lifecycle handling is unchanged by the Surefire reuseForks guard.
+        if ("reuseForks".equals(name)) return Classification.replaced();
         if (SCENARIOMESH_OWNED.contains(name) || EFFECTIVE_SYSTEM_PROPERTY_SOURCES.contains(name)) {
             return Classification.replaced();
         }

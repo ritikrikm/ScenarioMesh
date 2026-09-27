@@ -61,6 +61,73 @@ class SurefireCompatibilityTest {
     }
 
     @Test
+    void forkCountZeroFailsClosedBecauseTestsWouldRunInsideMavenJvm() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "forkCount", "0");
+        add(config, "reuseForks", "false");
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        assertTrue(analysis.reasons().stream().anyMatch(reason -> reason.contains("forkCount=0")));
+        assertFalse(analysis.systemProperties().containsKey(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
+    }
+
+    @Test
+    void positiveCoreScaledForkCountStillAllowsFreshClassJvmOwnership() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        Xpp3Dom config = new Xpp3Dom("configuration");
+        add(config, "forkCount", "0.5C");
+        add(config, "reuseForks", "false");
+        plugin.setConfiguration(config);
+
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
+    }
+
+    @Test
+    void reuseForksFalseRequestsFreshJvmPerTestClass() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("reuseForks", "false"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
+    }
+
+    @Test
+    void acceptsReuseForksTrueAsCompatiblePersistentWorkerLifecycle() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("reuseForks", "true"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertFalse(analysis.systemProperties().containsKey(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
+    }
+
+    @Test
+    void resolvesReuseForksPropertyBeforeRequestingFreshJvm() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("reuseForks", "${company.reuseForks}"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, Map.of("company.reuseForks", "false")::get);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
+    }
+
+    @Test
+    void commandLineReuseForksFalseRequestsFreshJvm() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        java.util.Properties user = new java.util.Properties();
+        user.setProperty("reuseForks", "false");
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, ignored -> null, user);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
+    }
+
+    @Test
     void groupSelectionIsPreservedForFrameworkSpecificOwnershipDecision() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("groups", "smoke"));

@@ -11,6 +11,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -156,6 +157,12 @@ final class SurefireCompatibility {
             effectiveSystemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
         }
         effectiveSystemProperties.putAll(settings.providerProperties);
+        if (!settings.forked) {
+            reasons.add("maven-surefire-plugin forkCount=0 executes tests inside the Maven JVM; "
+                    + "ScenarioMesh isolated-worker takeover cannot reproduce that process context");
+        } else if (!settings.reuseForks) {
+            effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "true");
+        }
         effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT,
                 Integer.toString(settings.rerunFailingTestsCount));
         effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT,
@@ -190,7 +197,12 @@ final class SurefireCompatibility {
             String name = child.getName();
             ExecutorConfigurationSemantics.Classification classification = ExecutorConfigurationSemantics.forSurefire(name);
             switch (classification.kind()) {
-                case REPLACED_BY_SCENARIOMESH -> { }
+                case REPLACED_BY_SCENARIOMESH -> {
+                    if ("forkCount".equals(name)) {
+                        String value = resolve(child.getValue(), location + " <forkCount>", reasons, propertyResolver);
+                        if (value != null) settings.forked = positiveForkCount(value, location, reasons);
+                    }
+                }
                 case REQUIRES_CAPABILITY -> reasons.add(location + " uses <" + name
                         + "> which requires ScenarioMesh capability '" + classification.capability() + "'");
                 case UNKNOWN -> reasons.add(location + " uses unsupported configuration <" + name + ">");
@@ -211,6 +223,10 @@ final class SurefireCompatibility {
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
             case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
             case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver);
+            case "reuseForks" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (value != null) settings.reuseForks = value;
+            }
             case "testFailureIgnore" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (value != null) settings.testFailureIgnore = value;
@@ -250,6 +266,16 @@ final class SurefireCompatibility {
                                             List<String> reasons,
                                             Function<String, String> propertyResolver,
                                             Function<String, String> userPropertyResolver) {
+        String forkCount = trimToNull(userPropertyResolver.apply("forkCount"));
+        if (forkCount != null) {
+            settings.forked = positiveForkCount(forkCount, "Surefire user property 'forkCount'", reasons);
+        }
+        String reuseForks = trimToNull(userPropertyResolver.apply("reuseForks"));
+        if (reuseForks != null) {
+            if ("true".equalsIgnoreCase(reuseForks)) settings.reuseForks = true;
+            else if ("false".equalsIgnoreCase(reuseForks)) settings.reuseForks = false;
+            else reasons.add("Surefire user property 'reuseForks' has non-boolean value '" + reuseForks + "'");
+        }
         String argLine = trimToNull(userPropertyResolver.apply("argLine"));
         if (argLine != null) {
             settings.argLine = resolveArgLine(argLine, "Surefire user property 'argLine'", reasons, propertyResolver);
@@ -280,6 +306,31 @@ final class SurefireCompatibility {
             if (parsed != null) value = parsed;
         }
         return value;
+    }
+
+    private boolean positiveForkCount(String raw, String location, List<String> reasons) {
+        String value = trimToNull(raw);
+        if (value == null) {
+            reasons.add(location + " is empty");
+            return false;
+        }
+        boolean perCore = value.endsWith("C") || value.endsWith("c");
+        String number = perCore ? value.substring(0, value.length() - 1).trim() : value;
+        try {
+            if (!perCore && number.contains(".")) {
+                reasons.add(location + " has invalid non-core floating-point value '" + raw + "'");
+                return false;
+            }
+            BigDecimal parsed = new BigDecimal(number);
+            if (parsed.signum() < 0) {
+                reasons.add(location + " must not be negative: '" + raw + "'");
+                return false;
+            }
+            return parsed.signum() > 0;
+        } catch (NumberFormatException invalid) {
+            reasons.add(location + " has invalid value '" + raw + "'");
+            return false;
+        }
     }
 
     private void overrideBoolean(EffectiveSettings settings,
@@ -582,6 +633,8 @@ final class SurefireCompatibility {
     }
 
     private static final class EffectiveSettings {
+        private boolean forked = true;
+        private boolean reuseForks = true;
         private final Set<String> includes = new LinkedHashSet<>();
         private final Set<String> excludes = new LinkedHashSet<>();
         private final Set<String> includeJUnit5Engines = new LinkedHashSet<>();

@@ -18,6 +18,7 @@ import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 import io.scenariomesh.protocol.ProtocolFrameReader;
 import io.scenariomesh.scheduler.FifoSchedulingStrategy;
+import io.scenariomesh.workerruntime.ForkedJvmLaunch;
 import io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.WorkerMain;
 
@@ -65,6 +66,7 @@ final class WorkerPool implements TaskExecutionPool {
     private final AtomicInteger workerSequence = new AtomicInteger();
     private final Object replacementLock = new Object();
     private final RunLogger logger;
+    private final Path forkedJvmLaunchFile;
     private final DistributedWorkAuthority workAuthority;
     private final LeasedResponseReader responseReader;
     private volatile boolean finished;
@@ -73,6 +75,7 @@ final class WorkerPool implements TaskExecutionPool {
         this.request = request;
         this.dir = dir;
         this.logger = logger;
+        this.forkedJvmLaunchFile = request.freshJvmPerTestClass() ? prepareForkedJvmLaunch() : null;
         this.workAuthority = new DistributedWorkAuthority(
                 new LeaseRegistry(request.config().workerTaskTimeout().multipliedBy(2)));
         this.responseReader = new LeasedResponseReader(workAuthority);
@@ -223,6 +226,10 @@ final class WorkerPool implements TaskExecutionPool {
             tasksOnCurrentWorker += unit.tasks().size();
             String recycleReason = recycleReason(tasksOnCurrentWorker, telemetry);
             if (recycleReason != null) {
+                if (scheduler.queued() == 0) {
+                    retireConnection(connection, recycleReason + " with no queued work remaining");
+                    return;
+                }
                 WorkerConnection replacement = replace(connection, recycleReason);
                 if (replacement == null) return;
                 connection = replacement;
@@ -329,13 +336,34 @@ final class WorkerPool implements TaskExecutionPool {
     private Path logsDirectory() { return dir.resolve("logs"); }
     private void prepareLogsDirectory() throws Exception { if (request.config().workerLogFiles()) Files.createDirectories(logsDirectory()); }
 
+    private Path prepareForkedJvmLaunch() throws Exception {
+        Files.createDirectories(dir);
+        Path file = dir.resolve("forked-target-jvm.bin");
+        Map<String, String> targetProperties = new LinkedHashMap<>(request.effectiveSystemProperties());
+        targetProperties.remove(RunRequest.INTERNAL_JAVA_EXECUTABLE_PROPERTY);
+        ForkedJvmLaunch.write(file, new ForkedJvmLaunch(
+                request.javaExecutable().toString(),
+                request.effectiveJvmArgs(),
+                targetProperties,
+                request.targetRuntimeClasspath().stream().map(Path::toString).toList()));
+        return file;
+    }
+
     private void launchWorker(String id) throws Exception {
         prepareLogsDirectory();
         String host = InetAddress.getLoopbackAddress().getHostAddress();
         int port = server.getLocalPort();
-        List<String> args = List.of("--host", host, "--port", Integer.toString(port), "--worker-id", id, "--auth-token", token);
+        List<String> args = new ArrayList<>(List.of(
+                "--host", host, "--port", Integer.toString(port), "--worker-id", id, "--auth-token", token));
+        if (forkedJvmLaunchFile != null) {
+            args.add("--forked-jvm-launch-file");
+            args.add(forkedJvmLaunchFile.toString());
+        }
+        List<String> workerJvmArgs = request.freshJvmPerTestClass()
+                ? request.controlJvmArgs()
+                : request.effectiveJvmArgs();
         List<String> command = JavaProcessSupport.command(
-                request.runtimeClasspath(), request.effectiveJvmArgs(), request.effectiveSystemProperties(),
+                request.runtimeClasspath(), workerJvmArgs, request.effectiveSystemProperties(),
                 WorkerMain.class.getName(), args);
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(request.projectDirectory().toFile()).redirectErrorStream(true);
