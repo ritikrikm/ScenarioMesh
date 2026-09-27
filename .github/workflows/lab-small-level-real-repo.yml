@@ -47,7 +47,7 @@ jobs:
             ref: 2c6bf8dea065e96651661d5e277e35b2f343d879
             project_dir: .
             expected_mode: takeover
-            maven_args: ''
+            maven_args: '-Drat.skip=true'
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
