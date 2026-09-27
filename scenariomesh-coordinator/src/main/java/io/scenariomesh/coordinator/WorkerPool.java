@@ -66,6 +66,7 @@ final class WorkerPool implements TaskExecutionPool {
     private final AtomicInteger workerSequence = new AtomicInteger();
     private final Object replacementLock = new Object();
     private final RunLogger logger;
+    private final Path forkedJvmLaunchFile;
     private final DistributedWorkAuthority workAuthority;
     private final LeasedResponseReader responseReader;
     private volatile boolean finished;
@@ -74,6 +75,7 @@ final class WorkerPool implements TaskExecutionPool {
         this.request = request;
         this.dir = dir;
         this.logger = logger;
+        this.forkedJvmLaunchFile = request.freshJvmPerTestClass() ? prepareForkedJvmLaunch() : null;
         this.workAuthority = new DistributedWorkAuthority(
                 new LeaseRegistry(request.config().workerTaskTimeout().multipliedBy(2)));
         this.responseReader = new LeasedResponseReader(workAuthority);
