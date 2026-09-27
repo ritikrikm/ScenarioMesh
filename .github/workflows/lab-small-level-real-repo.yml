@@ -30,6 +30,10 @@ jobs:
             url: https://github.com/spring-projects/spring-petclinic.git
             ref: 818c4136ea971c21674525f9053de0d9c7ad8cfe
             project_dir: .
+          - target: apache-commons-lang
+            url: https://github.com/apache/commons-lang.git
+            ref: 29624cdb50ecd794207d561345b2fc9ca3a9d326
+            project_dir: .
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
