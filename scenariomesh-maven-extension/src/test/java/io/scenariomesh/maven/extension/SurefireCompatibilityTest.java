@@ -61,12 +61,12 @@ class SurefireCompatibilityTest {
     }
 
     @Test
-    void rejectsReuseForksFalseBecauseFreshJvmPerClassLifecycleIsNotReproduced() {
+    void reuseForksFalseRequestsFreshJvmPerTestClass() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("reuseForks", "false"));
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
-        assertTrue(analysis.reasons().stream().anyMatch(reason ->
-                reason.contains("reuseForks") && reason.contains("fresh-JVM-per-test-class")));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
     }
 
     @Test
@@ -75,27 +75,28 @@ class SurefireCompatibilityTest {
         plugin.setConfiguration(configuration("reuseForks", "true"));
         SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
         assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertFalse(analysis.systemProperties().containsKey(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
     }
 
     @Test
-    void resolvesReuseForksPropertyBeforeFailingClosed() {
+    void resolvesReuseForksPropertyBeforeRequestingFreshJvm() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("reuseForks", "${company.reuseForks}"));
         SurefireCompatibility.Analysis analysis = compatibility.analyze(
                 plugin, Map.of("company.reuseForks", "false")::get);
-        assertTrue(analysis.reasons().stream().anyMatch(reason ->
-                reason.contains("reuseForks") && reason.contains("fresh-JVM-per-test-class")));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
     }
 
     @Test
-    void commandLineReuseForksFalseFailsClosed() {
+    void commandLineReuseForksFalseRequestsFreshJvm() {
         Plugin plugin = pluginWith(defaultTestExecution());
         java.util.Properties user = new java.util.Properties();
         user.setProperty("reuseForks", "false");
         SurefireCompatibility.Analysis analysis = compatibility.analyze(
                 plugin, ignored -> null, user);
-        assertTrue(analysis.reasons().stream().anyMatch(reason ->
-                reason.contains("reuseForks=false") && reason.contains("fresh-JVM-per-test-class")));
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+        assertEquals("true", analysis.systemProperties().get(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS));
     }
 
     @Test
