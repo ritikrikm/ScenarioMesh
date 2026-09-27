@@ -59,6 +59,10 @@ public final class ForkedWorkUnitMain {
                 thread.setContextClassLoader(previous);
             }
         }
+        // A Maven reuseForks=false fork is one-shot. Returning from main is not sufficient when
+        // target tests leave non-daemon threads behind; terminate the successful class JVM after
+        // its response is durably closed so the ScenarioMesh supervisor cannot hang indefinitely.
+        System.exit(0);
     }
 
     static void writeRequest(Path file, Request request) throws Exception {
