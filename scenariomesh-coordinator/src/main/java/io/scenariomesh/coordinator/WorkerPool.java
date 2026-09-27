@@ -18,7 +18,8 @@ import io.scenariomesh.protocol.Protocol.Envelope;
 import io.scenariomesh.protocol.Protocol.WorkerTelemetry;
 import io.scenariomesh.protocol.ProtocolFrameReader;
 import io.scenariomesh.scheduler.FifoSchedulingStrategy;
-import io.scenariomesh.workerruntime.ForkedJvmLaunch;\nimport io.scenariomesh.workerruntime.JsonCodec;
+import io.scenariomesh.workerruntime.ForkedJvmLaunch;
+import io.scenariomesh.workerruntime.JsonCodec;
 import io.scenariomesh.workerruntime.WorkerMain;
 
 import java.io.BufferedWriter;
