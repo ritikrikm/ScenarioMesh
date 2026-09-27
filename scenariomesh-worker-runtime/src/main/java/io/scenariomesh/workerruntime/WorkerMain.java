@@ -242,7 +242,7 @@ public final class WorkerMain {
             command.add("-D" + TargetClasspathDescriptor.SYSTEM_PROPERTY + "="
                     + TargetClasspathDescriptor.encodeInline(targetClasspath));
             command.add("-cp");
-            command.add(System.getProperty("java.class.path", ""));
+            command.add(forkedProcessClasspath(targetClasspath));
             command.add(ForkedWorkUnitMain.class.getName());
             command.add(requestFile.toString());
             command.add(responseFile.toString());
@@ -263,6 +263,21 @@ public final class WorkerMain {
             Files.deleteIfExists(requestFile);
             Files.deleteIfExists(responseFile);
         }
+    }
+
+    static String forkedProcessClasspath(List<Path> targetClasspath) {
+        LinkedHashSet<String> entries = new LinkedHashSet<>();
+        String controlClasspath = System.getProperty("java.class.path", "");
+        if (!controlClasspath.isBlank()) {
+            for (String entry : controlClasspath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
+                if (entry != null && !entry.isBlank()) entries.add(entry);
+            }
+        }
+        for (Path entry : targetClasspath) {
+            if (entry != null) entries.add(entry.toAbsolutePath().normalize().toString());
+        }
+        if (entries.isEmpty()) throw new IllegalStateException("Fresh target JVM classpath is empty");
+        return String.join(java.io.File.pathSeparator, entries);
     }
 
     static WorkerCapabilities capabilities(AdapterRegistry adapters, ClassLoader classLoader) throws Exception {
