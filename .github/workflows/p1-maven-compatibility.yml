@@ -16,6 +16,18 @@ jobs:
           cache: maven
       - name: Build and install ScenarioMesh
         run: mvn -B clean install -DskipTests
+      - name: Packaged plugin preserves non-empty argLine outside the reactor
+        run: |
+          isolated="$RUNNER_TEMP/scenariomesh-argline-isolated"
+          rm -rf "$isolated"
+          cp -R examples/failsafe-junit5-example "$isolated"
+          cd "$isolated"
+          mvn -B clean verify | tee argline-isolated.log
+          grep -Fq 'MAVEN_OWNERSHIP owner=SCENARIOMESH' argline-isolated.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 3' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 3' target/scenariomesh/summary.json
+          test -f target/scenariomesh/deferred-verification.properties
       - name: Target Jackson cannot break ScenarioMesh preflight
         working-directory: examples/junit5-conflicting-jackson-example
         run: |
