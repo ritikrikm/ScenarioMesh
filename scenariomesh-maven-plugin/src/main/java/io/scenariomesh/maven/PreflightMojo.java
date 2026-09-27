@@ -3,6 +3,7 @@ package io.scenariomesh.maven;
 import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.coordinator.PreparedRemoteWorkers;
+import io.scenariomesh.core.DebugTrace;
 import io.scenariomesh.core.MavenOwnershipDiagnostic;
 import io.scenariomesh.core.RuntimePropertyNames;
 import io.scenariomesh.workerruntime.PreflightProbeMain;
@@ -72,6 +73,7 @@ public final class PreflightMojo extends AbstractMojo {
 
     @Override
     public void execute() {
+        DebugTrace.log("SMDBG-PREFLIGHT-001", "start artifact=" + project.getArtifactId() + " executor=" + normalizedExecutor());
         RemotePreflightState.clear(getPluginContext());
         if (explicitlySkipped()) {
             passThrough("tests were explicitly skipped by Maven");
@@ -83,6 +85,7 @@ public final class PreflightMojo extends AbstractMojo {
             ScenarioMeshConfig config = resolveConfig(EffectiveMavenProperties.configuration(project, session));
             Path javaExecutable = new TestJvmResolver().resolve(project, session, toolchainManager, takeoverExecutor, null);
             List<ProbePlan> plans = probePlans();
+            DebugTrace.log("SMDBG-PREFLIGHT-002", "plans=" + plans.size() + " java=" + javaExecutable);
             if (plans.isEmpty()) {
                 passThrough("no ScenarioMesh execution plan is available for runtime ownership proof");
                 return;
@@ -126,11 +129,16 @@ public final class PreflightMojo extends AbstractMojo {
     }
 
     private PreflightProbeMain.ProbeResult provePlan(ProbePlan plan, Path javaExecutable) throws Exception {
+        DebugTrace.log("SMDBG-PREFLIGHT-010", "prove execution=" + plan.executionId());
         RuntimeClasspathResolver.RuntimeClasspaths classpaths = new RuntimeClasspathResolver().resolveSplit(
                 project, pluginArtifacts, plan.additionalClasspathElements(), plan.classpathDependencyExcludes(),
                 plan.classpathDependencyScopeExclude(),
                 new MavenTargetJUnitPlatformClasspath(repositorySystem).resolve(project, session));
         List<Path> testRoots = new TestRootResolver().resolve(project, plan.dependencyTestScanPatterns());
+        DebugTrace.log("SMDBG-PREFLIGHT-011", "execution=" + plan.executionId()
+                + " controlCp=" + classpaths.controlClasspath().size()
+                + " targetCp=" + classpaths.targetClasspath().size()
+                + " testRoots=" + testRoots.size());
 
         Map<String, String> properties = new LinkedHashMap<>(plan.executorSystemProperties());
         String executorArgLine = properties.remove(RuntimePropertyNames.MAVEN_EXECUTOR_ARG_LINE);
@@ -166,6 +174,11 @@ public final class PreflightMojo extends AbstractMojo {
                 decodeEnvironmentEntries(plan.executorEnvironmentEntries()),
                 Set.copyOf(new LinkedHashSet<>(plan.excludedEnvironmentVariables())), workingDirectory);
 
+        DebugTrace.log("SMDBG-PREFLIGHT-012", "execution=" + plan.executionId()
+                + " ownership=" + probe.ownership()
+                + " adapters=" + probe.requiredAdapterIds()
+                + " engines=" + probe.requiredEngineIds()
+                + " summary=" + probe.summary());
         if ("DETECTED_NOT_OWNABLE".equals(probe.ownership())) {
             throw new IllegalStateException("execution '" + plan.executionId()
                     + "' runtime backend is detected but not safely ownable: " + probe.summary());
@@ -326,12 +339,20 @@ public final class PreflightMojo extends AbstractMojo {
                 .directory(workingDirectory.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
         excludedEnvironment.forEach(builder.environment()::remove);
         builder.environment().putAll(environmentVariables);
+        DebugTrace.log("SMDBG-PROBE-001", "launch execution=" + executionId
+                + " java=" + javaExecutable
+                + " controlCp=" + controlClasspath.size()
+                + " targetCp=" + targetClasspath.size()
+                + " roots=" + testRoots.size()
+                + " includes=" + includes.size()
+                + " excludes=" + excludes.size());
         Process process = builder.start();
         if (!process.waitFor(PROBE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
             process.destroyForcibly();
             throw new IllegalStateException("selected-JVM ownership probe for execution '" + executionId
                     + "' exceeded " + PROBE_TIMEOUT + "; see " + log);
         }
+        DebugTrace.log("SMDBG-PROBE-002", "exit execution=" + executionId + " code=" + process.exitValue() + " log=" + log);
         if (process.exitValue() != 0) {
             String detail = Files.exists(log) ? Files.readString(log) : "no probe log";
             throw new IllegalStateException("selected-JVM ownership probe for execution '" + executionId
@@ -381,6 +402,7 @@ public final class PreflightMojo extends AbstractMojo {
         RemotePreflightState.clear(getPluginContext());
         PreflightState.passThrough(project, reason);
         ownership(MavenOwnershipDiagnostic.Owner.PASS_THROUGH, reason);
+        DebugTrace.log("SMDBG-PREFLIGHT-090", "pass-through reason=" + reason);
         getLog().info("ScenarioMesh preflight: native Maven pass-through - " + reason);
     }
 
