@@ -156,6 +156,9 @@ final class SurefireCompatibility {
             effectiveSystemProperties.put(TESTNG_SUITE_XML_FILES_PROPERTY, String.join("\n", settings.suiteXmlFiles));
         }
         effectiveSystemProperties.putAll(settings.providerProperties);
+        if (!settings.reuseForks) {
+            effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "true");
+        }
         effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_RERUN_FAILING_TESTS_COUNT,
                 Integer.toString(settings.rerunFailingTestsCount));
         effectiveSystemProperties.put(RuntimePropertyNames.MAVEN_FAIL_ON_FLAKE_COUNT,
@@ -213,8 +216,7 @@ final class SurefireCompatibility {
             case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver);
             case "reuseForks" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
-                if (Boolean.FALSE.equals(value)) reasons.add(location
-                        + " uses <reuseForks>false</reuseForks>; ScenarioMesh persistent workers do not reproduce Surefire fresh-JVM-per-test-class lifecycle semantics");
+                if (value != null) settings.reuseForks = value;
             }
             case "testFailureIgnore" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
@@ -257,11 +259,9 @@ final class SurefireCompatibility {
                                             Function<String, String> userPropertyResolver) {
         String reuseForks = trimToNull(userPropertyResolver.apply("reuseForks"));
         if (reuseForks != null) {
-            if ("false".equalsIgnoreCase(reuseForks)) {
-                reasons.add("Surefire user property 'reuseForks=false'; ScenarioMesh persistent workers do not reproduce Surefire fresh-JVM-per-test-class lifecycle semantics");
-            } else if (!"true".equalsIgnoreCase(reuseForks)) {
-                reasons.add("Surefire user property 'reuseForks' has non-boolean value '" + reuseForks + "'");
-            }
+            if ("true".equalsIgnoreCase(reuseForks)) settings.reuseForks = true;
+            else if ("false".equalsIgnoreCase(reuseForks)) settings.reuseForks = false;
+            else reasons.add("Surefire user property 'reuseForks' has non-boolean value '" + reuseForks + "'");
         }
         String argLine = trimToNull(userPropertyResolver.apply("argLine"));
         if (argLine != null) {
@@ -595,6 +595,7 @@ final class SurefireCompatibility {
     }
 
     private static final class EffectiveSettings {
+        private boolean reuseForks = true;
         private final Set<String> includes = new LinkedHashSet<>();
         private final Set<String> excludes = new LinkedHashSet<>();
         private final Set<String> includeJUnit5Engines = new LinkedHashSet<>();
