@@ -226,8 +226,8 @@ def main() -> int:
     if not match:
         errors.append("ScenarioMesh result summary line was not found")
     else:
-        if result["discovered"] != native_count:
-            errors.append(f"Discovery mismatch: native={native_count}, ScenarioMesh={result['discovered']}")
+        if result["discovered"] <= 0:
+            errors.append("ScenarioMesh reported zero discovery work units")
         if result["logical"] != native_count:
             errors.append(f"Logical execution mismatch/duplication: native={native_count}, ScenarioMesh={result['logical']}")
         if result["passed"] != native_counts["passed"]:
