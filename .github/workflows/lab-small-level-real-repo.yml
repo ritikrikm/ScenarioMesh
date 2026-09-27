@@ -48,6 +48,12 @@ jobs:
             project_dir: .
             expected_mode: takeover
             maven_args: '-Drat.skip=true'
+          - target: apache-commons-text
+            url: https://github.com/apache/commons-text.git
+            ref: 2b02f079f088a41e5bda78274872b3af3863a560
+            project_dir: .
+            expected_mode: takeover
+            maven_args: '-Drat.skip=true'
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
