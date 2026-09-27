@@ -54,6 +54,12 @@ jobs:
             project_dir: .
             expected_mode: takeover
             maven_args: '-Drat.skip=true'
+          - target: junit4-official
+            url: https://github.com/junit-team/junit4.git
+            ref: 890f3c972647de378f25e7271d8fbbd9d3456b79
+            project_dir: .
+            expected_mode: pass-through
+            maven_args: ''
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
