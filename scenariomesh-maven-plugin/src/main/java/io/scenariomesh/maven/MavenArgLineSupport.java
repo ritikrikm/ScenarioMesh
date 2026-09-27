@@ -2,7 +2,6 @@ package io.scenariomesh.maven;
 
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.project.MavenProject;
-import org.codehaus.plexus.util.cli.CommandLineUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -53,12 +52,89 @@ final class MavenArgLineSupport {
         matcher.appendTail(resolved);
 
         try {
-            result.addAll(List.of(CommandLineUtils.translateCommandline(resolved.toString())));
-        } catch (Exception invalid) {
+            result.addAll(tokenizeLikeSurefire(resolved.toString().replaceAll("\\s", " ")));
+        } catch (RuntimeException invalid) {
             throw new IllegalArgumentException(
-                    "Surefire argLine cannot be tokenized using Maven command-line semantics: " + safeMessage(invalid), invalid);
+                    "Surefire argLine cannot be tokenized using Surefire command-line semantics: " + safeMessage(invalid),
+                    invalid);
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Mirrors the command-line tokenization used by Maven Shared Utils in the Surefire lines
+     * ScenarioMesh owns (Surefire 3.5.2 and 3.6.x) without depending on Maven's plugin realm.
+     */
+    static List<String> tokenizeLikeSurefire(String line) {
+        if (line == null || line.isEmpty()) return List.of();
+
+        final int normal = 0;
+        final int singleQuoted = 1;
+        final int doubleQuoted = 2;
+        int state = normal;
+        boolean escaped = false;
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+
+        for (int index = 0; index < line.length(); index++) {
+            char next = line.charAt(index);
+            if (state == singleQuoted) {
+                if (next == '\'') {
+                    if (escaped) {
+                        current.append(next);
+                        escaped = false;
+                    } else {
+                        state = normal;
+                    }
+                } else {
+                    current.append(next);
+                    escaped = next == '\\';
+                }
+                continue;
+            }
+            if (state == doubleQuoted) {
+                if (next == '"') {
+                    if (escaped) {
+                        current.append(next);
+                        escaped = false;
+                    } else {
+                        state = normal;
+                    }
+                } else {
+                    current.append(next);
+                    escaped = next == '\\';
+                }
+                continue;
+            }
+
+            if (next == '\'') {
+                if (escaped) {
+                    escaped = false;
+                    current.append(next);
+                } else {
+                    state = singleQuoted;
+                }
+            } else if (next == '"') {
+                if (escaped) {
+                    escaped = false;
+                    current.append(next);
+                } else {
+                    state = doubleQuoted;
+                }
+            } else if (next == ' ') {
+                if (current.length() != 0) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(next);
+                escaped = next == '\\';
+            }
+        }
+
+        if (current.length() != 0) tokens.add(current.toString());
+        if (state != normal) throw new IllegalArgumentException("unbalanced quotes in " + line);
+        return List.copyOf(tokens);
     }
 
     private static void copy(Properties source, Map<String, String> target) {
