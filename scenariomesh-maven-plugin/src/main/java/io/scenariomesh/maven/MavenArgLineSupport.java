@@ -2,7 +2,6 @@ package io.scenariomesh.maven;
 
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.project.MavenProject;
-import org.codehaus.plexus.util.cli.CommandLineUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -46,23 +45,98 @@ final class MavenArgLineSupport {
         Matcher matcher = LATE_PROPERTY_REFERENCE.matcher(executorArgLine);
         StringBuffer resolved = new StringBuffer();
         while (matcher.find()) {
-            // Surefire documents a missing late property as an empty-string replacement.
             String replacement = lateProperties.getOrDefault(matcher.group(1), "");
             matcher.appendReplacement(resolved, Matcher.quoteReplacement(replacement));
         }
         matcher.appendTail(resolved);
 
         try {
-            // Surefire normalizes JVM-arg whitespace before delegating setLine() tokenization
-            // to Plexus CommandLineUtils. Use the same implementation instead of approximating it.
-            String normalized = resolved.toString().replaceAll("\\s", " ");
-            result.addAll(List.of(CommandLineUtils.translateCommandline(normalized)));
-        } catch (Exception invalid) {
+            // Surefire normalizes JVM-arg whitespace before Commandline.Argument#setLine().
+            result.addAll(tokenizeLikeSurefire(resolved.toString().replaceAll("\\s", " ")));
+        } catch (RuntimeException invalid) {
             throw new IllegalArgumentException(
-                    "Surefire argLine cannot be tokenized using Maven command-line semantics: " + safeMessage(invalid),
+                    "Surefire argLine cannot be tokenized using Surefire command-line semantics: "
+                            + safeMessage(invalid),
                     invalid);
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Reproduces Maven Shared Utils CommandLineUtils#translateCommandline, which Surefire shades
+     * into org.apache.maven.surefire.shared.utils. The algorithm is identical in the Shared Utils
+     * versions used by Surefire 3.5.2 (3.3.4) and 3.6.0 (3.4.2).
+     */
+    static List<String> tokenizeLikeSurefire(String line) {
+        if (line == null || line.isEmpty()) return List.of();
+
+        final int normal = 0;
+        final int singleQuoted = 1;
+        final int doubleQuoted = 2;
+        int state = normal;
+        boolean escaped = false;
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+
+        for (int index = 0; index < line.length(); index++) {
+            char next = line.charAt(index);
+            if (state == singleQuoted) {
+                if (next == '\'') {
+                    if (escaped) {
+                        current.append(next);
+                        escaped = false;
+                    } else {
+                        state = normal;
+                    }
+                } else {
+                    current.append(next);
+                    escaped = next == '\\';
+                }
+                continue;
+            }
+            if (state == doubleQuoted) {
+                if (next == '"') {
+                    if (escaped) {
+                        current.append(next);
+                        escaped = false;
+                    } else {
+                        state = normal;
+                    }
+                } else {
+                    current.append(next);
+                    escaped = next == '\\';
+                }
+                continue;
+            }
+
+            if (next == '\'') {
+                if (escaped) {
+                    escaped = false;
+                    current.append(next);
+                } else {
+                    state = singleQuoted;
+                }
+            } else if (next == '"') {
+                if (escaped) {
+                    escaped = false;
+                    current.append(next);
+                } else {
+                    state = doubleQuoted;
+                }
+            } else if (next == ' ') {
+                if (current.length() != 0) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                }
+            } else {
+                current.append(next);
+                escaped = next == '\\';
+            }
+        }
+
+        if (current.length() != 0) tokens.add(current.toString());
+        if (state != normal) throw new IllegalArgumentException("unbalanced quotes in " + line);
+        return List.copyOf(tokens);
     }
 
     private static void copy(Properties source, Map<String, String> target) {
