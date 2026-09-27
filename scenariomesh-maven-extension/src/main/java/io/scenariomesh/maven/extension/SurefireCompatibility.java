@@ -10,7 +10,8 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.StringReader;\nimport java.math.BigDecimal;
+import java.io.StringReader;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
