@@ -100,7 +100,7 @@ final class TestJvmResolver {
         if (toolchain == null) return;
         for (Xpp3Dom child : toolchain.getChildren()) {
             if (child.getChildCount() > 0) throw new IllegalStateException("Nested <jdkToolchain> requirement '" + child.getName() + "' is not reproducible");
-            String value = resolve(child.getValue(), project, session);
+            String value = resolve(child.getValue(), project, session, false);
             if (value != null && !value.isBlank()) destination.put(child.getName(), value);
         }
     }
@@ -111,10 +111,12 @@ final class TestJvmResolver {
         Xpp3Dom node = root.getChild(name);
         if (node == null) return null;
         if (node.getChildCount() > 0) throw new IllegalStateException("Structured <" + name + "> is not reproducible");
-        return resolve(node.getValue(), project, session);
+        // Maven's plugin parameter evaluator returns null for an unresolved exact
+        // expression. For Surefire/Failsafe <jvm>, null means "use the Maven JVM".
+        return resolve(node.getValue(), project, session, true);
     }
 
-    private String resolve(String raw, MavenProject project, MavenSession session) {
+    private String resolve(String raw, MavenProject project, MavenSession session, boolean unresolvedExactIsNull) {
         if (raw == null) return null;
         String value = raw.trim();
         if (value.startsWith("${") && value.endsWith("}") && value.indexOf("${", 2) < 0) {
@@ -124,7 +126,11 @@ final class TestJvmResolver {
                     project.getProperties(),
                     session.getSystemProperties(),
                     session.getUserProperties());
-            return resolved == null ? null : resolved.trim();
+            if (resolved == null) {
+                if (unresolvedExactIsNull) return null;
+                throw new IllegalStateException("Unresolved Maven property " + value + " in test-JVM configuration");
+            }
+            return resolved.trim();
         }
         if (value.contains("${")) throw new IllegalStateException("Composite Maven expression in test-JVM configuration is not yet reproducible: " + value);
         return value;
@@ -134,8 +140,12 @@ final class TestJvmResolver {
                                   java.util.Properties projectProperties,
                                   java.util.Properties systemProperties,
                                   java.util.Properties userProperties) {
-        String resolved = userProperties == null ? null : userProperties.getProperty(key);
-        if (resolved == null && systemProperties != null) resolved = systemProperties.getProperty(key);
+        // PluginParameterExpressionEvaluator builds its execution-property view by
+        // overlaying system properties on user properties, then falls back to
+        // project properties. In normal Maven CLI execution, -D user properties
+        // are also promoted into the session system properties.
+        String resolved = systemProperties == null ? null : systemProperties.getProperty(key);
+        if (resolved == null && userProperties != null) resolved = userProperties.getProperty(key);
         if (resolved == null && projectProperties != null) resolved = projectProperties.getProperty(key);
         return resolved;
     }
