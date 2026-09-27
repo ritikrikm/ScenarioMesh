@@ -17,7 +17,7 @@ final class ExecutorConfigurationSemantics {
     }
 
     private static final Set<String> SCENARIOMESH_OWNED = Set.of(
-            "forkCount", "reuseForks", "parallel", "threadCount", "threadCountClasses",
+            "forkCount", "parallel", "threadCount", "threadCountClasses",
             "threadCountMethods", "threadCountSuites", "perCoreThreadCount",
             "useUnlimitedThreads", "parallelOptimized",
             "jvm", "jdkToolchain",
@@ -41,6 +41,7 @@ final class ExecutorConfigurationSemantics {
     private static final Set<String> COMMON_PRESERVED = Set.of("skip", "skipTests");
 
     private static final Set<String> SUREFIRE_PRESERVED = Set.of(
+            "reuseForks",
             "includes", "excludes", "includesFile", "excludesFile", "dependenciesToScan",
             "includeJUnit5Engines", "excludeJUnit5Engines",
             "groups", "excludedGroups",
