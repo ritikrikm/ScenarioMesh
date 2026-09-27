@@ -58,7 +58,7 @@ jobs:
             url: https://github.com/junit-team/junit4.git
             ref: 890f3c972647de378f25e7271d8fbbd9d3456b79
             project_dir: .
-            expected_mode: pass-through
+            expected_mode: takeover
             maven_args: ''
 
     steps:
