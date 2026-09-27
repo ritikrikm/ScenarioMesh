@@ -33,6 +33,19 @@ jobs:
           grep -Fq '"total" : 1' target/scenariomesh/summary.json
           grep -Fq '"passed" : 1' target/scenariomesh/summary.json
           grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" target-run.log
+      - name: Unresolved optional Surefire JVM property falls back exactly like Maven
+        working-directory: examples/junit5-explicit-jvm-example
+        run: |
+          mv .mvn/extensions.xml .mvn/extensions.xml.disabled
+          mvn -B clean test
+          test -f target/surefire-reports/TEST-example.ExplicitJvmTest.xml
+          mv .mvn/extensions.xml.disabled .mvn/extensions.xml
+          mvn -B clean test | tee unset-jvm-run.log
+          grep -Fq 'MAVEN_OWNERSHIP owner=SCENARIOMESH' unset-jvm-run.log
+          test -f target/scenariomesh/summary.json
+          grep -Fq '"total" : 1' target/scenariomesh/summary.json
+          grep -Fq '"passed" : 1' target/scenariomesh/summary.json
+          grep -Fq "Test JVM                   : $JAVA_HOME/bin/java" unset-jvm-run.log
       - name: Surefire jdkToolchain selection is preserved
         working-directory: examples/junit5-toolchain-example
         run: |
