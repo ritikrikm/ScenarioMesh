@@ -223,6 +223,10 @@ final class WorkerPool implements TaskExecutionPool {
             tasksOnCurrentWorker += unit.tasks().size();
             String recycleReason = recycleReason(tasksOnCurrentWorker, telemetry);
             if (recycleReason != null) {
+                if (scheduler.queued() == 0) {
+                    retireConnection(connection, recycleReason + " with no queued work remaining");
+                    return;
+                }
                 WorkerConnection replacement = replace(connection, recycleReason);
                 if (replacement == null) return;
                 connection = replacement;
@@ -252,6 +256,9 @@ final class WorkerPool implements TaskExecutionPool {
     }
 
     private String recycleReason(int tasksOnWorker, WorkerTelemetry telemetry) {
+        if (request.freshJvmPerTestClass()) {
+            return "Maven reuseForks=false fresh-JVM-per-test-class semantics";
+        }
         if (request.config().taskCountRecyclingEnabled()
                 && tasksOnWorker >= request.config().maxTasksPerWorker()) {
             return "task-count recycling after " + tasksOnWorker + " task(s)";
