@@ -211,6 +211,11 @@ final class SurefireCompatibility {
             case "excludeJUnit5Engines" -> readEngineList(child, settings.excludeJUnit5Engines, location, reasons, propertyResolver);
             case "groups", "excludedGroups" -> readScalarSystemProperty(child, location, settings, reasons, propertyResolver);
             case "argLine" -> readArgLine(child, location, settings, reasons, propertyResolver);
+            case "reuseForks" -> {
+                Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
+                if (Boolean.FALSE.equals(value)) reasons.add(location
+                        + " uses <reuseForks>false</reuseForks>; ScenarioMesh persistent workers do not reproduce Surefire fresh-JVM-per-test-class lifecycle semantics");
+            }
             case "testFailureIgnore" -> {
                 Boolean value = resolvedBoolean(child, location, reasons, propertyResolver);
                 if (value != null) settings.testFailureIgnore = value;
@@ -250,6 +255,14 @@ final class SurefireCompatibility {
                                             List<String> reasons,
                                             Function<String, String> propertyResolver,
                                             Function<String, String> userPropertyResolver) {
+        String reuseForks = trimToNull(userPropertyResolver.apply("reuseForks"));
+        if (reuseForks != null) {
+            if ("false".equalsIgnoreCase(reuseForks)) {
+                reasons.add("Surefire user property 'reuseForks=false'; ScenarioMesh persistent workers do not reproduce Surefire fresh-JVM-per-test-class lifecycle semantics");
+            } else if (!"true".equalsIgnoreCase(reuseForks)) {
+                reasons.add("Surefire user property 'reuseForks' has non-boolean value '" + reuseForks + "'");
+            }
+        }
         String argLine = trimToNull(userPropertyResolver.apply("argLine"));
         if (argLine != null) {
             settings.argLine = resolveArgLine(argLine, "Surefire user property 'argLine'", reasons, propertyResolver);
