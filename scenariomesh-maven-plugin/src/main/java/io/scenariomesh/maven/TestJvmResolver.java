@@ -119,14 +119,25 @@ final class TestJvmResolver {
         String value = raw.trim();
         if (value.startsWith("${") && value.endsWith("}") && value.indexOf("${", 2) < 0) {
             String key = value.substring(2, value.length() - 1);
-            String resolved = session.getUserProperties().getProperty(key);
-            if (resolved == null) resolved = session.getSystemProperties().getProperty(key);
-            if (resolved == null && project.getProperties() != null) resolved = project.getProperties().getProperty(key);
-            if (resolved == null) throw new IllegalStateException("Unresolved Maven property " + value + " in test-JVM configuration");
-            return resolved.trim();
+            String resolved = resolveProperty(
+                    key,
+                    project.getProperties(),
+                    session.getSystemProperties(),
+                    session.getUserProperties());
+            return resolved == null ? null : resolved.trim();
         }
         if (value.contains("${")) throw new IllegalStateException("Composite Maven expression in test-JVM configuration is not yet reproducible: " + value);
         return value;
+    }
+
+    static String resolveProperty(String key,
+                                  java.util.Properties projectProperties,
+                                  java.util.Properties systemProperties,
+                                  java.util.Properties userProperties) {
+        String resolved = userProperties == null ? null : userProperties.getProperty(key);
+        if (resolved == null && systemProperties != null) resolved = systemProperties.getProperty(key);
+        if (resolved == null && projectProperties != null) resolved = projectProperties.getProperty(key);
+        return resolved;
     }
 
     private Path javaFromToolchain(Toolchain toolchain, String source) {
