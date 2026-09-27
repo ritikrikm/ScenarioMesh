@@ -1,7 +1,8 @@
 package io.scenariomesh.coordinator;
 
 import io.scenariomesh.config.ScenarioMeshConfig;
-import io.scenariomesh.core.DiscoverySelection;\nimport io.scenariomesh.core.RuntimePropertyNames;
+import io.scenariomesh.core.DiscoverySelection;
+import io.scenariomesh.core.RuntimePropertyNames;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
