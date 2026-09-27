@@ -27,6 +27,9 @@ public final class FrameworkOwnershipGuard {
 
     public void verifyNoUnsupportedExecutableFamilies(AdapterContext context) {
         if (!classPresent(JUNIT4_TEST, context.classLoader())) return;
+        if ("junit4-direct".equals(context.properties().get(io.scenariomesh.core.RuntimePropertyNames.MAVEN_PROVIDER_INTENT))) {
+            return;
+        }
         // Vintage is the target runtime's explicit JUnit 4 execution contract.
         if (hasVintageEngine(context.classLoader())) return;
 

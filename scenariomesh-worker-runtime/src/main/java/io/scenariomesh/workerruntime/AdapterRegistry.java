@@ -24,6 +24,7 @@ import java.util.ServiceLoader;
 public final class AdapterRegistry {
     private static final List<String> BUILT_IN_ADAPTER_CLASSES = List.of(
             "io.scenariomesh.adapter.junitplatform.JUnitPlatformAdapter",
+            "io.scenariomesh.adapter.junit4.JUnit4DirectAdapter",
             "io.scenariomesh.adapter.cucumberjunit4.CucumberJUnit4Adapter",
             "io.scenariomesh.adapter.testng.TestNgAdapter");
 

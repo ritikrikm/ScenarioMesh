@@ -27,8 +27,8 @@ final class MavenProviderDependencyCompatibility {
     private static final Map<String, String> SUPPORTED_PROVIDER_SELECTORS = Map.of(
             "org.apache.maven.surefire:surefire-junit-platform", "junit-platform",
             "org.apache.maven.surefire:surefire-testng", "testng",
-            "org.apache.maven.surefire:surefire-junit47", "junit4-vintage",
-            "org.apache.maven.surefire:surefire-junit4", "junit4-vintage");
+            "org.apache.maven.surefire:surefire-junit47", "junit4-direct",
+            "org.apache.maven.surefire:surefire-junit4", "junit4-direct");
 
     Analysis analyze(Plugin plugin) {
         if (plugin == null || plugin.getDependencies() == null || plugin.getDependencies().isEmpty()) {

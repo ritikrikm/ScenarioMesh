@@ -50,6 +50,9 @@ public final class PreflightProbeMain {
         Map<String, String> properties = new HashMap<>();
         System.getProperties().forEach((key, value) -> properties.put(String.valueOf(key), String.valueOf(value)));
         properties.remove(TargetClasspathDescriptor.SYSTEM_PROPERTY);
+        if (parsed.providerIntent != null && !parsed.providerIntent.isBlank()) {
+            properties.put(RuntimePropertyNames.MAVEN_PROVIDER_INTENT, parsed.providerIntent);
+        }
         String expression = properties.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
         List<String> included = MavenSelectionCodec.decode(properties.remove(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS));
         List<String> excluded = MavenSelectionCodec.decode(properties.remove(RuntimePropertyNames.MAVEN_EXCLUDED_TEST_PATTERNS));
@@ -134,6 +137,17 @@ public final class PreflightProbeMain {
 
     private static ExecutionBackendInventory.Inventory includeStandaloneAdapterOwnership(
             ExecutionBackendInventory.Inventory inventory, RuntimeRequirements requirements) {
+        if (requirements.adapterIds().equals(Set.of("junit4-direct"))) {
+            return new ExecutionBackendInventory.Inventory(ExecutionBackendInventory.Ownership.OWNABLE,
+                    List.of(new ExecutionBackendInventory.Backend("junit4-direct", "surefire-junit4",
+                            requirements.taskCounts().getOrDefault("junit4-direct", 0),
+                            ExecutionBackendInventory.BackendOwnership.OWNABLE,
+                            ExecutionBackendInventory.ExecutionGranularity.CLASS,
+                            Set.of(ExecutionBackendInventory.Capability.DISCOVERY,
+                                    ExecutionBackendInventory.Capability.LIFECYCLE_SCOPED_EXECUTION,
+                                    ExecutionBackendInventory.Capability.FILTER_EQUIVALENCE))),
+                    "Direct JUnit 4 adapter owns the explicit legacy Surefire provider lifecycle");
+        }
         if (inventory.ownership() != ExecutionBackendInventory.Ownership.NOT_DETECTED
                 || !requirements.adapterIds().contains("testng")) {
             return inventory;
@@ -188,18 +202,20 @@ public final class PreflightProbeMain {
 
     private static final class Arguments {
         private final Path output; private final List<Path> testRoots; private final List<String> includes; private final List<String> excludes;
-        private final boolean useSystemClassLoader;
+        private final boolean useSystemClassLoader; private final String providerIntent;
         private Arguments(Path output, List<Path> testRoots, List<String> includes, List<String> excludes,
-                          boolean useSystemClassLoader) {
+                          boolean useSystemClassLoader, String providerIntent) {
             this.output = output; this.testRoots = testRoots; this.includes = includes; this.excludes = excludes;
-            this.useSystemClassLoader = useSystemClassLoader;
+            this.useSystemClassLoader = useSystemClassLoader; this.providerIntent = providerIntent;
         }
         private static Arguments parse(String[] args) {
             Path output = null; List<Path> roots = new ArrayList<>(); List<String> includes = new ArrayList<>(); List<String> excludes = new ArrayList<>();
             boolean useSystemClassLoader = false;
+            String providerIntent = null;
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
                     case "--use-system-class-loader" -> useSystemClassLoader = true;
+                    case "--provider-intent" -> providerIntent = require(args, ++i, "--provider-intent");
                     case "--output" -> output = Path.of(require(args, ++i, "--output"));
                     case "--test-root" -> roots.add(Path.of(require(args, ++i, "--test-root")));
                     case "--include-class-regex" -> includes.add(require(args, ++i, "--include-class-regex"));
@@ -209,7 +225,7 @@ public final class PreflightProbeMain {
             }
             if (output == null) throw new IllegalArgumentException("--output is required");
             return new Arguments(output, List.copyOf(roots), List.copyOf(includes), List.copyOf(excludes),
-                    useSystemClassLoader);
+                    useSystemClassLoader, providerIntent);
         }
         private static String require(String[] args, int index, String name) {
             if (index >= args.length) throw new IllegalArgumentException(name + " requires a value");

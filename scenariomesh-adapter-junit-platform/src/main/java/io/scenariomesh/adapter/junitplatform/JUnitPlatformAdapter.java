@@ -79,6 +79,9 @@ public final class JUnitPlatformAdapter implements ScenarioAdapter {
 
     @Override
     public List<ScenarioTask> discover(AdapterContext context) {
+        if ("junit4-direct".equals(context.properties().get(io.scenariomesh.core.RuntimePropertyNames.MAVEN_PROVIDER_INTENT))) {
+            return List.of();
+        }
         if (context.testRoots().isEmpty()) return List.of();
         LauncherDiscoveryRequestBuilder builder = JUnitEngineSelection.apply(
                 LauncherDiscoveryRequestBuilder.request()

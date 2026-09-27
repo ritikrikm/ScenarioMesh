@@ -42,6 +42,10 @@ public final class RuntimePropertyNames {
     public static final String MAVEN_USE_SYSTEM_CLASSLOADER =
             INTERNAL_PREFIX + "maven.useSystemClassLoader";
 
+    /** Explicit native Maven provider intent used only for adapter ownership routing. */
+    public static final String MAVEN_PROVIDER_INTENT =
+            INTERNAL_PREFIX + "maven.providerIntent";
+
     /** Internal Maven class-run-order contract consumed only by the coordinator. */
     public static final String MAVEN_RUN_ORDER =
             INTERNAL_PREFIX + "maven.runOrder";

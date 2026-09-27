@@ -99,7 +99,7 @@ class MavenAdvancedExecutionSemanticsTest {
                 new MavenProviderDependencyCompatibility().analyze(plugin);
         assertTrue(analysis.supported(), analysis.reason());
         assertTrue(analysis.engineDependencies().isEmpty());
-        assertEquals(Set.of("junit4-vintage"), analysis.providerIntents());
+        assertEquals(Set.of("junit4-direct"), analysis.providerIntents());
     }
 
     @Test

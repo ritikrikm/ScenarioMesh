@@ -23,6 +23,13 @@ final class DiscoveryProcess {
         args.add(request.config().executionAdapter());
         args.add("--adapter-mismatch-policy");
         args.add(request.config().adapterMismatchPolicy().externalValue());
+        if (!request.providerIntent().isBlank()) {
+            args.add("--provider-intent");
+            args.add(request.providerIntent());
+        }
+        if (request.useSystemClassLoader()) {
+            args.add("--use-system-class-loader");
+        }
         for (Path root : request.testRoots()) {
             args.add("--test-root");
             args.add(root.toString());
@@ -36,9 +43,12 @@ final class DiscoveryProcess {
             args.add(regex);
         }
 
+        List<Path> discoveryClasspath = request.useSystemClassLoader()
+                ? request.targetRuntimeClasspath()
+                : request.runtimeClasspath();
         List<String> command = JavaProcessSupport.command(
                 request.javaExecutable(),
-                request.runtimeClasspath(),
+                discoveryClasspath,
                 request.effectiveJvmArgs(),
                 request.effectiveSystemProperties(),
                 DiscoveryMain.class.getName(),

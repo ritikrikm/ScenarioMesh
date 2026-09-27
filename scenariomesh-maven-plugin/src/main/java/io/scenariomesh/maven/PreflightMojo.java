@@ -163,6 +163,7 @@ public final class PreflightMojo extends AbstractMojo {
                 properties, RuntimePropertyNames.MAVEN_PROMOTE_USER_PROPERTIES, true);
         boolean useSystemClassLoader = removeInternalBoolean(
                 properties, RuntimePropertyNames.MAVEN_USE_SYSTEM_CLASSLOADER, false);
+        String providerIntent = properties.remove(RuntimePropertyNames.MAVEN_PROVIDER_INTENT);
         removeInternalControlProperties(properties);
         if (promoteUserProperties) properties.putAll(EffectiveMavenProperties.user(session));
         List<String> jvmArgs = new ArrayList<>(MavenArgLineSupport.merge(
@@ -195,7 +196,7 @@ public final class PreflightMojo extends AbstractMojo {
         PreflightProbeMain.ProbeResult probe = probe(
                 plan.executionId(), javaExecutable, classpaths.controlClasspath(), classpaths.targetClasspath(), testRoots,
                 properties, List.copyOf(jvmArgs), plan.includes(), plan.excludes(), plan.enableAssertions(),
-                useSystemClassLoader, decodeEnvironmentEntries(plan.executorEnvironmentEntries()),
+                useSystemClassLoader, providerIntent, decodeEnvironmentEntries(plan.executorEnvironmentEntries()),
                 Set.copyOf(new LinkedHashSet<>(plan.excludedEnvironmentVariables())), workingDirectory);
 
         DebugTrace.log("SMDBG-PREFLIGHT-012", "execution=" + plan.executionId()
@@ -337,7 +338,7 @@ public final class PreflightMojo extends AbstractMojo {
                                                   List<Path> testRoots, Map<String, String> properties,
                                                   List<String> executorJvmArgs, List<String> includes, List<String> excludes,
                                                   boolean assertionsEnabled, boolean useSystemClassLoader,
-                                                  Map<String, String> environmentVariables,
+                                                  String providerIntent, Map<String, String> environmentVariables,
                                                   Set<String> excludedEnvironment, Path workingDirectory) throws Exception {
         Path directory = Path.of(project.getBuild().getDirectory()).toAbsolutePath().normalize().resolve("scenariomesh-preflight");
         Files.createDirectories(directory);
@@ -358,6 +359,10 @@ public final class PreflightMojo extends AbstractMojo {
                 .reduce((left, right) -> left + File.pathSeparator + right).orElse(""));
         command.add(PreflightProbeMain.class.getName());
         if (useSystemClassLoader) command.add("--use-system-class-loader");
+        if (providerIntent != null && !providerIntent.isBlank()) {
+            command.add("--provider-intent");
+            command.add(providerIntent);
+        }
         command.add("--output"); command.add(output.toString());
         for (Path root : testRoots) { command.add("--test-root"); command.add(root.toString()); }
         for (String include : includes) { command.add("--include-class-regex"); command.add(include); }
@@ -408,6 +413,7 @@ public final class PreflightMojo extends AbstractMojo {
         properties.remove(RuntimePropertyNames.MAVEN_EXPLICIT_TEST_SELECTION);
         properties.remove(RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS);
         properties.remove(RuntimePropertyNames.MAVEN_USE_SYSTEM_CLASSLOADER);
+        properties.remove(RuntimePropertyNames.MAVEN_PROVIDER_INTENT);
         properties.remove(RuntimePropertyNames.MAVEN_RUN_ORDER);
         properties.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_RANDOM_SEED);
         properties.remove(RuntimePropertyNames.MAVEN_RUN_ORDER_STATISTICS_FILE);

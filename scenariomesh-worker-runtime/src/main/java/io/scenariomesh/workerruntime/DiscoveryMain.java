@@ -30,6 +30,13 @@ public final class DiscoveryMain {
         List<Path> targetClasspath = encoded == null || encoded.isBlank()
                 ? currentClasspath() : TargetClasspathDescriptor.decodeInline(encoded);
         ClassLoader previous = thread.getContextClassLoader();
+        if (parsed.useSystemClassLoader) {
+            requireSystemClasspathContains(targetClasspath);
+            thread.setContextClassLoader(controlLoader);
+            try { discover(parsed, controlLoader); }
+            finally { thread.setContextClassLoader(previous); }
+            return;
+        }
         try (TargetRuntimeClassLoader targetLoader = TargetRuntimeClassLoader.fromClasspath(targetClasspath, controlLoader)) {
             thread.setContextClassLoader(targetLoader);
             discover(parsed, targetLoader);
@@ -39,6 +46,9 @@ public final class DiscoveryMain {
     private static void discover(Arguments parsed, ClassLoader classLoader) throws Exception {
         AdapterRegistry registry = new AdapterRegistry(classLoader);
         Map<String, String> properties = systemProperties();
+        if (parsed.providerIntent != null && !parsed.providerIntent.isBlank()) {
+            properties.put(RuntimePropertyNames.MAVEN_PROVIDER_INTENT, parsed.providerIntent);
+        }
         String testListExpression = properties.remove(RuntimePropertyNames.MAVEN_TEST_LIST_EXPRESSION);
         List<String> includedPatterns = MavenSelectionCodec.decode(
                 properties.remove(RuntimePropertyNames.MAVEN_INCLUDED_TEST_PATTERNS));
@@ -51,7 +61,8 @@ public final class DiscoveryMain {
 
         ExecutionBackendInventory.Inventory backendInventory = ExecutionBackendInventory.inspect(
                 classLoader, parsed.testRoots, parsed.includeClassNameRegexes, parsed.excludeClassNameRegexes);
-        if (backendInventory.ownership() == ExecutionBackendInventory.Ownership.DETECTED_NOT_OWNABLE) {
+        if (!"junit4-direct".equals(parsed.providerIntent)
+                && backendInventory.ownership() == ExecutionBackendInventory.Ownership.DETECTED_NOT_OWNABLE) {
             throw new IllegalStateException("ScenarioMesh detected an executable JUnit Platform backend that it cannot safely own: "
                     + backendInventory.summary() + ". Native Maven execution is safer.");
         }
@@ -178,6 +189,20 @@ public final class DiscoveryMain {
         return properties;
     }
 
+    private static void requireSystemClasspathContains(List<Path> targetClasspath) {
+        java.util.Set<Path> application = currentClasspath().stream()
+                .map(path -> path.toAbsolutePath().normalize())
+                .collect(java.util.stream.Collectors.toSet());
+        List<Path> missing = targetClasspath.stream()
+                .map(path -> path.toAbsolutePath().normalize())
+                .filter(path -> !application.contains(path))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("System-classloader discovery was requested but the application classpath "
+                    + "is missing target entries: " + missing);
+        }
+    }
+
     private static List<Path> currentClasspath() {
         String raw = System.getProperty("java.class.path", "");
         if (raw.isBlank()) throw new IllegalStateException("java.class.path is empty and no target classpath was supplied");
@@ -207,16 +232,21 @@ public final class DiscoveryMain {
 
     private static final class Arguments {
         private final Path output; private final List<Path> testRoots; private final String adapter;
-        private final AdapterMismatchPolicy mismatchPolicy;
+        private final AdapterMismatchPolicy mismatchPolicy; private final String providerIntent;
+        private final boolean useSystemClassLoader;
         private final List<String> includeClassNameRegexes; private final List<String> excludeClassNameRegexes;
         private Arguments(Path output, List<Path> testRoots, String adapter, AdapterMismatchPolicy mismatchPolicy,
+                          String providerIntent, boolean useSystemClassLoader,
                           List<String> includeClassNameRegexes, List<String> excludeClassNameRegexes) {
             this.output = output; this.testRoots = testRoots; this.adapter = adapter; this.mismatchPolicy = mismatchPolicy;
+            this.providerIntent = providerIntent; this.useSystemClassLoader = useSystemClassLoader;
             this.includeClassNameRegexes = includeClassNameRegexes; this.excludeClassNameRegexes = excludeClassNameRegexes;
         }
         private static Arguments parse(String[] args) {
             Path output = null; List<Path> roots = new ArrayList<>(); String adapter = ScenarioMeshConfig.AUTO_ADAPTER;
             AdapterMismatchPolicy mismatchPolicy = AdapterMismatchPolicy.FAIL;
+            String providerIntent = null;
+            boolean useSystemClassLoader = false;
             List<String> includes = new ArrayList<>(), excludes = new ArrayList<>();
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
@@ -224,13 +254,16 @@ public final class DiscoveryMain {
                     case "--test-root" -> roots.add(Path.of(requireValue(args, ++i, "--test-root")));
                     case "--adapter" -> adapter = requireValue(args, ++i, "--adapter").trim().toLowerCase(java.util.Locale.ROOT);
                     case "--adapter-mismatch-policy" -> mismatchPolicy = AdapterMismatchPolicy.parse(requireValue(args, ++i, "--adapter-mismatch-policy"));
+                    case "--provider-intent" -> providerIntent = requireValue(args, ++i, "--provider-intent");
+                    case "--use-system-class-loader" -> useSystemClassLoader = true;
                     case "--include-class-regex" -> includes.add(requireValue(args, ++i, "--include-class-regex"));
                     case "--exclude-class-regex" -> excludes.add(requireValue(args, ++i, "--exclude-class-regex"));
                     default -> throw new IllegalArgumentException("Unknown discovery argument: " + args[i]);
                 }
             }
             if (output == null) throw new IllegalArgumentException("--output is required");
-            return new Arguments(output, List.copyOf(roots), adapter, mismatchPolicy, List.copyOf(includes), List.copyOf(excludes));
+            return new Arguments(output, List.copyOf(roots), adapter, mismatchPolicy, providerIntent,
+                    useSystemClassLoader, List.copyOf(includes), List.copyOf(excludes));
         }
         private static String requireValue(String[] args, int index, String name) {
             if (index >= args.length) throw new IllegalArgumentException(name + " requires a value");

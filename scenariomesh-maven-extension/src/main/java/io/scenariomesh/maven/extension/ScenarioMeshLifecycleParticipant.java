@@ -4,6 +4,7 @@ import io.scenariomesh.config.ConfigResolver;
 import io.scenariomesh.config.ConfigResolver.ConfigResolution;
 import io.scenariomesh.config.ScenarioMeshConfig;
 import io.scenariomesh.core.MavenOwnershipDiagnostic;
+import io.scenariomesh.core.RuntimePropertyNames;
 import org.apache.maven.AbstractMavenLifecycleParticipant;
 import org.apache.maven.MavenExecutionException;
 import org.apache.maven.execution.MavenSession;
@@ -25,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Component(role = AbstractMavenLifecycleParticipant.class, hint = "scenariomesh")
@@ -113,7 +115,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             }
             if (!providerAnalysis.providerIntents().isEmpty()
                     && !decision.frameworks().isEmpty()
-                    && !providerAnalysis.providerIntents().equals(decision.frameworks())) {
+                    && !providerIntentMatchesModel(providerAnalysis.providerIntents(), decision.frameworks())) {
                 String reason = "explicit Maven provider selection " + providerAnalysis.providerIntents()
                         + " does not exactly match the modeled framework ownership " + decision.frameworks()
                         + "; ScenarioMesh will not broaden or narrow native provider execution";
@@ -199,8 +201,10 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                 continue;
             }
 
+            String providerIntent = providerAnalysis.providerIntents().stream().sorted()
+                    .reduce((left, right) -> left + "," + right).orElse("");
             injectScenarioMesh(project, decision, launchAnalysis, classpathAnalysis, runOrderAnalysis,
-                    providerClasspath, reportInvocationId, reportAnalysis.runtimeProperties());
+                    providerClasspath, providerIntent, reportInvocationId, reportAnalysis.runtimeProperties());
             String configText = resolution.configFile().map(path -> ", config=" + path).orElse("");
             info("ScenarioMesh: takeover candidate for " + project.getArtifactId()
                     + " (executor=" + decision.executorKind().name().toLowerCase()
@@ -232,6 +236,12 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         }
     }
 
+    private boolean providerIntentMatchesModel(Set<String> providerIntents, Set<String> modeledFrameworks) {
+        if (providerIntents.equals(modeledFrameworks)) return true;
+        return providerIntents.equals(Set.of("junit4-direct"))
+                && modeledFrameworks.equals(Set.of("junit4-vintage"));
+    }
+
     private boolean requiresAdvancedSurefireAnalysis(Plugin surefire) {
         if (surefire.getDependencies() != null && !surefire.getDependencies().isEmpty()) return true;
         if (surefire.getExecutions() == null) return false;
@@ -249,6 +259,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             MavenExecutorClasspathConfiguration.Analysis classpathAnalysis,
             MavenRunOrderConfiguration.Analysis runOrderAnalysis,
             List<String> providerClasspath,
+            String providerIntent,
             String singlePlanInvocationId,
             Map<String, String> downstreamRuntimeProperties) {
         Plugin plugin = project.getPlugin(GROUP_ID + ":" + PLUGIN_ARTIFACT_ID);
@@ -275,7 +286,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             addList(preflightConfig, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
             addList(preflightConfig, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
             addMap(preflightConfig, "executorSystemProperties",
-                    mergedProperties(plan, runOrderAnalysis.required(plan.executionId()), Map.of()));
+                    mergedProperties(plan, runOrderAnalysis.required(plan.executionId()), providerIntent, Map.of()));
             addLaunchConfiguration(preflightConfig, launchAnalysis.required(plan.executionId()));
             addClasspathConfiguration(preflightConfig, classpathAnalysis.required(plan.executionId()), providerClasspath);
             addList(preflightConfig, "dependencyTestScanPatterns", "pattern", plan.dependenciesToScan());
@@ -295,7 +306,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
             run.setConfiguration(runConfiguration(decision, plan,
                     launchAnalysis.required(plan.executionId()),
                     classpathAnalysis.required(plan.executionId()),
-                    runOrderAnalysis.required(plan.executionId()), providerClasspath,
+                    runOrderAnalysis.required(plan.executionId()), providerClasspath, providerIntent,
                     plan.dependenciesToScan(), invocationId, single ? downstreamRuntimeProperties : Map.of()));
             plugin.addExecution(run);
 
@@ -314,9 +325,13 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
 
     private Map<String, String> mergedProperties(ProjectCompatibilityDetector.ExecutorPlan plan,
                                                   MavenRunOrderConfiguration.Settings runOrder,
+                                                  String providerIntent,
                                                   Map<String, String> downstream) {
         Map<String, String> values = new LinkedHashMap<>(plan.executorSystemProperties());
         values.putAll(runOrder.internalProperties());
+        if (providerIntent != null && !providerIntent.isBlank()) {
+            values.put(RuntimePropertyNames.MAVEN_PROVIDER_INTENT, providerIntent);
+        }
         values.putAll(downstream);
         return Map.copyOf(values);
     }
@@ -338,6 +353,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
                                      MavenExecutorClasspathConfiguration.Settings classpathSettings,
                                      MavenRunOrderConfiguration.Settings runOrderSettings,
                                      List<String> providerClasspath,
+                                     String providerIntent,
                                      List<String> dependencyTestScanPatterns,
                                      String invocationId,
                                      Map<String, String> downstreamRuntimeProperties) {
@@ -349,7 +365,7 @@ public final class ScenarioMeshLifecycleParticipant extends AbstractMavenLifecyc
         addList(root, "includeClassNameRegexes", "include", plan.includeClassNameRegexes());
         addList(root, "excludeClassNameRegexes", "exclude", plan.excludeClassNameRegexes());
         addList(root, "executorJvmArgs", "arg", plan.executorJvmArgs());
-        addMap(root, "executorSystemProperties", mergedProperties(plan, runOrderSettings, downstreamRuntimeProperties));
+        addMap(root, "executorSystemProperties", mergedProperties(plan, runOrderSettings, providerIntent, downstreamRuntimeProperties));
         addLaunchConfiguration(root, launchSettings);
         addClasspathConfiguration(root, classpathSettings, providerClasspath);
         addList(root, "dependencyTestScanPatterns", "pattern", dependencyTestScanPatterns);
