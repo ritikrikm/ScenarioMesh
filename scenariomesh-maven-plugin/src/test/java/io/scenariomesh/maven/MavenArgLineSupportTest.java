@@ -1,5 +1,6 @@
 package io.scenariomesh.maven;
 
+import org.codehaus.plexus.util.cli.CommandLineUtils;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -42,10 +43,14 @@ class MavenArgLineSupportTest {
     }
 
     @Test
-    void preservesSurefireSharedUtilsBackslashQuoteSemantics() {
+    void tokenizationMatchesPlexusCommandLineUtilsUsedBySurefire() throws Exception {
+        String argLine = "-Dvalue=\\\\\"hello\\\\\" -Dquoted=\"hello world\"";
+        List<String> expected = List.of(CommandLineUtils.translateCommandline(argLine.replaceAll("\\s", " ")));
+
         assertEquals(
-                List.of("-Dvalue=\\\\\"hello\\\\\""),
-                MavenArgLineSupport.tokenizeLikeSurefire("-Dvalue=\\\\\"hello\\\\\""));
+                expected,
+                MavenArgLineSupport.merge(
+                        List.of(), argLine, new Properties(), new Properties(), new Properties()));
     }
 
     @Test
