@@ -61,6 +61,44 @@ class SurefireCompatibilityTest {
     }
 
     @Test
+    void rejectsReuseForksFalseBecauseFreshJvmPerClassLifecycleIsNotReproduced() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("reuseForks", "false"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+        assertTrue(analysis.reasons().stream().anyMatch(reason ->
+                reason.contains("reuseForks") && reason.contains("fresh-JVM-per-test-class")));
+    }
+
+    @Test
+    void acceptsReuseForksTrueAsCompatiblePersistentWorkerLifecycle() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("reuseForks", "true"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(plugin);
+        assertTrue(analysis.reasons().isEmpty(), () -> String.join("; ", analysis.reasons()));
+    }
+
+    @Test
+    void resolvesReuseForksPropertyBeforeFailingClosed() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        plugin.setConfiguration(configuration("reuseForks", "${company.reuseForks}"));
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, Map.of("company.reuseForks", "false")::get);
+        assertTrue(analysis.reasons().stream().anyMatch(reason ->
+                reason.contains("reuseForks") && reason.contains("fresh-JVM-per-test-class")));
+    }
+
+    @Test
+    void commandLineReuseForksFalseFailsClosed() {
+        Plugin plugin = pluginWith(defaultTestExecution());
+        java.util.Properties user = new java.util.Properties();
+        user.setProperty("reuseForks", "false");
+        SurefireCompatibility.Analysis analysis = compatibility.analyze(
+                plugin, ignored -> null, user);
+        assertTrue(analysis.reasons().stream().anyMatch(reason ->
+                reason.contains("reuseForks=false") && reason.contains("fresh-JVM-per-test-class")));
+    }
+
+    @Test
     void groupSelectionIsPreservedForFrameworkSpecificOwnershipDecision() {
         Plugin plugin = pluginWith(defaultTestExecution());
         plugin.setConfiguration(configuration("groups", "smoke"));
