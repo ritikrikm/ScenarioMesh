@@ -99,6 +99,17 @@ public final class PreflightMojo extends AbstractMojo {
 
             List<PlanProof> proofs = new ArrayList<>();
             for (ProbePlan plan : plans) proofs.add(new PlanProof(plan, provePlan(plan, javaExecutable)));
+            for (PlanProof proof : proofs) {
+                boolean freshClassJvm = Boolean.parseBoolean(proof.plan().executorSystemProperties().getOrDefault(
+                        RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "false"));
+                if (freshClassJvm
+                        && (!proof.probe().requiredAdapterIds().equals(Set.of("junit-platform"))
+                        || !proof.probe().requiredEngineIds().equals(Set.of("junit-jupiter")))) {
+                    throw new IllegalStateException("reuseForks=false class-JVM takeover is currently proven only for "
+                            + "pure JUnit Jupiter; adapters=" + proof.probe().requiredAdapterIds()
+                            + ", engines=" + proof.probe().requiredEngineIds());
+                }
+            }
 
             if (config.distributed().remote()) {
                 List<PreparedRemoteWorkers.ExecutionRequirement> requirements = proofs.stream()
@@ -158,6 +169,11 @@ public final class PreflightMojo extends AbstractMojo {
         ModulePathCompatibility.LaunchPlan moduleLaunch = new ModulePathCompatibility().launchPlan(
                 project, session, normalizedExecutor(), classpaths.targetModulePath());
         if (moduleLaunch.modulePath()) {
+            if (Boolean.parseBoolean(plan.executorSystemProperties().getOrDefault(
+                    RuntimePropertyNames.MAVEN_FRESH_JVM_PER_TEST_CLASS, "false"))) {
+                throw new IllegalStateException("reuseForks=false class-JVM takeover with JPMS module-path execution "
+                        + "is not yet preflight-proven");
+            }
             jvmArgs.addAll(moduleLaunch.jvmArgs());
             properties.put(ModulePathCompatibility.TARGET_MODULE_PATH_PROPERTY, "true");
         }
