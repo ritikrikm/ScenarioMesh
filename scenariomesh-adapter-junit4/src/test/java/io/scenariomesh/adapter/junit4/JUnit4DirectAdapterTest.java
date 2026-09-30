@@ -58,15 +58,15 @@ class JUnit4DirectAdapterTest {
         var execution = adapter.executeWorkUnit(List.of(parent),
                 new ExecutionContext(getClass().getClassLoader(), new WorkerId("worker-1"), 1, Map.of()));
 
-        assertEquals(3, execution.results().size());
-        assertEquals(1, execution.results().stream().filter(result -> result.status() == ResultStatus.PASSED).count());
+        assertEquals(4, execution.results().size());
+        assertEquals(2, execution.results().stream().filter(result -> result.status() == ResultStatus.PASSED).count());
         assertEquals(2, execution.results().stream().filter(result -> result.status() == ResultStatus.SKIPPED).count());
         assertTrue(execution.tasks().stream().allMatch(task ->
                 parent.id().value().equals(task.metadata().get(TaskMetadata.PARENT_MATERIALIZER_ID))));
     }
 
     @RunWith(Suite.class)
-    @Suite.SuiteClasses({Passing.class, AssumptionSkipped.class, IgnoredCase.class})
+    @Suite.SuiteClasses({Passing.class, AssumptionSkipped.class, IgnoredCase.class, LegacyTestCase.class})
     public static class NativeSuite {}
 
     public static class Passing {
@@ -79,5 +79,9 @@ class JUnit4DirectAdapterTest {
 
     public static class IgnoredCase {
         @Ignore @org.junit.Test public void ignored() {}
+    }
+
+    public static class LegacyTestCase extends junit.framework.TestCase {
+        public void testLegacy() {}
     }
 }

@@ -28,7 +28,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -198,8 +198,10 @@ public final class JUnit4DirectAdapter implements ScenarioAdapter {
     }
 
     private static final class NativeListener extends RunListener {
-        private final IdentityHashMap<Description, ArrayDeque<MutableOutcome>> active = new IdentityHashMap<>();
-        private final IdentityHashMap<Description, Boolean> terminalWithoutStart = new IdentityHashMap<>();
+        // JUnit38ClassRunner recreates equivalent Description instances for start/end callbacks.
+        // Key by Description equality rather than object identity so JUnit3 terminals pair correctly.
+        private final Map<Description, ArrayDeque<MutableOutcome>> active = new HashMap<>();
+        private final Map<Description, Boolean> terminalWithoutStart = new HashMap<>();
         private final List<NativeOutcome> completed = new ArrayList<>();
         private int sequence;
 
