@@ -101,12 +101,27 @@ public final class DiscoveryMain {
     }
 
     static List<ScenarioTask> applyMavenSelection(String adapterId, List<ScenarioTask> tasks, DiscoverySelection discoverySelection) {
-        if (!"testng".equals(adapterId) || tasks.isEmpty() || !discoverySelection.hasMavenTestSelection()) {
+        if (tasks.isEmpty() || !discoverySelection.hasMavenTestSelection()) {
             return List.copyOf(tasks);
         }
         SurefireTestSelection selection = discoverySelection.hasTestListExpression()
                 ? new SurefireTestSelection(discoverySelection.testListExpression())
                 : new SurefireTestSelection(discoverySelection.includedTestPatterns(), discoverySelection.excludedTestPatterns());
+
+        if ("junit4-direct".equals(adapterId)) {
+            if (selection.hasMethodPatterns()) {
+                throw new IllegalStateException("Direct JUnit 4 ownership cannot yet reproduce Surefire method-level selection; "
+                        + "native Maven execution is safer");
+            }
+            return tasks.stream().filter(task -> {
+                String className = task.metadata().get("className");
+                return className != null && selection.matches(className, null);
+            }).toList();
+        }
+
+        if (!"testng".equals(adapterId)) {
+            return List.copyOf(tasks);
+        }
         return tasks.stream().filter(task -> {
             String className = task.metadata().get("className");
             String methodName = task.metadata().get("methodName");
