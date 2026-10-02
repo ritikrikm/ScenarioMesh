@@ -20,7 +20,7 @@ ScenarioMesh is not a Selenium framework, WebDriver proxy, Gherkin parser, repla
 | Compatible Maven Surefire `test` execution | Supported |
 | Compatible Maven Failsafe `integration-test` / `verify` execution | Supported; unsupported semantics pass through |
 | Standard method-level TestNG `@Test` | Supported |
-| Generic JUnit 4 without Cucumber | Supported through the JUnit Platform adapter when the target runtime supplies JUnit Vintage; otherwise native Maven pass-through |
+| Generic JUnit 4 without Cucumber | Supported through JUnit Platform/Vintage when present, and through the direct legacy JUnit 4 adapter for proven compatible Surefire JUnit4/JUnit47 execution |
 | TestNG `suiteXmlFiles` | Supported as atomic TestNG lifecycle scopes; individual outcomes are materialized after native TestNG execution |
 | Factory-heavy TestNG discovered without a suite XML | Pass-through when ScenarioMesh cannot prove equivalent isolated semantics |
 | Gradle | Not supported yet |
@@ -72,6 +72,7 @@ ScenarioMesh keeps framework-specific behavior behind `ScenarioAdapter` implemen
 
 ```text
 junit-platform
+junit4-direct
 cucumber-junit4
 testng
 ```
@@ -192,50 +193,253 @@ bridges `RunEventSink` events to low-cardinality OpenTelemetry metrics using onl
 
 See [`docs/opentelemetry.md`](docs/opentelemetry.md).
 
-## Installation
+## Quick start: use ScenarioMesh with an existing Maven test project
 
-Build/install ScenarioMesh during development:
+This is the recommended development/POC flow for the current `main` build (`0.1.1-SNAPSHOT`). The target repository keeps its existing `pom.xml`, test framework, Selenium/REST Assured libraries, Maven goals, profiles, Jenkins commands, and test code.
 
-```bash
-mvn clean install
-```
+### 1. Build and install ScenarioMesh once
 
-A target Maven repository activates the core extension in `.mvn/extensions.xml`:
-
-```xml
-<extensions>
-  <extension>
-    <groupId>io.scenariomesh</groupId>
-    <artifactId>scenariomesh-maven-extension</artifactId>
-    <version>0.1.0</version>
-  </extension>
-</extensions>
-```
-
-Then continue using normal project commands:
+Clone ScenarioMesh and build the current `main` branch:
 
 ```bash
+git clone https://github.com/ritikrikm/ScenarioMesh.git
+cd ScenarioMesh
+git checkout main
+git pull
+./mvnw clean install
+```
+
+This installs the ScenarioMesh `0.1.1-SNAPSHOT` artifacts into your local Maven repository and builds the CLI jar at:
+
+```text
+scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar
+```
+
+Java 17+ is required. Maven 3.9.x is the primary supported production line.
+
+### 2. Preview what ScenarioMesh will add to the existing project
+
+Assume the existing automation project is at `/path/to/my-automation-project`.
+
+From the ScenarioMesh checkout:
+
+```bash
+java -jar scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar \
+  init --dry-run --project /path/to/my-automation-project
+```
+
+The dry run prints the exact files that would be created or updated and makes no changes.
+
+### 3. Initialize the existing project
+
+If the dry-run plan is correct:
+
+```bash
+java -jar scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar \
+  init --project /path/to/my-automation-project
+```
+
+`init` is idempotent and performs only the bootstrap work ScenarioMesh needs:
+
+- creates or updates `.mvn/extensions.xml`;
+- preserves other Maven Core extensions already present in that file;
+- adds `io.scenariomesh:scenariomesh-maven-extension:0.1.1-SNAPSHOT`;
+- creates a minimal `scenariomesh.yml` only when neither `scenariomesh.yml` nor `scenariomesh.yaml` already exists;
+- refuses to guess if both YAML filenames exist;
+- leaves the target project's `pom.xml` and test source unchanged.
+
+The minimal generated configuration is intentionally small:
+
+```yaml
+scenariomesh:
+  configVersion: 1
+```
+
+That is enough for zero-config auto-detection. All other settings use safe defaults.
+
+### 4. Optional: add the recommended local/POC configuration
+
+For an explicit four-worker POC, the target project's `scenariomesh.yml` can be expanded to:
+
+```yaml
+scenariomesh:
+  configVersion: 1
+  enabled: true
+
+  execution:
+    adapter: auto
+    adapterMismatchPolicy: fail
+
+  scheduling:
+    strategy: history-lpt
+
+  workers:
+    count: 4
+    startupTimeout: PT30S
+    shutdownTimeout: PT10S
+    jvmArgs: []
+
+  discovery:
+    timeout: PT2M
+
+  reporting:
+    directory: target/scenariomesh
+
+  logging:
+    liveConsole: true
+    workerFiles: true
+    showConfiguration: true
+    showProgress: true
+```
+
+For a first run, keep `execution.adapter: auto`. ScenarioMesh will inspect the compiled test runtime and choose a framework adapter only when ownership is unambiguous.
+
+Worker count can be changed without editing YAML:
+
+```bash
+mvn test -Dscenariomesh.workers.count=8
+```
+
+### 5. Run a compatibility check before the first takeover
+
+From the ScenarioMesh checkout:
+
+```bash
+java -jar scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar \
+  doctor --deep --root /path/to/my-automation-project
+```
+
+The deep doctor command verifies Java/Maven/configuration and runs the same runtime ownership preflight used by transparent Maven takeover.
+
+Typical decisions are:
+
+```text
+ScenarioMesh preflight: ownership proven ...
+```
+
+or:
+
+```text
+ScenarioMesh preflight: native Maven pass-through ...
+```
+
+Pass-through is a safe result: it means ScenarioMesh could not prove equivalence for that execution and deliberately leaves native Surefire/Failsafe authoritative.
+
+### 6. Keep using the project's existing Maven commands
+
+After initialization, move into the existing automation project and run it exactly as before:
+
+```bash
+cd /path/to/my-automation-project
+
 mvn test
 mvn verify
+mvn clean test
+mvn clean verify
 mvn clean install
 ```
 
-The CLI can initialize the required files idempotently:
+You do not invoke a separate ScenarioMesh test command for transparent takeover.
 
-```bash
-java -jar scenariomesh-cli-0.1.0.jar init --project /path/to/project
+For each Maven invocation ScenarioMesh automatically:
+
+1. inspects only the Surefire/Failsafe executions that participate in the requested lifecycle;
+2. reads execution-affecting Maven settings such as selectors, includes/excludes, JVM selection, compatible `argLine`/properties, fork semantics, retries and framework/provider configuration;
+3. waits until test compilation is complete;
+4. probes the real target test classpath and compiled tests;
+5. verifies that a registered adapter can own the framework/runtime semantics;
+6. takes ownership only if all required compatibility checks pass;
+7. suppresses only the proven native Surefire/Failsafe execution;
+8. starts isolated ScenarioMesh worker JVMs and dynamically schedules the owned work;
+9. writes ScenarioMesh reports while allowing the rest of the Maven lifecycle to continue normally.
+
+If any required proof fails, ScenarioMesh does not partially execute the suite. Native Maven remains in control.
+
+### 7. Confirm whether ScenarioMesh actually took over
+
+For an owned execution, the Maven/Jenkins log contains:
+
+```text
+MAVEN_OWNERSHIP owner=SCENARIOMESH
+ScenarioMesh preflight: ownership proven ...
+ScenarioMesh: takeover enabled after runtime ownership preflight.
 ```
 
-It can also run compatibility diagnostics without taking ownership:
+An owned run also creates:
 
-```bash
-java -jar scenariomesh-cli-0.1.0.jar doctor --deep --root /path/to/project
+```text
+target/scenariomesh/
+├── report.html
+├── summary.json
+├── junit.xml
+├── artifacts.json
+└── runs/
+    └── <run-id>/
+        ├── events.jsonl
+        ├── discovered-scenarios.json
+        └── logs/
 ```
 
-or explicitly delegate a run to the production Maven runtime:
+If the log contains:
+
+```text
+MAVEN_OWNERSHIP owner=PASS_THROUGH
+```
+
+the existing Surefire/Failsafe execution ran normally instead.
+
+### 8. Disable ScenarioMesh instantly when comparing against the baseline
+
+No files need to be removed:
 
 ```bash
-java -jar scenariomesh-cli-0.1.0.jar run --root /path/to/project
+mvn test -Dscenariomesh.enabled=false
+```
+
+This is useful for an A/B performance comparison:
+
+```text
+Baseline : existing Maven/Surefire execution
+POC      : same command with ScenarioMesh enabled
+```
+
+Compare test count, pass/fail/skip results, total regression duration, CPU/agent utilization and produced reports.
+
+### Existing Jenkins pipelines
+
+If Jenkins currently runs a normal Maven command such as:
+
+```groovy
+sh 'mvn clean test'
+```
+
+that command does not need to change after the target repository has been initialized and the ScenarioMesh artifacts are resolvable on the Jenkins agent.
+
+For the current development snapshot, a Jenkins POC must first make `0.1.1-SNAPSHOT` available to the agent, for example by building/installing ScenarioMesh in that workspace or publishing the artifacts to the team's Maven repository. A future released version should be consumed from the configured artifact repository instead of rebuilding ScenarioMesh in every target job.
+
+### What is automatic and what is not
+
+Automatic during a normal Maven command:
+
+- Surefire/Failsafe lifecycle inspection;
+- framework/provider detection;
+- adapter selection in `auto` mode;
+- target runtime classpath resolution;
+- Maven test-selection preservation;
+- compatibility preflight;
+- safe takeover or native pass-through;
+- local worker startup;
+- dynamic/history-aware scheduling;
+- worker/result tracking;
+- report generation.
+
+You configure only operational policy you want to override, such as worker count, scheduling strategy, logging, report directory, explicit adapter intent, or distributed/remote worker settings.
+
+The CLI can also explicitly delegate a run to the production Maven runtime:
+
+```bash
+java -jar scenariomesh-cli/target/scenariomesh-cli-0.1.1-SNAPSHOT.jar \
+  run --root /path/to/my-automation-project
 ```
 
 ## Configuration
